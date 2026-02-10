@@ -30,16 +30,14 @@ async function bootstrap() {
   );
 
   // Swagger
-  if (configService.get('NODE_ENV') !== 'production') {
-    const config = new DocumentBuilder()
-      .setTitle('Smombie Admin API')
-      .setDescription('Smombie Admin Backend API Documentation')
-      .setVersion('1.0')
-      .addBearerAuth()
-      .build();
-    const document = SwaggerModule.createDocument(app, config);
-    SwaggerModule.setup('api/docs', app, document);
-  }
+  const swaggerConfig = new DocumentBuilder()
+    .setTitle('Smombie Admin API')
+    .setDescription('Smombie Admin Backend API Documentation')
+    .setVersion('1.0')
+    .addBearerAuth()
+    .build();
+  const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
+  SwaggerModule.setup('api/docs', app, swaggerDocument);
 
   const port = configService.get('PORT', 3000);
   await app.listen(port);
