@@ -1,0 +1,17 @@
+# ── Docker ──
+.env
+docker-compose.yml
+
+# ── Node ──
+node_modules
+dist
+.tsbuildinfo
+
+# ── Dev ──
+.git
+.vscode
+*.md
+.eslintrc*
+.prettierrc*
+jest.config*
+test/

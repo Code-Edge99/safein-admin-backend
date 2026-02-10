@@ -1,0 +1,238 @@
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { OrganizationType as PrismaOrgType, DeviceStatus } from '@prisma/client';
+import {
+  CreateOrganizationDto,
+  UpdateOrganizationDto,
+  OrganizationResponseDto,
+  OrganizationTreeDto,
+  OrganizationStatsDto,
+} from './dto';
+
+@Injectable()
+export class OrganizationsService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async create(dto: CreateOrganizationDto): Promise<OrganizationResponseDto> {
+    // 상위 조직 검증
+    if (dto.parentId) {
+      const parent = await this.prisma.organization.findUnique({
+        where: { id: dto.parentId },
+      });
+      if (!parent) {
+        throw new NotFoundException('상위 조직을 찾을 수 없습니다.');
+      }
+    }
+
+    const organization = await this.prisma.organization.create({
+      data: {
+        name: dto.name,
+        type: dto.type as PrismaOrgType,
+        parentId: dto.parentId || null,
+        isActive: dto.isActive ?? true,
+      },
+    });
+
+    return this.toResponseDto(organization);
+  }
+
+  async findAll(): Promise<OrganizationResponseDto[]> {
+    const organizations = await this.prisma.organization.findMany({
+      orderBy: [{ type: 'asc' }, { name: 'asc' }],
+    });
+
+    return organizations.map(org => this.toResponseDto(org));
+  }
+
+  async findTree(): Promise<OrganizationTreeDto[]> {
+    const organizations = await this.prisma.organization.findMany({
+      include: {
+        _count: {
+          select: {
+            employees: true,
+            devices: true,
+          },
+        },
+      },
+      orderBy: [{ type: 'asc' }, { name: 'asc' }],
+    });
+
+    // 조직 트리 구조로 변환
+    const buildTree = (parentId: string | null): OrganizationTreeDto[] => {
+      return organizations
+        .filter((org) => org.parentId === parentId)
+        .map((org) => ({
+          ...this.toResponseDto(org),
+          employeeCount: org._count.employees,
+          deviceCount: org._count.devices,
+          children: buildTree(org.id),
+        }));
+    };
+
+    return buildTree(null);
+  }
+
+  async findOne(id: string): Promise<OrganizationResponseDto> {
+    const organization = await this.prisma.organization.findUnique({
+      where: { id },
+    });
+
+    if (!organization) {
+      throw new NotFoundException('조직을 찾을 수 없습니다.');
+    }
+
+    return this.toResponseDto(organization);
+  }
+
+  async findOneWithStats(id: string): Promise<OrganizationStatsDto> {
+    const organization = await this.prisma.organization.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            employees: true,
+            children: true,
+            devices: true,
+          },
+        },
+      },
+    });
+
+    if (!organization) {
+      throw new NotFoundException('조직을 찾을 수 없습니다.');
+    }
+
+    // 활성 장치 수 조회
+    const activeDeviceCount = await this.prisma.device.count({
+      where: {
+        organizationId: id,
+        status: DeviceStatus.NORMAL,
+      },
+    });
+
+    return {
+      organizationId: organization.id,
+      organizationName: organization.name,
+      totalEmployees: organization._count.employees,
+      totalDevices: organization._count.devices,
+      activeDevices: activeDeviceCount,
+      childOrganizations: organization._count.children,
+    };
+  }
+
+  async update(id: string, dto: UpdateOrganizationDto): Promise<OrganizationResponseDto> {
+    await this.findOne(id); // 존재 여부 확인
+
+    // 순환 참조 방지
+    if (dto.parentId) {
+      if (dto.parentId === id) {
+        throw new BadRequestException('조직은 자기 자신을 상위 조직으로 설정할 수 없습니다.');
+      }
+
+      // 하위 조직을 상위로 설정하는지 확인
+      const descendants = await this.getDescendants(id);
+      if (descendants.some((d) => d.id === dto.parentId)) {
+        throw new BadRequestException('하위 조직을 상위 조직으로 설정할 수 없습니다.');
+      }
+
+      const parent = await this.prisma.organization.findUnique({
+        where: { id: dto.parentId },
+      });
+      if (!parent) {
+        throw new NotFoundException('상위 조직을 찾을 수 없습니다.');
+      }
+    }
+
+    const organization = await this.prisma.organization.update({
+      where: { id },
+      data: {
+        name: dto.name,
+        type: dto.type as PrismaOrgType | undefined,
+        parentId: dto.parentId,
+        isActive: dto.isActive,
+      },
+    });
+
+    return this.toResponseDto(organization);
+  }
+
+  async remove(id: string): Promise<void> {
+    const organization = await this.prisma.organization.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            children: true,
+            employees: true,
+          },
+        },
+      },
+    });
+
+    if (!organization) {
+      throw new NotFoundException('조직을 찾을 수 없습니다.');
+    }
+
+    if (organization._count.children > 0) {
+      throw new BadRequestException('하위 조직이 있는 조직은 삭제할 수 없습니다.');
+    }
+
+    if (organization._count.employees > 0) {
+      throw new BadRequestException('직원이 있는 조직은 삭제할 수 없습니다.');
+    }
+
+    await this.prisma.organization.delete({
+      where: { id },
+    });
+  }
+
+  async getDescendants(id: string): Promise<OrganizationResponseDto[]> {
+    const allOrgs = await this.prisma.organization.findMany();
+    const descendants: OrganizationResponseDto[] = [];
+
+    const findDescendants = (parentId: string) => {
+      const children = allOrgs.filter((org) => org.parentId === parentId);
+      for (const child of children) {
+        descendants.push(this.toResponseDto(child));
+        findDescendants(child.id);
+      }
+    };
+
+    findDescendants(id);
+    return descendants;
+  }
+
+  async getAncestors(id: string): Promise<OrganizationResponseDto[]> {
+    const ancestors: OrganizationResponseDto[] = [];
+    let current = await this.prisma.organization.findUnique({
+      where: { id },
+    });
+
+    while (current?.parentId) {
+      const parent = await this.prisma.organization.findUnique({
+        where: { id: current.parentId },
+      });
+      if (parent) {
+        ancestors.unshift(this.toResponseDto(parent));
+        current = parent;
+      } else {
+        break;
+      }
+    }
+
+    return ancestors;
+  }
+
+  private toResponseDto(org: any): OrganizationResponseDto {
+    return {
+      id: org.id,
+      name: org.name,
+      type: org.type,
+      parentId: org.parentId,
+      isActive: org.isActive,
+      employeeCount: org.employeeCount || 0,
+      createdAt: org.createdAt,
+      updatedAt: org.updatedAt,
+    };
+  }
+}

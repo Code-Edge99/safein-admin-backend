@@ -1,0 +1,177 @@
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  Query,
+  UseGuards,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+  ApiParam,
+} from '@nestjs/swagger';
+import { ControlPoliciesService } from './control-policies.service';
+import {
+  CreateControlPolicyDto,
+  UpdateControlPolicyDto,
+  ControlPolicyFilterDto,
+  ControlPolicyResponseDto,
+  ControlPolicyDetailDto,
+  ControlPolicyListResponseDto,
+  ControlPolicyStatsDto,
+  AssignZonesDto,
+  AssignTimePoliciesDto,
+  AssignBehaviorConditionsDto,
+  AssignHarmfulAppsDto,
+  AssignEmployeesDto,
+} from './dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
+@ApiTags('Control Policies')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
+@Controller('control-policies')
+export class ControlPoliciesController {
+  constructor(private readonly controlPoliciesService: ControlPoliciesService) {}
+
+  @Post()
+  @ApiOperation({ summary: '제어 정책 생성' })
+  @ApiResponse({ status: 201, description: '정책 생성 성공', type: ControlPolicyDetailDto })
+  async create(@Body() createDto: CreateControlPolicyDto): Promise<ControlPolicyDetailDto> {
+    return this.controlPoliciesService.create(createDto);
+  }
+
+  @Get()
+  @ApiOperation({ summary: '제어 정책 목록 조회' })
+  @ApiResponse({ status: 200, description: '정책 목록', type: ControlPolicyListResponseDto })
+  async findAll(@Query() filter: ControlPolicyFilterDto): Promise<ControlPolicyListResponseDto> {
+    return this.controlPoliciesService.findAll(filter);
+  }
+
+  @Get('stats')
+  @ApiOperation({ summary: '제어 정책 통계 조회' })
+  @ApiResponse({ status: 200, description: '정책 통계', type: ControlPolicyStatsDto })
+  async getStats(): Promise<ControlPolicyStatsDto> {
+    return this.controlPoliciesService.getStats();
+  }
+
+  @Get('organization/:orgId')
+  @ApiOperation({ summary: '조직별 제어 정책 조회' })
+  @ApiParam({ name: 'orgId', description: '조직 ID' })
+  @ApiResponse({ status: 200, description: '정책 목록', type: [ControlPolicyResponseDto] })
+  async findByOrganization(@Param('orgId') orgId: string): Promise<ControlPolicyResponseDto[]> {
+    return this.controlPoliciesService.findByOrganization(orgId);
+  }
+
+  @Get('work-type/:workTypeId')
+  @ApiOperation({ summary: '작업 유형별 제어 정책 조회' })
+  @ApiParam({ name: 'workTypeId', description: '작업 유형 ID' })
+  @ApiResponse({ status: 200, description: '정책 상세 정보', type: ControlPolicyDetailDto })
+  async findByWorkType(
+    @Param('workTypeId') workTypeId: string,
+  ): Promise<ControlPolicyDetailDto | null> {
+    return this.controlPoliciesService.findByWorkType(workTypeId);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: '제어 정책 상세 조회' })
+  @ApiParam({ name: 'id', description: '정책 ID' })
+  @ApiResponse({ status: 200, description: '정책 상세 정보', type: ControlPolicyDetailDto })
+  @ApiResponse({ status: 404, description: '정책을 찾을 수 없음' })
+  async findOne(@Param('id') id: string): Promise<ControlPolicyDetailDto> {
+    return this.controlPoliciesService.findOneDetail(id);
+  }
+
+  @Patch(':id')
+  @ApiOperation({ summary: '제어 정책 수정' })
+  @ApiParam({ name: 'id', description: '정책 ID' })
+  @ApiResponse({ status: 200, description: '정책 수정 성공', type: ControlPolicyDetailDto })
+  @ApiResponse({ status: 404, description: '정책을 찾을 수 없음' })
+  async update(
+    @Param('id') id: string,
+    @Body() updateDto: UpdateControlPolicyDto,
+  ): Promise<ControlPolicyDetailDto> {
+    return this.controlPoliciesService.update(id, updateDto);
+  }
+
+  @Patch(':id/toggle-active')
+  @ApiOperation({ summary: '제어 정책 활성/비활성 토글' })
+  @ApiParam({ name: 'id', description: '정책 ID' })
+  @ApiResponse({ status: 200, description: '상태 변경 성공', type: ControlPolicyResponseDto })
+  async toggleActive(@Param('id') id: string): Promise<ControlPolicyResponseDto> {
+    return this.controlPoliciesService.toggleActive(id);
+  }
+
+  @Patch(':id/zones')
+  @ApiOperation({ summary: '제어 정책 구역 할당' })
+  @ApiParam({ name: 'id', description: '정책 ID' })
+  @ApiResponse({ status: 200, description: '구역 할당 성공', type: ControlPolicyDetailDto })
+  async assignZones(
+    @Param('id') id: string,
+    @Body() dto: AssignZonesDto,
+  ): Promise<ControlPolicyDetailDto> {
+    return this.controlPoliciesService.assignZones(id, dto.zoneIds);
+  }
+
+  @Patch(':id/time-policies')
+  @ApiOperation({ summary: '제어 정책 시간 정책 할당' })
+  @ApiParam({ name: 'id', description: '정책 ID' })
+  @ApiResponse({ status: 200, description: '시간 정책 할당 성공', type: ControlPolicyDetailDto })
+  async assignTimePolicies(
+    @Param('id') id: string,
+    @Body() dto: AssignTimePoliciesDto,
+  ): Promise<ControlPolicyDetailDto> {
+    return this.controlPoliciesService.assignTimePolicies(id, dto.timePolicyIds);
+  }
+
+  @Patch(':id/behavior-conditions')
+  @ApiOperation({ summary: '제어 정책 행동 조건 할당' })
+  @ApiParam({ name: 'id', description: '정책 ID' })
+  @ApiResponse({ status: 200, description: '행동 조건 할당 성공', type: ControlPolicyDetailDto })
+  async assignBehaviorConditions(
+    @Param('id') id: string,
+    @Body() dto: AssignBehaviorConditionsDto,
+  ): Promise<ControlPolicyDetailDto> {
+    return this.controlPoliciesService.assignBehaviorConditions(id, dto.behaviorConditionIds);
+  }
+
+  @Patch(':id/harmful-apps')
+  @ApiOperation({ summary: '제어 정책 유해앱 프리셋 할당' })
+  @ApiParam({ name: 'id', description: '정책 ID' })
+  @ApiResponse({ status: 200, description: '유해앱 프리셋 할당 성공', type: ControlPolicyDetailDto })
+  async assignHarmfulApps(
+    @Param('id') id: string,
+    @Body() dto: AssignHarmfulAppsDto,
+  ): Promise<ControlPolicyDetailDto> {
+    return this.controlPoliciesService.assignHarmfulApps(id, dto.harmfulAppPresetIds);
+  }
+
+  @Patch(':id/employees')
+  @ApiOperation({ summary: '제어 정책 대상 직원 할당' })
+  @ApiParam({ name: 'id', description: '정책 ID' })
+  @ApiResponse({ status: 200, description: '직원 할당 성공', type: ControlPolicyDetailDto })
+  async assignEmployees(
+    @Param('id') id: string,
+    @Body() dto: AssignEmployeesDto,
+  ): Promise<ControlPolicyDetailDto> {
+    return this.controlPoliciesService.assignEmployees(id, dto.employeeIds);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: '제어 정책 삭제' })
+  @ApiParam({ name: 'id', description: '정책 ID' })
+  @ApiResponse({ status: 204, description: '정책 삭제 성공' })
+  @ApiResponse({ status: 404, description: '정책을 찾을 수 없음' })
+  async remove(@Param('id') id: string): Promise<void> {
+    return this.controlPoliciesService.remove(id);
+  }
+}

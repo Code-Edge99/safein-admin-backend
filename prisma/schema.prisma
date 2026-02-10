@@ -1,0 +1,753 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ ENUMS ============
+
+enum OrganizationType {
+  company
+  site
+  field
+  department
+  team
+}
+
+enum EmployeeStatus {
+  ACTIVE        // 재직
+  RESIGNED      // 퇴사
+  EXCEPTION     // 재직(예외)
+  LEAVE         // 휴직
+}
+
+enum DeviceOS {
+  Android
+  iOS
+}
+
+enum DeviceStatus {
+  NORMAL        // 정상
+  INACTIVE      // 비활성
+  SUSPICIOUS    // 삭제 의심
+  NO_COMM       // 미통신
+}
+
+enum DeviceOperationStatus {
+  IN_USE        // 사용 중
+  LOGGED_OUT    // 로그아웃
+  LOST          // 분실
+  REPLACING     // 교체 예정
+  UNASSIGNED    // 미할당
+  PREVIOUS      // 이전 기기
+}
+
+enum ZoneType {
+  danger        // 위험 구역
+  normal        // 일반 구역
+  work          // 작업 구역
+  safe          // 안전 구역
+}
+
+enum ZoneShape {
+  circle
+  polygon
+}
+
+enum BehaviorConditionType {
+  distance      // 이동거리
+  walking       // 보행
+  walkingSpeed  // 보행속도
+  vehicleSpeed  // 차량속도
+  composite     // 복합
+}
+
+enum ControlLogType {
+  behavior
+  harmful_app
+}
+
+enum ControlLogAction {
+  blocked
+  allowed
+}
+
+enum AdminRole {
+  SUPER_ADMIN      // 슈퍼관리자
+  SITE_ADMIN       // 현장관리자
+  VIEWER           // 조회자
+}
+
+enum AccountStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  ACTIVATE
+  DEACTIVATE
+}
+
+enum LoginStatus {
+  SUCCESS
+  FAILED
+}
+
+// ============ CORE ENTITIES ============
+
+model Organization {
+  id            String             @id @default(uuid())
+  name          String             @db.VarChar(100)
+  type          OrganizationType
+  parentId      String?
+  parent        Organization?      @relation("OrgHierarchy", fields: [parentId], references: [id])
+  children      Organization[]     @relation("OrgHierarchy")
+  employeeCount Int                @default(0)
+  isActive      Boolean            @default(true)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  createdById   String?
+  createdBy     Account?           @relation("OrgCreatedBy", fields: [createdById], references: [id])
+  updatedById   String?
+  updatedBy     Account?           @relation("OrgUpdatedBy", fields: [updatedById], references: [id])
+
+  employees         Employee[]       @relation("EmployeeOrg")
+  employeesBySite   Employee[]       @relation("EmployeeSite")
+  devices           Device[]
+  workTypes         WorkType[]
+  zones             Zone[]
+  timePolicies      TimePolicy[]
+  behaviorConditions BehaviorCondition[]
+  harmfulAppPresets HarmfulAppPreset[]
+  controlPolicies   ControlPolicy[]
+  accounts          Account[]        @relation("AccountOrg")
+  dailyStats        OrganizationDailyStat[]
+  hourlyStats       HourlyBlockStat[]
+  auditLogs         AuditLog[]
+
+  @@index([parentId])
+  @@index([type])
+  @@map("organizations")
+}
+
+model Employee {
+  id              String          @id @default(uuid())
+  employeeId      String?         @db.VarChar(50)
+  name            String          @db.VarChar(50)
+  organizationId  String
+  organization    Organization    @relation("EmployeeOrg", fields: [organizationId], references: [id])
+  siteId          String
+  site            Organization    @relation("EmployeeSite", fields: [siteId], references: [id])
+  workTypeId      String?
+  workType        WorkType?       @relation(fields: [workTypeId], references: [id])
+  position        String?         @db.VarChar(50)
+  role            String?         @db.VarChar(100)
+  status          EmployeeStatus  @default(ACTIVE)
+  phone           String?         @db.VarChar(20)
+  email           String?         @db.VarChar(100)
+  hireDate        DateTime?       @db.Date
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  createdById     String?
+  updatedById     String?
+
+  devices           Device[]
+  controlLogs       ControlLog[]
+  exclusions        EmployeeExclusion[]
+  dailyStats        EmployeeDailyStat[]
+  policyAssignments ControlPolicyEmployee[]
+  employeeAccount   EmployeeAccount?
+
+  @@index([organizationId])
+  @@index([siteId])
+  @@index([workTypeId])
+  @@index([status])
+  @@map("employees")
+}
+
+model Device {
+  id                  String                 @id @default(uuid())
+  deviceId            String                 @unique @db.VarChar(50)
+  employeeId          String?
+  employee            Employee?              @relation(fields: [employeeId], references: [id])
+  organizationId      String?
+  organization        Organization?          @relation(fields: [organizationId], references: [id])
+  os                  DeviceOS
+  osVersion           String?                @db.VarChar(20)
+  model               String?                @db.VarChar(50)
+  manufacturer        String?                @db.VarChar(50)
+  appVersion          String?                @db.VarChar(20)
+  status              DeviceStatus           @default(NORMAL)
+  deviceStatus        DeviceOperationStatus  @default(UNASSIGNED)
+  lastCommunication   DateTime?
+  registeredAt        DateTime?
+  deactivatedAt       DateTime?
+  deactivatedReason   String?                @db.VarChar(200)
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+
+  pushToken           String?                @db.VarChar(500)
+  token               DeviceToken?
+  locations           DeviceLocation[]
+  controlLogs         ControlLog[]
+  installedApps       InstalledApp[]
+
+  @@index([employeeId])
+  @@index([organizationId])
+  @@index([status])
+  @@map("devices")
+}
+
+model DeviceToken {
+  id            String    @id @default(uuid())
+  deviceId      String    @unique
+  device        Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  refreshToken  String?   @db.VarChar(500)
+  isValid       Boolean   @default(true)
+  lastLogin     DateTime?
+  lastRefreshed DateTime?
+  expiresAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@map("device_tokens")
+}
+
+model DeviceLocation {
+  id        String   @id @default(uuid())
+  deviceId  String
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  latitude  Decimal  @db.Decimal(10, 8)
+  longitude Decimal  @db.Decimal(11, 8)
+  accuracy  Float?
+  timestamp DateTime
+
+  @@index([deviceId, timestamp])
+  @@map("device_locations")
+}
+
+model WorkType {
+  id              String        @id @default(uuid())
+  name            String        @db.VarChar(50)
+  description     String?       @db.VarChar(200)
+  organizationId  String
+  organization    Organization  @relation(fields: [organizationId], references: [id])
+  employeeCount   Int           @default(0)
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  employees          Employee[]
+  zones              Zone[]
+  timePolicies       TimePolicy[]
+  behaviorConditions BehaviorCondition[]
+  harmfulAppPresets  HarmfulAppPreset[]
+  controlPolicy      ControlPolicy?
+  dailyStats         EmployeeDailyStat[]
+
+  @@index([organizationId])
+  @@map("work_types")
+}
+
+// ============ POLICY CONDITION ENTITIES ============
+
+model Zone {
+  id              String        @id @default(uuid())
+  name            String        @db.VarChar(100)
+  type            ZoneType
+  shape           ZoneShape
+  coordinates     Json          // [{lat: number, lng: number}]
+  radius          Int?          // meters, for circle
+  description     String?       @db.VarChar(500)
+  groupId         String?
+  organizationId  String
+  organization    Organization  @relation(fields: [organizationId], references: [id])
+  workTypeId      String?
+  workType        WorkType?     @relation(fields: [workTypeId], references: [id])
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  createdById     String?
+  updatedById     String?
+
+  controlLogs     ControlLog[]
+  policyZones     ControlPolicyZone[]
+  dailyStats      ZoneViolationStat[]
+
+  @@index([organizationId])
+  @@index([workTypeId])
+  @@map("zones")
+}
+
+model TimePolicy {
+  id              String                    @id @default(uuid())
+  name            String                    @db.VarChar(100)
+  description     String?                   @db.VarChar(500)
+  startTime       DateTime                  @db.Time()
+  endTime         DateTime                  @db.Time()
+  days            String[]                  // ['월', '화', ...]
+  organizationId  String
+  organization    Organization              @relation(fields: [organizationId], references: [id])
+  workTypeId      String?
+  workType        WorkType?                 @relation(fields: [workTypeId], references: [id])
+  isActive        Boolean                   @default(true)
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  createdById     String?
+  updatedById     String?
+
+  excludePeriods  TimePolicyExcludePeriod[]
+  policyTimePolicies ControlPolicyTimePolicy[]
+
+  @@index([organizationId])
+  @@index([workTypeId])
+  @@map("time_policies")
+}
+
+model TimePolicyExcludePeriod {
+  id            String     @id @default(uuid())
+  timePolicyId  String
+  timePolicy    TimePolicy @relation(fields: [timePolicyId], references: [id], onDelete: Cascade)
+  name          String     @db.VarChar(50)
+  startTime     DateTime   @db.Time()
+  endTime       DateTime   @db.Time()
+
+  @@map("time_policy_exclude_periods")
+}
+
+model BehaviorCondition {
+  id                String                @id @default(uuid())
+  name              String                @db.VarChar(100)
+  type              BehaviorConditionType
+  distanceThreshold Int?
+  stepsThreshold    Int?
+  speedThreshold    Int?
+  description       String?               @db.VarChar(500)
+  organizationId    String
+  organization      Organization          @relation(fields: [organizationId], references: [id])
+  workTypeId        String?
+  workType          WorkType?             @relation(fields: [workTypeId], references: [id])
+  isActive          Boolean               @default(true)
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  createdById       String?
+  updatedById       String?
+
+  policyBehaviors   ControlPolicyBehavior[]
+
+  @@index([organizationId])
+  @@index([workTypeId])
+  @@map("behavior_conditions")
+}
+
+model HarmfulApp {
+  id          String    @id @default(uuid())
+  name        String    @db.VarChar(100)
+  packageName String    @unique @db.VarChar(200)
+  category    String?   @db.VarChar(50)
+  platform    String    @default("android") @db.VarChar(20) // android | ios
+  iconUrl     String?   @db.VarChar(500)
+  isGlobal    Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  presetItems HarmfulAppPresetItem[]
+  installedApps InstalledApp[]
+
+  @@map("harmful_apps")
+}
+
+model HarmfulAppPreset {
+  id              String        @id @default(uuid())
+  name            String        @db.VarChar(100)
+  description     String?       @db.VarChar(500)
+  platform        String        @default("android") @db.VarChar(20) // android | ios
+  organizationId  String
+  organization    Organization  @relation(fields: [organizationId], references: [id])
+  workTypeId      String?
+  workType        WorkType?     @relation(fields: [workTypeId], references: [id])
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  createdById     String?
+  updatedById     String?
+
+  items           HarmfulAppPresetItem[]
+  policyPresets   ControlPolicyHarmfulApp[]
+
+  @@index([organizationId])
+  @@index([workTypeId])
+  @@map("harmful_app_presets")
+}
+
+model HarmfulAppPresetItem {
+  id            String           @id @default(uuid())
+  presetId      String
+  preset        HarmfulAppPreset @relation(fields: [presetId], references: [id], onDelete: Cascade)
+  harmfulAppId  String
+  harmfulApp    HarmfulApp       @relation(fields: [harmfulAppId], references: [id])
+
+  @@unique([presetId, harmfulAppId])
+  @@map("harmful_app_preset_items")
+}
+
+// ============ CONTROL POLICY ============
+
+model ControlPolicy {
+  id              String        @id @default(uuid())
+  name            String        @db.VarChar(100)
+  description     String?       @db.VarChar(500)
+  organizationId  String
+  organization    Organization  @relation(fields: [organizationId], references: [id])
+  workTypeId      String        @unique  // 1:1 relationship with WorkType
+  workType        WorkType      @relation(fields: [workTypeId], references: [id])
+  priority        Int           @default(1)
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  createdById     String?
+  updatedById     String?
+
+  zones           ControlPolicyZone[]
+  timePolicies    ControlPolicyTimePolicy[]
+  behaviors       ControlPolicyBehavior[]
+  harmfulApps     ControlPolicyHarmfulApp[]
+  targetEmployees ControlPolicyEmployee[]
+  controlLogs     ControlLog[]
+
+  @@index([organizationId])
+  @@map("control_policies")
+}
+
+// Junction Tables for Many-to-Many
+model ControlPolicyZone {
+  id        String         @id @default(uuid())
+  policyId  String
+  policy    ControlPolicy  @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  zoneId    String
+  zone      Zone           @relation(fields: [zoneId], references: [id])
+
+  @@unique([policyId, zoneId])
+  @@map("control_policy_zones")
+}
+
+model ControlPolicyTimePolicy {
+  id            String         @id @default(uuid())
+  policyId      String
+  policy        ControlPolicy  @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  timePolicyId  String
+  timePolicy    TimePolicy     @relation(fields: [timePolicyId], references: [id])
+
+  @@unique([policyId, timePolicyId])
+  @@map("control_policy_time_policies")
+}
+
+model ControlPolicyBehavior {
+  id                   String            @id @default(uuid())
+  policyId             String
+  policy               ControlPolicy     @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  behaviorConditionId  String
+  behaviorCondition    BehaviorCondition @relation(fields: [behaviorConditionId], references: [id])
+
+  @@unique([policyId, behaviorConditionId])
+  @@map("control_policy_behaviors")
+}
+
+model ControlPolicyHarmfulApp {
+  id        String            @id @default(uuid())
+  policyId  String
+  policy    ControlPolicy     @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  presetId  String
+  preset    HarmfulAppPreset  @relation(fields: [presetId], references: [id])
+
+  @@unique([policyId, presetId])
+  @@map("control_policy_harmful_apps")
+}
+
+model ControlPolicyEmployee {
+  id          String         @id @default(uuid())
+  policyId    String
+  policy      ControlPolicy  @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  employeeId  String
+  employee    Employee       @relation(fields: [employeeId], references: [id])
+
+  @@unique([policyId, employeeId])
+  @@map("control_policy_employees")
+}
+
+// ============ CONTROL LOG ============
+
+model ControlLog {
+  id                String           @id @default(uuid())
+  employeeId        String
+  employee          Employee         @relation(fields: [employeeId], references: [id])
+  deviceId          String
+  device            Device           @relation(fields: [deviceId], references: [id])
+  policyId          String?
+  policy            ControlPolicy?   @relation(fields: [policyId], references: [id])
+  zoneId            String?
+  zone              Zone?            @relation(fields: [zoneId], references: [id])
+  type              ControlLogType
+  action            ControlLogAction
+  timestamp         DateTime
+  latitude          Decimal?         @db.Decimal(10, 8)
+  longitude         Decimal?         @db.Decimal(11, 8)
+  reason            String?          @db.VarChar(500)
+  appName           String?          @db.VarChar(100)
+  packageName       String?          @db.VarChar(200)
+  behaviorDistance  Int?
+  behaviorSteps     Int?
+  behaviorSpeed     Int?
+  createdAt         DateTime         @default(now())
+
+  @@index([employeeId, timestamp])
+  @@index([deviceId, timestamp])
+  @@index([timestamp])
+  @@index([type])
+  @@map("control_logs")
+}
+
+// ============ EXCLUSION ============
+
+model EmployeeExclusion {
+  id          String    @id @default(uuid())
+  employeeId  String
+  employee    Employee  @relation(fields: [employeeId], references: [id])
+  startDate   DateTime  @db.Date
+  endDate     DateTime? @db.Date
+  reason      String    @db.VarChar(500)
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+
+  @@index([employeeId])
+  @@index([isActive])
+  @@map("employee_exclusions")
+}
+
+// ============ ADMIN & AUTH ============
+
+model Account {
+  id              String        @id @default(uuid())
+  username        String        @unique @db.VarChar(50)
+  passwordHash    String        @db.VarChar(255)
+  name            String        @db.VarChar(50)
+  email           String        @db.VarChar(100)
+  phone           String?       @db.VarChar(20)
+  role            AdminRole
+  organizationId  String?
+  organization    Organization? @relation("AccountOrg", fields: [organizationId], references: [id])
+  status          AccountStatus @default(ACTIVE)
+  lastLogin       DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  createdById     String?
+  updatedById     String?
+
+  loginHistory    AdminLoginHistory[]
+  auditLogs       AuditLog[]
+  orgsCreated     Organization[]  @relation("OrgCreatedBy")
+  orgsUpdated     Organization[]  @relation("OrgUpdatedBy")
+
+  @@index([role])
+  @@index([status])
+  @@map("accounts")
+}
+
+model Permission {
+  id          String    @id @default(uuid())
+  category    String    @db.VarChar(50)
+  name        String    @db.VarChar(100)
+  code        String    @unique @db.VarChar(50)
+  description String?   @db.VarChar(500)
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  id            String      @id @default(uuid())
+  role          AdminRole
+  permissionId  String
+  permission    Permission  @relation(fields: [permissionId], references: [id])
+
+  @@unique([role, permissionId])
+  @@map("role_permissions")
+}
+
+model AdminLoginHistory {
+  id          String       @id @default(uuid())
+  accountId   String?
+  account     Account?     @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  loginTime   DateTime     @default(now())
+  ipAddress   String?      @db.VarChar(45)
+  userAgent   String?      @db.VarChar(500)
+  status      LoginStatus
+  failReason  String?      @db.VarChar(200)
+
+  @@index([accountId, loginTime])
+  @@map("admin_login_history")
+}
+
+model AuditLog {
+  id              String        @id @default(uuid())
+  accountId       String?
+  account         Account?      @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  action          AuditAction
+  resourceType    String        @db.VarChar(50)
+  resourceId      String?
+  resourceName    String?       @db.VarChar(200)
+  organizationId  String?
+  organization    Organization? @relation(fields: [organizationId], references: [id])
+  changesBefore   Json?
+  changesAfter    Json?
+  ipAddress       String?       @db.VarChar(45)
+  timestamp       DateTime      @default(now())
+
+  @@index([accountId, timestamp])
+  @@index([resourceType, timestamp])
+  @@index([timestamp])
+  @@map("audit_logs")
+}
+
+// ============ AGGREGATION TABLES ============
+
+model EmployeeDailyStat {
+  id               String     @id @default(uuid())
+  employeeId       String
+  employee         Employee   @relation(fields: [employeeId], references: [id])
+  organizationId   String
+  workTypeId       String?
+  workType         WorkType?  @relation(fields: [workTypeId], references: [id])
+  date             DateTime   @db.Date
+  totalBlocks      Int        @default(0)
+  behaviorBlocks   Int        @default(0)
+  harmfulAppBlocks Int        @default(0)
+  zoneViolations   Int        @default(0)
+  timeViolations   Int        @default(0)
+  topBlockedApp    String?    @db.VarChar(100)
+  createdAt        DateTime   @default(now())
+
+  @@unique([employeeId, date])
+  @@index([date])
+  @@index([organizationId, date])
+  @@map("employee_daily_stats")
+}
+
+model OrganizationDailyStat {
+  id               String        @id @default(uuid())
+  organizationId   String
+  organization     Organization  @relation(fields: [organizationId], references: [id])
+  date             DateTime      @db.Date
+  totalEmployees   Int           @default(0)
+  activeDevices    Int           @default(0)
+  totalBlocks      Int           @default(0)
+  behaviorBlocks   Int           @default(0)
+  harmfulAppBlocks Int           @default(0)
+  complianceRate   Decimal?      @db.Decimal(5, 2)
+  createdAt        DateTime      @default(now())
+
+  @@unique([organizationId, date])
+  @@index([date])
+  @@map("organization_daily_stats")
+}
+
+model HourlyBlockStat {
+  id               String        @id @default(uuid())
+  organizationId   String
+  organization     Organization  @relation(fields: [organizationId], references: [id])
+  date             DateTime      @db.Date
+  hour             Int
+  totalBlocks      Int           @default(0)
+  behaviorBlocks   Int           @default(0)
+  harmfulAppBlocks Int           @default(0)
+  createdAt        DateTime      @default(now())
+
+  @@unique([organizationId, date, hour])
+  @@index([date])
+  @@map("hourly_block_stats")
+}
+
+model ZoneViolationStat {
+  id              String    @id @default(uuid())
+  zoneId          String
+  zone            Zone      @relation(fields: [zoneId], references: [id])
+  date            DateTime  @db.Date
+  violationCount  Int       @default(0)
+  uniqueEmployees Int       @default(0)
+  createdAt       DateTime  @default(now())
+
+  @@unique([zoneId, date])
+  @@index([date])
+  @@map("zone_violation_stats")
+}
+
+// ============ EMPLOYEE APP ============
+
+model EmployeeAccount {
+  id              String    @id @default(uuid())
+  employeeId      String    @unique
+  employee        Employee  @relation(fields: [employeeId], references: [id])
+  passwordHash    String    @db.VarChar(255)
+  isActive        Boolean   @default(true)
+  lastLogin       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  loginHistory    EmployeeLoginHistory[]
+
+  @@map("employee_accounts")
+}
+
+model EmployeeLoginHistory {
+  id                  String          @id @default(uuid())
+  employeeAccountId   String
+  employeeAccount     EmployeeAccount @relation(fields: [employeeAccountId], references: [id])
+  deviceId            String?
+  ipAddress           String?         @db.VarChar(45)
+  userAgent           String?         @db.VarChar(500)
+  status              LoginStatus
+  failReason          String?         @db.VarChar(200)
+  loginTime           DateTime        @default(now())
+
+  @@index([employeeAccountId, loginTime])
+  @@map("employee_login_history")
+}
+
+model InstalledApp {
+  id              String      @id @default(uuid())
+  deviceId        String
+  device          Device      @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  packageName     String      @db.VarChar(200)
+  appName         String      @db.VarChar(200)
+  version         String?     @db.VarChar(50)
+  isSystemApp     Boolean     @default(false)
+  harmfulAppId    String?
+  harmfulApp      HarmfulApp? @relation(fields: [harmfulAppId], references: [id])
+  isInstalled     Boolean     @default(true)
+  firstDetectedAt DateTime    @default(now())
+  lastDetectedAt  DateTime    @default(now())
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@unique([deviceId, packageName])
+  @@index([deviceId])
+  @@index([harmfulAppId])
+  @@index([packageName])
+  @@map("installed_apps")
+}

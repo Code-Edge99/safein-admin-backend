@@ -1,0 +1,104 @@
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+
+@Injectable()
+export class AuditLogsService {
+  constructor(private prisma: PrismaService) {}
+
+  async findAll(filter: {
+    search?: string;
+    action?: string;
+    resourceType?: string;
+    organizationId?: string;
+    startDate?: string;
+    endDate?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const page = filter.page || 1;
+    const limit = filter.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+
+    if (filter.action) {
+      where.action = filter.action;
+    }
+
+    if (filter.resourceType) {
+      where.resourceType = filter.resourceType;
+    }
+
+    if (filter.organizationId) {
+      where.organizationId = filter.organizationId;
+    }
+
+    if (filter.startDate || filter.endDate) {
+      where.timestamp = {};
+      if (filter.startDate) where.timestamp.gte = new Date(filter.startDate);
+      if (filter.endDate) where.timestamp.lte = new Date(filter.endDate);
+    }
+
+    if (filter.search) {
+      where.OR = [
+        { resourceName: { contains: filter.search, mode: 'insensitive' } },
+        { account: { name: { contains: filter.search, mode: 'insensitive' } } },
+      ];
+    }
+
+    const [data, total] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where,
+        skip,
+        take: limit,
+        include: {
+          account: { select: { id: true, name: true, username: true } },
+        },
+        orderBy: { timestamp: 'desc' },
+      }),
+      this.prisma.auditLog.count({ where }),
+    ]);
+
+    return {
+      data: data.map((log) => this.toResponseDto(log)),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  async findOne(id: string) {
+    const log = await this.prisma.auditLog.findUnique({
+      where: { id },
+      include: {
+        account: { select: { id: true, name: true, username: true } },
+      },
+    });
+
+    if (!log) {
+      throw new NotFoundException('감사 로그를 찾을 수 없습니다.');
+    }
+
+    return this.toResponseDto(log);
+  }
+
+  private toResponseDto(log: any) {
+    return {
+      id: log.id,
+      accountId: log.accountId,
+      userName: log.account?.name || '',
+      username: log.account?.username || '',
+      action: log.action,
+      resourceType: log.resourceType,
+      resourceId: log.resourceId,
+      resourceName: log.resourceName,
+      organizationId: log.organizationId,
+      changesBefore: log.changesBefore,
+      changesAfter: log.changesAfter,
+      ipAddress: log.ipAddress,
+      timestamp: log.timestamp,
+      createdAt: log.createdAt,
+    };
+  }
+}
