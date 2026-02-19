@@ -6,7 +6,7 @@
 
 | 항목 | 버전 |
 |------|------|
-| Node.js | 24.x |
+| Node.js | 20.x (LTS) |
 | NestJS | 10.x |
 | Prisma | 5.x |
 | PostgreSQL | 16 |
@@ -33,23 +33,38 @@
 | Dashboard | `/api/dashboard` | 통계, 차트, 리포트 API |
 | Permissions | `/api/permissions` | 역할별 권한 관리 |
 
-## 로컬 개발 환경 설정
+## 설치 및 실행 (마이그레이션 포함)
 
-### 1. 사전 요구 사항
+아래 순서를 그대로 실행하면 로컬 개발 환경을 바로 띄울 수 있습니다.
 
-- Node.js 20.x
-- PostgreSQL 16 (또는 Docker)
+### 1) 사전 요구 사항
+
+- Node.js 20.x (LTS)
 - npm
+- PostgreSQL 16 (로컬 설치 또는 Docker)
+- Git
 
-### 2. 의존성 설치
+### 2) 레포 배치
+
+`smombie-admin-backend`와 `smombie-prisma`는 **같은 상위 폴더**에 있어야 합니다.
 
 ```bash
-npm install
+workspace/
+  smombie-admin-backend/
+  smombie-prisma/
 ```
 
-### 3. 환경 변수 설정
+이미 `smombie-admin-backend`가 있는 경우:
 
-프로젝트 루트에 `.env` 파일 생성:
+```bash
+cd ..
+git clone <SMOMBIE_PRISMA_REPO_URL> smombie-prisma
+cd smombie-admin-backend
+```
+
+### 3) 환경 변수 설정
+
+`smombie-admin-backend` 루트에 `.env` 파일 생성:
 
 ```env
 DATABASE_URL=postgresql://postgres:password@localhost:5432/smombie?schema=public
@@ -59,15 +74,21 @@ JWT_EXPIRATION=1d
 CORS_ORIGIN=*
 ```
 
-### 4. DB 마이그레이션 & 시드 (공용 Prisma)
-
-먼저 공용 Prisma 레포를 별도 폴더로 클론합니다.
+### 4) 의존성 설치
 
 ```bash
-cd ..
-git clone <SMOMBIE_PRISMA_REPO_URL> smombie-prisma
-cd smombie-admin-backend
+# smombie-admin-backend
+npm install
+
+# smombie-prisma (최초 1회 권장)
+cd ../smombie-prisma
+npm install
+cd ../smombie-admin-backend
 ```
+
+### 5) Prisma 생성/마이그레이션/시드
+
+신규 DB(처음 세팅) 기준:
 
 ```bash
 npm run prisma:generate
@@ -75,13 +96,17 @@ npm run prisma:migrate
 npm run prisma:seed
 ```
 
-`admin-backend`는 상위 경로의 `../smombie-prisma/prisma`를 단일 소스로 사용하며, 마이그레이션 실행 권한도 이 서비스가 소유합니다.
+- `prisma:generate`: Prisma Client 생성
+- `prisma:migrate`: 개발용 마이그레이션 생성/적용 (`migrate dev`)
+- `prisma:seed`: 기본 데이터 입력
 
-전환 기간 호환을 위해 스크립트는 `../smombie-prisma/prisma`를 우선 사용하고, 없으면 기존 `../../prisma`를 fallback으로 참조합니다.
+운영/배포 환경(기존 마이그레이션 적용만)에서는 아래 사용:
 
-시드 데이터: 관리자 4명, 조직 11개, 직원 55명, 디바이스 45개, 구역 22개, 정책 15개 외 다수
+```bash
+npm run prisma:migrate:prod
+```
 
-### 5. 개발 서버 실행
+### 6) 개발 서버 실행
 
 ```bash
 npm run dev
@@ -90,6 +115,37 @@ npm run dev
 서버 실행 후:
 - API: http://localhost:3000/api
 - Swagger: http://localhost:3000/api/docs
+
+### 7) 자주 쓰는 DB 명령어
+
+```bash
+npm run prisma:studio   # DB GUI
+npm run db:reset        # 개발 DB 초기화 + 재마이그레이션 + 시드
+```
+
+## Prisma 경로 동작 방식
+
+`scripts/prisma-runner.js`는 아래 순서로 스키마/시드 파일을 탐색합니다.
+
+1. `PRISMA_SCHEMA_PATH`, `PRISMA_SEED_PATH` 환경 변수
+2. `../smombie-prisma/prisma/*` (권장)
+3. 기타 레거시 fallback 경로
+
+즉, 기본 권장 구조는 `smombie-admin-backend`와 `smombie-prisma`를 동일 상위 폴더에 두는 방식입니다.
+
+## Windows PowerShell 이슈 (npm.ps1 차단)
+
+PowerShell에서 `npm run ...` 실행 시 실행 정책 오류가 나면 다음 중 하나를 사용하세요.
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
+
+또는 정책 변경 없이:
+
+```powershell
+npm.cmd run dev
+```
 
 ## Docker 실행
 
