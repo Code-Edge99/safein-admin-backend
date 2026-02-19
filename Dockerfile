@@ -2,12 +2,12 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
-COPY package*.json ./
-COPY prisma ./prisma/
+COPY smombie-admin-backend/package*.json ./
 RUN npm ci
 
-COPY . .
-RUN npx prisma generate
+COPY smombie-prisma/prisma /prisma
+COPY smombie-admin-backend/ ./
+RUN npx prisma generate --schema /prisma/schema.prisma
 RUN npm run build
 
 # ── Production Stage ──
@@ -19,8 +19,8 @@ RUN apk add --no-cache openssl
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package*.json ./
-COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /prisma /prisma
 
 EXPOSE 3000
 
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/main"]
+CMD ["sh", "-c", "npx prisma migrate deploy --schema /prisma/schema.prisma && node dist/src/main"]

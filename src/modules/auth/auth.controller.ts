@@ -33,8 +33,17 @@ export class AuthController {
   @ApiOperation({ summary: '로그인' })
   @ApiResponse({ status: 200, description: '로그인 성공', type: TokenResponseDto })
   @ApiResponse({ status: 401, description: '인증 실패' })
-  async login(@Body() loginDto: LoginDto): Promise<TokenResponseDto> {
-    return this.authService.login(loginDto);
+  async login(
+    @Body() loginDto: LoginDto,
+    @Request() req: AuthenticatedRequest,
+  ): Promise<TokenResponseDto> {
+    const forwarded = req.headers['x-forwarded-for'];
+    const ipAddress = Array.isArray(forwarded)
+      ? forwarded[0]
+      : forwarded?.split(',')[0]?.trim() || req.ip || '';
+    const userAgent = req.headers['user-agent'] || '';
+
+    return this.authService.login(loginDto, ipAddress, userAgent);
   }
 
   @Get('profile')

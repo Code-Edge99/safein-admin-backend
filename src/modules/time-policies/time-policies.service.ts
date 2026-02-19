@@ -14,6 +14,44 @@ import {
 export class TimePoliciesService {
   constructor(private prisma: PrismaService) {}
 
+  private async deactivatePoliciesWithoutConditions(tx: any, policyIds: string[]): Promise<void> {
+    const uniquePolicyIds = Array.from(new Set(policyIds.filter(Boolean)));
+    if (uniquePolicyIds.length === 0) return;
+
+    const policies = await tx.controlPolicy.findMany({
+      where: { id: { in: uniquePolicyIds } },
+      select: {
+        id: true,
+        _count: {
+          select: {
+            zones: true,
+            timePolicies: true,
+            behaviors: true,
+            harmfulApps: true,
+          },
+        },
+      },
+    });
+
+    const emptyPolicyIds = policies
+      .filter(
+        (p: any) =>
+          p._count.zones + p._count.timePolicies + p._count.behaviors + p._count.harmfulApps === 0,
+      )
+      .map((p: any) => p.id);
+
+    if (emptyPolicyIds.length === 0) return;
+
+    await tx.controlPolicy.updateMany({
+      where: { id: { in: emptyPolicyIds } },
+      data: { isActive: false },
+    });
+
+    await tx.controlPolicyEmployee.deleteMany({
+      where: { policyId: { in: emptyPolicyIds } },
+    });
+  }
+
   async create(createTimePolicyDto: CreateTimePolicyDto): Promise<TimePolicyResponseDto> {
     const { organizationId, workTypeId, timeSlots, excludePeriods, ...rest } = createTimePolicyDto;
 
@@ -240,8 +278,35 @@ export class TimePoliciesService {
   }
 
   async remove(id: string): Promise<void> {
-    await this.findOne(id);
-    await this.prisma.timePolicy.delete({ where: { id } });
+    const policy = await this.prisma.timePolicy.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            policyTimePolicies: true,
+          },
+        },
+      },
+    });
+
+    if (!policy) {
+      throw new NotFoundException('시간 정책을 찾을 수 없습니다.');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      const impacted = await tx.controlPolicyTimePolicy.findMany({
+        where: { timePolicyId: id },
+        select: { policyId: true },
+      });
+
+      await tx.controlPolicyTimePolicy.deleteMany({ where: { timePolicyId: id } });
+      await tx.timePolicy.delete({ where: { id } });
+
+      await this.deactivatePoliciesWithoutConditions(
+        tx,
+        impacted.map((item: any) => item.policyId),
+      );
+    });
   }
 
   async toggleActive(id: string): Promise<TimePolicyResponseDto> {

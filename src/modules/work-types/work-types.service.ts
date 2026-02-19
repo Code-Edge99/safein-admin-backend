@@ -118,6 +118,9 @@ export class WorkTypesService {
         _count: {
           select: { employees: true },
         },
+        controlPolicy: {
+          select: { id: true },
+        },
       },
     });
 
@@ -131,8 +134,16 @@ export class WorkTypesService {
       );
     }
 
-    await this.prisma.workType.delete({
-      where: { id },
+    await this.prisma.$transaction(async (tx) => {
+      if (workType.controlPolicy) {
+        await tx.controlPolicy.delete({
+          where: { id: workType.controlPolicy.id },
+        });
+      }
+
+      await tx.workType.delete({
+        where: { id },
+      });
     });
   }
 

@@ -12,7 +12,11 @@ export class AuthService {
     private readonly jwtService: JwtService,
   ) {}
 
-  async login(loginDto: LoginDto): Promise<TokenResponseDto> {
+  async login(
+    loginDto: LoginDto,
+    ipAddress?: string,
+    userAgent?: string,
+  ): Promise<TokenResponseDto> {
     const { username, password } = loginDto;
 
     const account = await this.prisma.account.findUnique({
@@ -37,8 +41,8 @@ export class AuthService {
       await this.prisma.adminLoginHistory.create({
         data: {
           accountId: account.id,
-          ipAddress: '',
-          userAgent: '',
+          ipAddress: ipAddress || null,
+          userAgent: userAgent || null,
           status: LoginStatus.FAILED,
           failReason: 'INVALID_PASSWORD',
         },
@@ -51,8 +55,8 @@ export class AuthService {
     await this.prisma.adminLoginHistory.create({
       data: {
         accountId: account.id,
-        ipAddress: '',
-        userAgent: '',
+        ipAddress: ipAddress || null,
+        userAgent: userAgent || null,
         status: LoginStatus.SUCCESS,
       },
     });

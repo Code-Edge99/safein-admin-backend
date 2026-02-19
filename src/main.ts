@@ -3,19 +3,43 @@ import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
+import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
 
+  const nodeEnv = configService.get<string>('NODE_ENV', 'development');
+  if (nodeEnv === 'production') {
+    const jwtSecret = configService.get<string>('JWT_SECRET');
+    if (!jwtSecret || jwtSecret.length < 32) {
+      throw new Error('JWT_SECRET must be set and at least 32 characters in production.');
+    }
+  }
+
   // Global prefix
   app.setGlobalPrefix('api');
 
   // CORS
+  const corsOrigin = configService.get<string>('CORS_ORIGIN', 'http://localhost:5173');
+  const parsedOrigins = corsOrigin
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
   app.enableCors({
-    origin: configService.get('CORS_ORIGIN', 'http://localhost:5173'),
-    credentials: true,
+    origin: parsedOrigins.includes('*')
+      ? true
+      : parsedOrigins.length === 1
+        ? parsedOrigins[0]
+        : parsedOrigins,
+    credentials: !parsedOrigins.includes('*'),
   });
+
+  // Global filters / interceptors
+  app.useGlobalFilters(new AllExceptionsFilter());
+  app.useGlobalInterceptors(new TransformInterceptor());
 
   // Validation
   app.useGlobalPipes(

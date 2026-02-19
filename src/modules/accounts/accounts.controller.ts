@@ -17,6 +17,8 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { AccountsService } from './accounts.service';
 import {
   CreateAccountDto,
@@ -31,7 +33,8 @@ import {
 
 @ApiTags('계정 관리')
 @Controller('accounts')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('SUPER_ADMIN')
 @ApiBearerAuth()
 export class AccountsController {
   constructor(private readonly accountsService: AccountsService) {}

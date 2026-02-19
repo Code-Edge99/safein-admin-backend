@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateHarmfulAppPresetDto,
@@ -12,14 +12,105 @@ import {
 
 @Injectable()
 export class HarmfulAppPresetsService {
+  private readonly validPlatforms = ['android', 'ios'] as const;
+  private platformsNormalized = false;
+
   constructor(private prisma: PrismaService) {}
 
+  private normalizePlatform(platform?: string): 'android' | 'ios' {
+    return platform === 'ios' ? 'ios' : 'android';
+  }
+
+  private async ensureValidPlatformData(): Promise<void> {
+    if (this.platformsNormalized) return;
+
+    await Promise.all([
+      this.prisma.harmfulApp.updateMany({
+        where: { platform: { notIn: [...this.validPlatforms] } },
+        data: { platform: 'android' },
+      }),
+      this.prisma.harmfulAppPreset.updateMany({
+        where: { platform: { notIn: [...this.validPlatforms] } },
+        data: { platform: 'android' },
+      }),
+    ]);
+
+    this.platformsNormalized = true;
+  }
+
+  private async validateAppsPlatform(appIds: string[] | undefined, platform: 'android' | 'ios'): Promise<void> {
+    if (!appIds || appIds.length === 0) return;
+
+    const apps = await this.prisma.harmfulApp.findMany({
+      where: { id: { in: appIds } },
+      select: { id: true, name: true, platform: true },
+    });
+
+    const foundIds = new Set(apps.map((app) => app.id));
+    const missingIds = appIds.filter((id) => !foundIds.has(id));
+    if (missingIds.length > 0) {
+      throw new NotFoundException(`존재하지 않는 유해 앱이 포함되어 있습니다: ${missingIds.join(', ')}`);
+    }
+
+    const invalidApps = apps.filter((app) => this.normalizePlatform(app.platform) !== platform);
+    if (invalidApps.length > 0) {
+      throw new BadRequestException(
+        `프리셋 플랫폼(${platform})과 일치하지 않는 앱이 포함되어 있습니다: ${invalidApps
+          .map((app) => app.name)
+          .join(', ')}`,
+      );
+    }
+  }
+
+  private async deactivatePoliciesWithoutConditions(tx: any, policyIds: string[]): Promise<void> {
+    const uniquePolicyIds = Array.from(new Set(policyIds.filter(Boolean)));
+    if (uniquePolicyIds.length === 0) return;
+
+    const policies = await tx.controlPolicy.findMany({
+      where: { id: { in: uniquePolicyIds } },
+      select: {
+        id: true,
+        _count: {
+          select: {
+            zones: true,
+            timePolicies: true,
+            behaviors: true,
+            harmfulApps: true,
+          },
+        },
+      },
+    });
+
+    const emptyPolicyIds = policies
+      .filter(
+        (p: any) =>
+          p._count.zones + p._count.timePolicies + p._count.behaviors + p._count.harmfulApps === 0,
+      )
+      .map((p: any) => p.id);
+
+    if (emptyPolicyIds.length === 0) return;
+
+    await tx.controlPolicy.updateMany({
+      where: { id: { in: emptyPolicyIds } },
+      data: { isActive: false },
+    });
+
+    await tx.controlPolicyEmployee.deleteMany({
+      where: { policyId: { in: emptyPolicyIds } },
+    });
+  }
+
   async create(dto: CreateHarmfulAppPresetDto): Promise<HarmfulAppPresetDetailDto> {
+    await this.ensureValidPlatformData();
+
+    const platform = this.normalizePlatform(dto.platform);
+    await this.validateAppsPlatform(dto.appIds, platform);
+
     const preset = await this.prisma.harmfulAppPreset.create({
       data: {
         name: dto.name,
         description: dto.description,
-        platform: dto.platform || 'android',
+        platform,
         organizationId: dto.organizationId,
         workTypeId: dto.workTypeId,
         items: dto.appIds?.length
@@ -48,6 +139,8 @@ export class HarmfulAppPresetsService {
   }
 
   async findAll(filter: HarmfulAppPresetFilterDto): Promise<HarmfulAppPresetListResponseDto> {
+    await this.ensureValidPlatformData();
+
     const page = filter.page || 1;
     const limit = filter.limit || 20;
     const skip = (page - 1) * limit;
@@ -102,6 +195,8 @@ export class HarmfulAppPresetsService {
   }
 
   async findOne(id: string): Promise<HarmfulAppPresetDetailDto> {
+    await this.ensureValidPlatformData();
+
     const preset = await this.prisma.harmfulAppPreset.findUnique({
       where: { id },
       include: {
@@ -126,7 +221,11 @@ export class HarmfulAppPresetsService {
   }
 
   async update(id: string, dto: UpdateHarmfulAppPresetDto): Promise<HarmfulAppPresetDetailDto> {
-    await this.findOne(id);
+    await this.ensureValidPlatformData();
+    const existing = await this.findOne(id);
+
+    const platform = this.normalizePlatform(dto.platform ?? existing.platform);
+    await this.validateAppsPlatform(dto.appIds, platform);
 
     // 앱 목록이 변경되는 경우 처리
     if (dto.appIds !== undefined) {
@@ -151,7 +250,7 @@ export class HarmfulAppPresetsService {
       data: {
         name: dto.name,
         description: dto.description,
-        platform: dto.platform,
+        platform,
         organizationId: dto.organizationId,
         workTypeId: dto.workTypeId,
       },
@@ -173,15 +272,44 @@ export class HarmfulAppPresetsService {
   }
 
   async remove(id: string): Promise<void> {
-    await this.findOne(id);
+    await this.ensureValidPlatformData();
 
-    await this.prisma.harmfulAppPreset.delete({
+    const preset = await this.prisma.harmfulAppPreset.findUnique({
       where: { id },
+      include: {
+        _count: {
+          select: {
+            policyPresets: true,
+          },
+        },
+      },
+    });
+
+    if (!preset) {
+      throw new NotFoundException('유해 앱 프리셋을 찾을 수 없습니다.');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      const impacted = await tx.controlPolicyHarmfulApp.findMany({
+        where: { presetId: id },
+        select: { policyId: true },
+      });
+
+      await tx.controlPolicyHarmfulApp.deleteMany({ where: { presetId: id } });
+      await tx.harmfulAppPreset.delete({ where: { id } });
+
+      await this.deactivatePoliciesWithoutConditions(
+        tx,
+        impacted.map((item: any) => item.policyId),
+      );
     });
   }
 
   async addApps(id: string, appIds: string[]): Promise<HarmfulAppPresetDetailDto> {
-    await this.findOne(id);
+    await this.ensureValidPlatformData();
+    const preset = await this.findOne(id);
+    const platform = this.normalizePlatform(preset.platform);
+    await this.validateAppsPlatform(appIds, platform);
 
     // 기존에 없는 앱만 추가
     const existingItems = await this.prisma.harmfulAppPresetItem.findMany({
@@ -205,6 +333,8 @@ export class HarmfulAppPresetsService {
   }
 
   async removeApps(id: string, appIds: string[]): Promise<HarmfulAppPresetDetailDto> {
+    await this.ensureValidPlatformData();
+
     await this.findOne(id);
 
     await this.prisma.harmfulAppPresetItem.deleteMany({
@@ -218,6 +348,8 @@ export class HarmfulAppPresetsService {
   }
 
   async findByOrganization(organizationId: string): Promise<HarmfulAppPresetResponseDto[]> {
+    await this.ensureValidPlatformData();
+
     const presets = await this.prisma.harmfulAppPreset.findMany({
       where: { organizationId },
       include: {
@@ -239,6 +371,8 @@ export class HarmfulAppPresetsService {
   }
 
   async getStats(): Promise<HarmfulAppStatsDto> {
+    await this.ensureValidPlatformData();
+
     const [totalApps, globalApps, totalPresets, categoryStats, platformStats] = await Promise.all([
       this.prisma.harmfulApp.count(),
       this.prisma.harmfulApp.count({ where: { isGlobal: true } }),
@@ -278,7 +412,7 @@ export class HarmfulAppPresetsService {
       id: preset.id,
       name: preset.name,
       description: preset.description,
-      platform: preset.platform || 'android',
+      platform: this.normalizePlatform(preset.platform),
       organization: preset.organization,
       workType: preset.workType,
       appCount: preset._count?.items || 0,
@@ -296,7 +430,7 @@ export class HarmfulAppPresetsService {
         name: item.harmfulApp.name,
         packageName: item.harmfulApp.packageName,
         category: item.harmfulApp.category,
-        platform: item.harmfulApp.platform || 'android',
+        platform: this.normalizePlatform(item.harmfulApp.platform),
         iconUrl: item.harmfulApp.iconUrl,
         isGlobal: item.harmfulApp.isGlobal,
         presetCount: 0,

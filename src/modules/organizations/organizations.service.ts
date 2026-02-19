@@ -164,6 +164,13 @@ export class OrganizationsService {
           select: {
             children: true,
             employees: true,
+            employeesBySite: true,
+            workTypes: true,
+            zones: true,
+            timePolicies: true,
+            behaviorConditions: true,
+            harmfulAppPresets: true,
+            controlPolicies: true,
           },
         },
       },
@@ -177,8 +184,19 @@ export class OrganizationsService {
       throw new BadRequestException('하위 조직이 있는 조직은 삭제할 수 없습니다.');
     }
 
-    if (organization._count.employees > 0) {
-      throw new BadRequestException('직원이 있는 조직은 삭제할 수 없습니다.');
+    if (organization._count.employees > 0 || organization._count.employeesBySite > 0) {
+      throw new BadRequestException('직원 또는 현장 배정이 있는 조직은 삭제할 수 없습니다.');
+    }
+
+    if (
+      organization._count.workTypes > 0 ||
+      organization._count.zones > 0 ||
+      organization._count.timePolicies > 0 ||
+      organization._count.behaviorConditions > 0 ||
+      organization._count.harmfulAppPresets > 0 ||
+      organization._count.controlPolicies > 0
+    ) {
+      throw new BadRequestException('하위 정책/조건 데이터가 남아 있어 조직을 삭제할 수 없습니다. 관련 데이터를 먼저 정리해주세요.');
     }
 
     await this.prisma.organization.delete({

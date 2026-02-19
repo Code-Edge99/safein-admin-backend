@@ -8,11 +8,14 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { PermissionsService } from './permissions.service';
 
 @ApiTags('권한 관리')
 @Controller('permissions')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('SUPER_ADMIN')
 @ApiBearerAuth()
 export class PermissionsController {
   constructor(private readonly permissionsService: PermissionsService) {}

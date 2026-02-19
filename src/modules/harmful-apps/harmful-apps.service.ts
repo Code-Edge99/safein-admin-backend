@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -11,9 +11,35 @@ import {
 
 @Injectable()
 export class HarmfulAppsService {
+  private readonly validPlatforms = ['android', 'ios'] as const;
+  private platformsNormalized = false;
+
   constructor(private prisma: PrismaService) {}
 
+  private normalizePlatform(platform?: string): 'android' | 'ios' {
+    return platform === 'ios' ? 'ios' : 'android';
+  }
+
+  private async ensureValidPlatformData(): Promise<void> {
+    if (this.platformsNormalized) return;
+
+    await Promise.all([
+      this.prisma.harmfulApp.updateMany({
+        where: { platform: { notIn: [...this.validPlatforms] } },
+        data: { platform: 'android' },
+      }),
+      this.prisma.harmfulAppPreset.updateMany({
+        where: { platform: { notIn: [...this.validPlatforms] } },
+        data: { platform: 'android' },
+      }),
+    ]);
+
+    this.platformsNormalized = true;
+  }
+
   async create(dto: CreateHarmfulAppDto): Promise<HarmfulAppResponseDto> {
+    await this.ensureValidPlatformData();
+
     // 패키지 이름 중복 체크
     const existing = await this.prisma.harmfulApp.findUnique({
       where: { packageName: dto.packageName },
@@ -28,7 +54,7 @@ export class HarmfulAppsService {
         name: dto.name,
         packageName: dto.packageName,
         category: dto.category,
-        platform: dto.platform ?? 'android',
+        platform: this.normalizePlatform(dto.platform),
         iconUrl: dto.iconUrl,
         isGlobal: dto.isGlobal ?? false,
       },
@@ -43,6 +69,8 @@ export class HarmfulAppsService {
   }
 
   async findAll(filter: HarmfulAppFilterDto): Promise<HarmfulAppListResponseDto> {
+    await this.ensureValidPlatformData();
+
     const page = filter.page || 1;
     const limit = filter.limit || 20;
     const skip = (page - 1) * limit;
@@ -97,6 +125,8 @@ export class HarmfulAppsService {
   }
 
   async findOne(id: string): Promise<HarmfulAppResponseDto> {
+    await this.ensureValidPlatformData();
+
     const app = await this.prisma.harmfulApp.findUnique({
       where: { id },
       include: {
@@ -115,6 +145,8 @@ export class HarmfulAppsService {
   }
 
   async findByPackageName(packageName: string): Promise<HarmfulAppResponseDto> {
+    await this.ensureValidPlatformData();
+
     const app = await this.prisma.harmfulApp.findUnique({
       where: { packageName },
       include: {
@@ -132,7 +164,14 @@ export class HarmfulAppsService {
   }
 
   async update(id: string, dto: UpdateHarmfulAppDto): Promise<HarmfulAppResponseDto> {
+    await this.ensureValidPlatformData();
+
     await this.findOne(id);
+
+    const updateData: UpdateHarmfulAppDto = { ...dto };
+    if (dto.platform !== undefined) {
+      updateData.platform = this.normalizePlatform(dto.platform);
+    }
 
     // 패키지 이름 변경 시 중복 체크
     if (dto.packageName) {
@@ -150,7 +189,7 @@ export class HarmfulAppsService {
 
     const app = await this.prisma.harmfulApp.update({
       where: { id },
-      data: dto,
+      data: updateData,
       include: {
         _count: {
           select: { presetItems: true },
@@ -163,7 +202,26 @@ export class HarmfulAppsService {
   }
 
   async remove(id: string): Promise<void> {
-    await this.findOne(id);
+    await this.ensureValidPlatformData();
+
+    const app = await this.prisma.harmfulApp.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            presetItems: true,
+          },
+        },
+      },
+    });
+
+    if (!app) {
+      throw new NotFoundException('유해 앱을 찾을 수 없습니다.');
+    }
+
+    if (app._count.presetItems > 0) {
+      throw new BadRequestException('프리셋에서 사용 중인 유해 앱은 삭제할 수 없습니다. 프리셋에서 먼저 제거해주세요.');
+    }
 
     await this.prisma.harmfulApp.delete({
       where: { id },
@@ -171,6 +229,8 @@ export class HarmfulAppsService {
   }
 
   async getCategories(): Promise<string[]> {
+    await this.ensureValidPlatformData();
+
     const result = await this.prisma.harmfulApp.groupBy({
       by: ['category'],
       where: {
@@ -182,6 +242,8 @@ export class HarmfulAppsService {
   }
 
   async toggleGlobal(id: string): Promise<HarmfulAppResponseDto> {
+    await this.ensureValidPlatformData();
+
     const app = await this.findOne(id);
 
     const updated = await this.prisma.harmfulApp.update({
@@ -233,7 +295,7 @@ export class HarmfulAppsService {
       name: app.name,
       packageName: app.packageName,
       category: app.category,
-      platform: app.platform || 'android',
+      platform: this.normalizePlatform(app.platform),
       iconUrl: app.iconUrl,
       isGlobal: app.isGlobal,
       presetCount: app._count?.presetItems || 0,

@@ -48,7 +48,7 @@ export class EmployeesService {
 
     const employee = await this.prisma.employee.create({
       data: {
-        employeeId: dto.employeeId,
+        employeeId: dto.employeeCode,
         name: dto.name,
         organizationId: dto.organizationId,
         siteId: dto.siteId,
@@ -125,9 +125,9 @@ export class EmployeesService {
     return new PaginatedResponse(data, total, filter.page || 1, filter.limit || 20);
   }
 
-  async findOne(id: string): Promise<EmployeeDetailDto> {
+  async findOne(employeeId: string): Promise<EmployeeDetailDto> {
     const employee = await this.prisma.employee.findUnique({
-      where: { id },
+      where: { id: employeeId },
       include: {
         organization: true,
         site: true,
@@ -184,8 +184,8 @@ export class EmployeesService {
     };
   }
 
-  async update(id: string, dto: UpdateEmployeeDto): Promise<EmployeeResponseDto> {
-    await this.findOne(id); // 존재 여부 확인
+  async update(employeeId: string, dto: UpdateEmployeeDto): Promise<EmployeeResponseDto> {
+    await this.findOne(employeeId); // 존재 여부 확인
 
     // 조직 존재 여부 확인
     if (dto.organizationId) {
@@ -218,9 +218,9 @@ export class EmployeesService {
     }
 
     const employee = await this.prisma.employee.update({
-      where: { id },
+      where: { id: employeeId },
       data: {
-        employeeId: dto.employeeId,
+        employeeId: dto.employeeCode,
         name: dto.name,
         organizationId: dto.organizationId,
         siteId: dto.siteId,
@@ -242,9 +242,9 @@ export class EmployeesService {
     return this.toResponseDto(employee);
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(employeeId: string): Promise<void> {
     const employee = await this.prisma.employee.findUnique({
-      where: { id },
+      where: { id: employeeId },
       include: {
         _count: {
           select: { devices: true },
@@ -259,12 +259,12 @@ export class EmployeesService {
     // 연결된 장치가 있으면 퇴사 처리
     if (employee._count.devices > 0) {
       await this.prisma.employee.update({
-        where: { id },
+        where: { id: employeeId },
         data: { status: EmployeeStatus.RESIGNED },
       });
     } else {
       await this.prisma.employee.delete({
-        where: { id },
+        where: { id: employeeId },
       });
     }
   }
@@ -295,9 +295,23 @@ export class EmployeesService {
       throw new NotFoundException('대상 조직을 찾을 수 없습니다.');
     }
 
-    const result = await this.prisma.employee.updateMany({
-      where: { id: { in: dto.employeeIds } },
-      data: { organizationId: dto.targetOrganizationId },
+    const result = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.employee.updateMany({
+        where: { id: { in: dto.employeeIds } },
+        data: { organizationId: dto.targetOrganizationId },
+      });
+
+      // 조직 이동 후 타 조직 정책 개별 할당은 정합성을 위해 제거
+      await tx.controlPolicyEmployee.deleteMany({
+        where: {
+          employeeId: { in: dto.employeeIds },
+          policy: {
+            organizationId: { not: dto.targetOrganizationId },
+          },
+        },
+      });
+
+      return updated;
     });
 
     return { updated: result.count };
@@ -385,8 +399,8 @@ export class EmployeesService {
 
   private toResponseDto(employee: any): EmployeeResponseDto {
     return {
-      id: employee.id,
-      employeeId: employee.employeeId,
+      employeeId: employee.id,
+      employeeCode: employee.employeeId,
       name: employee.name,
       organizationId: employee.organizationId,
       organizationName: employee.organization?.name,

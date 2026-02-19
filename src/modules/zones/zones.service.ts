@@ -14,6 +14,44 @@ import {
 export class ZonesService {
   constructor(private prisma: PrismaService) {}
 
+  private async deactivatePoliciesWithoutConditions(tx: any, policyIds: string[]): Promise<void> {
+    const uniquePolicyIds = Array.from(new Set(policyIds.filter(Boolean)));
+    if (uniquePolicyIds.length === 0) return;
+
+    const policies = await tx.controlPolicy.findMany({
+      where: { id: { in: uniquePolicyIds } },
+      select: {
+        id: true,
+        _count: {
+          select: {
+            zones: true,
+            timePolicies: true,
+            behaviors: true,
+            harmfulApps: true,
+          },
+        },
+      },
+    });
+
+    const emptyPolicyIds = policies
+      .filter(
+        (p: any) =>
+          p._count.zones + p._count.timePolicies + p._count.behaviors + p._count.harmfulApps === 0,
+      )
+      .map((p: any) => p.id);
+
+    if (emptyPolicyIds.length === 0) return;
+
+    await tx.controlPolicy.updateMany({
+      where: { id: { in: emptyPolicyIds } },
+      data: { isActive: false },
+    });
+
+    await tx.controlPolicyEmployee.deleteMany({
+      where: { policyId: { in: emptyPolicyIds } },
+    });
+  }
+
   async create(createZoneDto: CreateZoneDto): Promise<ZoneResponseDto> {
     const { coordinates, organizationId, workTypeId, type, shape, ...rest } = createZoneDto;
 
@@ -37,6 +75,11 @@ export class ZonesService {
 
     // 좌표 정규화: lat/lng 또는 latitude/longitude 모두 수용
     const normalizedCoords = this.normalizeCoordinates(coordinates);
+    const geometryMetadata = this.buildZoneGeometryMetadata(
+      shape as any,
+      normalizedCoords,
+      createZoneDto.radius,
+    );
 
     const zone = await this.prisma.zone.create({
       data: {
@@ -44,6 +87,7 @@ export class ZonesService {
         type: type as any,
         shape: shape as any,
         coordinates: normalizedCoords as any,
+        ...geometryMetadata,
         organizationId,
         workTypeId,
       },
@@ -160,9 +204,28 @@ export class ZonesService {
 
     const updateData: any = { ...rest };
 
+    const currentZone = await this.prisma.zone.findUnique({
+      where: { id },
+      select: { shape: true, coordinates: true, radius: true },
+    });
+
+    if (!currentZone) {
+      throw new NotFoundException('구역을 찾을 수 없습니다.');
+    }
+
     if (coordinates) {
       updateData.coordinates = this.normalizeCoordinates(coordinates) as any;
     }
+
+    const targetShape = (updateZoneDto.shape ?? currentZone.shape) as any;
+    const targetCoordinates = (updateData.coordinates ?? currentZone.coordinates) as any[];
+    const targetRadius = updateZoneDto.radius ?? currentZone.radius;
+    const geometryMetadata = this.buildZoneGeometryMetadata(
+      targetShape,
+      this.normalizeCoordinates(targetCoordinates),
+      targetRadius ?? undefined,
+    );
+    Object.assign(updateData, geometryMetadata);
 
     if (organizationId !== undefined) {
       if (organizationId) {
@@ -205,8 +268,41 @@ export class ZonesService {
   }
 
   async remove(id: string): Promise<void> {
-    await this.findOne(id);
-    await this.prisma.zone.delete({ where: { id } });
+    const zone = await this.prisma.zone.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            policyZones: true,
+            dailyStats: true,
+            zoneVisitSessions: true,
+          },
+        },
+      },
+    });
+
+    if (!zone) {
+      throw new NotFoundException('구역을 찾을 수 없습니다.');
+    }
+
+    if (zone._count.dailyStats > 0 || zone._count.zoneVisitSessions > 0) {
+      throw new BadRequestException('이력 데이터가 있는 구역은 삭제할 수 없습니다. 비활성화로 관리해주세요.');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      const impacted = await tx.controlPolicyZone.findMany({
+        where: { zoneId: id },
+        select: { policyId: true },
+      });
+
+      await tx.controlPolicyZone.deleteMany({ where: { zoneId: id } });
+      await tx.zone.delete({ where: { id } });
+
+      await this.deactivatePoliciesWithoutConditions(
+        tx,
+        impacted.map((item: any) => item.policyId),
+      );
+    });
   }
 
   async toggleActive(id: string): Promise<ZoneResponseDto> {
@@ -284,6 +380,59 @@ export class ZonesService {
     }));
   }
 
+  private buildZoneGeometryMetadata(
+    shape: 'circle' | 'polygon',
+    coordinates: { lat: number; lng: number }[],
+    radius?: number,
+  ): {
+    centerLat: number | null;
+    centerLon: number | null;
+    bboxMinLat: number | null;
+    bboxMinLon: number | null;
+    bboxMaxLat: number | null;
+    bboxMaxLon: number | null;
+  } {
+    if (!coordinates || coordinates.length === 0) {
+      throw new BadRequestException('좌표는 최소 1개 이상 필요합니다.');
+    }
+
+    if (shape === 'polygon' && coordinates.length < 3) {
+      throw new BadRequestException('폴리곤 구역은 최소 3개 좌표가 필요합니다.');
+    }
+
+    if (shape === 'circle') {
+      const center = coordinates[0];
+      if (!center) {
+        throw new BadRequestException('원형 구역은 중심 좌표가 필요합니다.');
+      }
+
+      const safeRadius = Math.max(0, radius ?? 0);
+      const latDelta = safeRadius / 111_320;
+      const lonDelta = safeRadius / (111_320 * Math.max(Math.cos((center.lat * Math.PI) / 180), 0.000001));
+
+      return {
+        centerLat: center.lat,
+        centerLon: center.lng,
+        bboxMinLat: center.lat - latDelta,
+        bboxMinLon: center.lng - lonDelta,
+        bboxMaxLat: center.lat + latDelta,
+        bboxMaxLon: center.lng + lonDelta,
+      };
+    }
+
+    const lats = coordinates.map((c) => c.lat);
+    const lngs = coordinates.map((c) => c.lng);
+
+    return {
+      centerLat: null,
+      centerLon: null,
+      bboxMinLat: Math.min(...lats),
+      bboxMinLon: Math.min(...lngs),
+      bboxMaxLat: Math.max(...lats),
+      bboxMaxLon: Math.max(...lngs),
+    };
+  }
+
   // Helper: Haversine formula for distance calculation
   private calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
     const R = 6371e3; // Earth's radius in meters
@@ -342,6 +491,12 @@ export class ZonesService {
       shape: zone.shape,
       coordinates,
       radius: zone.radius,
+      bboxMinLat: zone.bboxMinLat ?? undefined,
+      bboxMinLon: zone.bboxMinLon ?? undefined,
+      bboxMaxLat: zone.bboxMaxLat ?? undefined,
+      bboxMaxLon: zone.bboxMaxLon ?? undefined,
+      centerLat: zone.centerLat ?? undefined,
+      centerLon: zone.centerLon ?? undefined,
       groupId: zone.groupId,
       isActive: zone.isActive,
       organization: zone.organization,

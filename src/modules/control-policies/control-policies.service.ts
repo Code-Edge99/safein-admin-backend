@@ -34,13 +34,21 @@ export class ControlPoliciesService {
       throw new BadRequestException('조직을 찾을 수 없습니다.');
     }
 
-    // Validate work type and check for existing policy
-    const workType = await this.prisma.workType.findUnique({
-      where: { id: workTypeId },
+    await this.validatePolicyRelations(this.prisma, organizationId, {
+      workTypeId,
+      zoneIds,
+      timePolicyIds,
+      behaviorConditionIds,
+      harmfulAppPresetIds,
+      employeeIds,
     });
-    if (!workType) {
-      throw new BadRequestException('작업 유형을 찾을 수 없습니다.');
-    }
+
+    this.ensureAtLeastOneControlConditionInput({
+      zoneIds,
+      timePolicyIds,
+      behaviorConditionIds,
+      harmfulAppPresetIds,
+    });
 
     // Check if policy already exists for this work type (1:1 relationship)
     const existingPolicy = await this.prisma.controlPolicy.findUnique({
@@ -324,18 +332,41 @@ export class ControlPoliciesService {
       // Update basic fields
       const updateData: any = { ...rest };
 
+      const currentPolicy = await tx.controlPolicy.findUnique({
+        where: { id },
+        select: { organizationId: true, workTypeId: true },
+      });
+      if (!currentPolicy) {
+        throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
+      }
+
+      const targetOrganizationId = organizationId ?? currentPolicy.organizationId;
+      const targetWorkTypeId = workTypeId ?? currentPolicy.workTypeId;
+      const organizationChanged =
+        organizationId !== undefined && organizationId !== currentPolicy.organizationId;
+
       if (organizationId) {
         const org = await tx.organization.findUnique({ where: { id: organizationId } });
         if (!org) throw new BadRequestException('조직을 찾을 수 없습니다.');
         updateData.organizationId = organizationId;
       }
 
+      await this.validatePolicyRelations(tx, targetOrganizationId, {
+        workTypeId: targetWorkTypeId,
+        zoneIds,
+        timePolicyIds,
+        behaviorConditionIds,
+        harmfulAppPresetIds,
+        employeeIds,
+      });
+
+      // Check if policy already exists for this work type (1:1 relationship)
+      const existingPolicy = await tx.controlPolicy.findUnique({ where: { workTypeId: targetWorkTypeId } });
+      if (existingPolicy && existingPolicy.id !== id) {
+        throw new ConflictException('해당 작업 유형에 이미 정책이 존재합니다.');
+      }
+
       if (workTypeId) {
-        // Check for conflict
-        const existingPolicy = await tx.controlPolicy.findUnique({ where: { workTypeId } });
-        if (existingPolicy && existingPolicy.id !== id) {
-          throw new ConflictException('해당 작업 유형에 이미 정책이 존재합니다.');
-        }
         updateData.workTypeId = workTypeId;
       }
 
@@ -343,6 +374,26 @@ export class ControlPoliciesService {
         where: { id },
         data: updateData,
       });
+
+      // 조직 변경 시 기존 관계 데이터는 재검증 없이 유지하지 않고 안전하게 비웁니다.
+      // (새 조직 기준의 관계는 요청 본문으로 다시 설정)
+      if (organizationChanged) {
+        if (zoneIds === undefined) {
+          await tx.controlPolicyZone.deleteMany({ where: { policyId: id } });
+        }
+        if (timePolicyIds === undefined) {
+          await tx.controlPolicyTimePolicy.deleteMany({ where: { policyId: id } });
+        }
+        if (behaviorConditionIds === undefined) {
+          await tx.controlPolicyBehavior.deleteMany({ where: { policyId: id } });
+        }
+        if (harmfulAppPresetIds === undefined) {
+          await tx.controlPolicyHarmfulApp.deleteMany({ where: { policyId: id } });
+        }
+        if (employeeIds === undefined) {
+          await tx.controlPolicyEmployee.deleteMany({ where: { policyId: id } });
+        }
+      }
 
       // Update zones
       if (zoneIds !== undefined) {
@@ -396,6 +447,20 @@ export class ControlPoliciesService {
           });
         }
       }
+
+      if (employeeIds === undefined) {
+        // 정책 조직과 맞지 않는 개별 대상 직원 할당은 항상 정리
+        await tx.controlPolicyEmployee.deleteMany({
+          where: {
+            policyId: id,
+            employee: {
+              organizationId: { not: targetOrganizationId },
+            },
+          },
+        });
+      }
+
+      await this.ensurePolicyHasControlConditions(tx, id);
     });
 
     return this.findOneDetail(id);
@@ -434,7 +499,15 @@ export class ControlPoliciesService {
   }
 
   async assignZones(policyId: string, zoneIds: string[]): Promise<ControlPolicyDetailDto> {
-    await this.findOne(policyId);
+    const policy = await this.prisma.controlPolicy.findUnique({
+      where: { id: policyId },
+      select: { organizationId: true },
+    });
+    if (!policy) {
+      throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
+    }
+
+    await this.validatePolicyRelations(this.prisma, policy.organizationId, { zoneIds });
 
     await this.prisma.$transaction(async (tx) => {
       await tx.controlPolicyZone.deleteMany({ where: { policyId } });
@@ -443,13 +516,23 @@ export class ControlPoliciesService {
           data: zoneIds.map((zoneId) => ({ policyId, zoneId })),
         });
       }
+
+      await this.ensurePolicyHasControlConditions(tx, policyId);
     });
 
     return this.findOneDetail(policyId);
   }
 
   async assignTimePolicies(policyId: string, timePolicyIds: string[]): Promise<ControlPolicyDetailDto> {
-    await this.findOne(policyId);
+    const policy = await this.prisma.controlPolicy.findUnique({
+      where: { id: policyId },
+      select: { organizationId: true },
+    });
+    if (!policy) {
+      throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
+    }
+
+    await this.validatePolicyRelations(this.prisma, policy.organizationId, { timePolicyIds });
 
     await this.prisma.$transaction(async (tx) => {
       await tx.controlPolicyTimePolicy.deleteMany({ where: { policyId } });
@@ -458,13 +541,23 @@ export class ControlPoliciesService {
           data: timePolicyIds.map((timePolicyId) => ({ policyId, timePolicyId })),
         });
       }
+
+      await this.ensurePolicyHasControlConditions(tx, policyId);
     });
 
     return this.findOneDetail(policyId);
   }
 
   async assignBehaviorConditions(policyId: string, behaviorConditionIds: string[]): Promise<ControlPolicyDetailDto> {
-    await this.findOne(policyId);
+    const policy = await this.prisma.controlPolicy.findUnique({
+      where: { id: policyId },
+      select: { organizationId: true },
+    });
+    if (!policy) {
+      throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
+    }
+
+    await this.validatePolicyRelations(this.prisma, policy.organizationId, { behaviorConditionIds });
 
     await this.prisma.$transaction(async (tx) => {
       await tx.controlPolicyBehavior.deleteMany({ where: { policyId } });
@@ -476,13 +569,23 @@ export class ControlPoliciesService {
           })),
         });
       }
+
+      await this.ensurePolicyHasControlConditions(tx, policyId);
     });
 
     return this.findOneDetail(policyId);
   }
 
   async assignHarmfulApps(policyId: string, harmfulAppPresetIds: string[]): Promise<ControlPolicyDetailDto> {
-    await this.findOne(policyId);
+    const policy = await this.prisma.controlPolicy.findUnique({
+      where: { id: policyId },
+      select: { organizationId: true },
+    });
+    if (!policy) {
+      throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
+    }
+
+    await this.validatePolicyRelations(this.prisma, policy.organizationId, { harmfulAppPresetIds });
 
     await this.prisma.$transaction(async (tx) => {
       await tx.controlPolicyHarmfulApp.deleteMany({ where: { policyId } });
@@ -491,13 +594,23 @@ export class ControlPoliciesService {
           data: harmfulAppPresetIds.map((presetId) => ({ policyId, presetId })),
         });
       }
+
+      await this.ensurePolicyHasControlConditions(tx, policyId);
     });
 
     return this.findOneDetail(policyId);
   }
 
   async assignEmployees(policyId: string, employeeIds: string[]): Promise<ControlPolicyDetailDto> {
-    await this.findOne(policyId);
+    const policy = await this.prisma.controlPolicy.findUnique({
+      where: { id: policyId },
+      select: { organizationId: true },
+    });
+    if (!policy) {
+      throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
+    }
+
+    await this.validatePolicyRelations(this.prisma, policy.organizationId, { employeeIds });
 
     await this.prisma.$transaction(async (tx) => {
       await tx.controlPolicyEmployee.deleteMany({ where: { policyId } });
@@ -545,6 +658,147 @@ export class ControlPoliciesService {
       workTypeCoverage: Math.round(workTypeCoverage * 100) / 100,
       byOrganization,
     };
+  }
+
+  private normalizeIds(ids?: string[]): string[] {
+    if (!ids || ids.length === 0) return [];
+    return Array.from(new Set(ids.filter(Boolean)));
+  }
+
+  private ensureAtLeastOneControlConditionInput(params: {
+    zoneIds?: string[];
+    timePolicyIds?: string[];
+    behaviorConditionIds?: string[];
+    harmfulAppPresetIds?: string[];
+  }): void {
+    const hasAnyCondition =
+      this.normalizeIds(params.zoneIds).length > 0 ||
+      this.normalizeIds(params.timePolicyIds).length > 0 ||
+      this.normalizeIds(params.behaviorConditionIds).length > 0 ||
+      this.normalizeIds(params.harmfulAppPresetIds).length > 0;
+
+    if (!hasAnyCondition) {
+      throw new BadRequestException(
+        '정책에는 최소 1개 이상의 통제 조건(구역/시간 정책/행동 조건/유해앱 프리셋)이 필요합니다.',
+      );
+    }
+  }
+
+  private async ensurePolicyHasControlConditions(tx: any, policyId: string): Promise<void> {
+    const policy = await tx.controlPolicy.findUnique({
+      where: { id: policyId },
+      select: {
+        _count: {
+          select: {
+            zones: true,
+            timePolicies: true,
+            behaviors: true,
+            harmfulApps: true,
+          },
+        },
+      },
+    });
+
+    if (!policy) {
+      throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
+    }
+
+    const totalConditions =
+      policy._count.zones +
+      policy._count.timePolicies +
+      policy._count.behaviors +
+      policy._count.harmfulApps;
+
+    if (totalConditions === 0) {
+      throw new BadRequestException(
+        '정책에는 최소 1개 이상의 통제 조건(구역/시간 정책/행동 조건/유해앱 프리셋)이 필요합니다.',
+      );
+    }
+  }
+
+  private async validatePolicyRelations(
+    tx: any,
+    organizationId: string,
+    relationIds: {
+      workTypeId?: string;
+      zoneIds?: string[];
+      timePolicyIds?: string[];
+      behaviorConditionIds?: string[];
+      harmfulAppPresetIds?: string[];
+      employeeIds?: string[];
+    },
+  ): Promise<void> {
+    const {
+      workTypeId,
+      zoneIds,
+      timePolicyIds,
+      behaviorConditionIds,
+      harmfulAppPresetIds,
+      employeeIds,
+    } = relationIds;
+
+    if (workTypeId) {
+      const workType = await tx.workType.findUnique({
+        where: { id: workTypeId },
+        select: { id: true, organizationId: true },
+      });
+      if (!workType) {
+        throw new BadRequestException('작업 유형을 찾을 수 없습니다.');
+      }
+      if (workType.organizationId !== organizationId) {
+        throw new BadRequestException('작업 유형은 정책과 동일 조직이어야 합니다.');
+      }
+    }
+
+    const uniqueZoneIds = this.normalizeIds(zoneIds);
+    if (uniqueZoneIds.length > 0) {
+      const zoneCount = await tx.zone.count({
+        where: { id: { in: uniqueZoneIds }, organizationId },
+      });
+      if (zoneCount !== uniqueZoneIds.length) {
+        throw new BadRequestException('구역 ID가 유효하지 않거나 정책 조직과 일치하지 않습니다.');
+      }
+    }
+
+    const uniqueTimePolicyIds = this.normalizeIds(timePolicyIds);
+    if (uniqueTimePolicyIds.length > 0) {
+      const timePolicyCount = await tx.timePolicy.count({
+        where: { id: { in: uniqueTimePolicyIds }, organizationId },
+      });
+      if (timePolicyCount !== uniqueTimePolicyIds.length) {
+        throw new BadRequestException('시간 정책 ID가 유효하지 않거나 정책 조직과 일치하지 않습니다.');
+      }
+    }
+
+    const uniqueBehaviorConditionIds = this.normalizeIds(behaviorConditionIds);
+    if (uniqueBehaviorConditionIds.length > 0) {
+      const behaviorConditionCount = await tx.behaviorCondition.count({
+        where: { id: { in: uniqueBehaviorConditionIds }, organizationId },
+      });
+      if (behaviorConditionCount !== uniqueBehaviorConditionIds.length) {
+        throw new BadRequestException('행동 조건 ID가 유효하지 않거나 정책 조직과 일치하지 않습니다.');
+      }
+    }
+
+    const uniquePresetIds = this.normalizeIds(harmfulAppPresetIds);
+    if (uniquePresetIds.length > 0) {
+      const presetCount = await tx.harmfulAppPreset.count({
+        where: { id: { in: uniquePresetIds }, organizationId },
+      });
+      if (presetCount !== uniquePresetIds.length) {
+        throw new BadRequestException('유해 앱 프리셋 ID가 유효하지 않거나 정책 조직과 일치하지 않습니다.');
+      }
+    }
+
+    const uniqueEmployeeIds = this.normalizeIds(employeeIds);
+    if (uniqueEmployeeIds.length > 0) {
+      const employeeCount = await tx.employee.count({
+        where: { id: { in: uniqueEmployeeIds }, organizationId },
+      });
+      if (employeeCount !== uniqueEmployeeIds.length) {
+        throw new BadRequestException('직원 ID가 유효하지 않거나 정책 조직과 일치하지 않습니다.');
+      }
+    }
   }
 
   private toResponseDto(policy: any): ControlPolicyResponseDto {

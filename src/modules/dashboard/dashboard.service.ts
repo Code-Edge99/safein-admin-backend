@@ -6,6 +6,9 @@ export class DashboardService {
   constructor(private prisma: PrismaService) {}
 
   async getStats() {
+    const now = new Date();
+    const onlineThreshold = new Date(now.getTime() - 15 * 60 * 1000);
+
     const [
       totalEmployees,
       activeEmployees,
@@ -14,16 +17,30 @@ export class DashboardService {
       activePolicies,
       dangerZones,
       todayLogs,
+      onlineEmployees,
     ] = await Promise.all([
       this.prisma.employee.count(),
       this.prisma.employee.count({ where: { status: 'ACTIVE' } }),
       this.prisma.device.count(),
-      this.prisma.device.count({ where: { status: 'NORMAL' } }),
+      this.prisma.device.count({
+        where: {
+          status: 'NORMAL',
+          lastCommunication: { gte: onlineThreshold },
+        },
+      }),
       this.prisma.controlPolicy.count({ where: { isActive: true } }),
       this.prisma.zone.count({ where: { type: 'danger', isActive: true } }),
       this.prisma.controlLog.count({
         where: {
           timestamp: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
+        },
+      }),
+      this.prisma.device.groupBy({
+        by: ['employeeId'],
+        where: {
+          employeeId: { not: null },
+          status: 'NORMAL',
+          lastCommunication: { gte: onlineThreshold },
         },
       }),
     ]);
@@ -36,7 +53,7 @@ export class DashboardService {
       activePolicies,
       criticalZones: dangerZones,
       todayViolations: todayLogs,
-      onlineEmployees: activeDevices,
+      onlineEmployees: onlineEmployees.length,
     };
   }
 
@@ -110,6 +127,24 @@ export class DashboardService {
       },
     });
 
+    const uniqueByZoneEmployee = await this.prisma.controlLog.groupBy({
+      by: ['zoneId', 'employeeId'],
+      where: {
+        action: 'blocked',
+        zoneId: { not: null },
+        timestamp: { gte: start, lte: end },
+      },
+    });
+
+    const uniqueEmployeeCountByZone = new Map<string, number>();
+    uniqueByZoneEmployee.forEach((item) => {
+      if (!item.zoneId) return;
+      uniqueEmployeeCountByZone.set(
+        item.zoneId,
+        (uniqueEmployeeCountByZone.get(item.zoneId) || 0) + 1,
+      );
+    });
+
     // 구역별 집계
     const zoneMap = new Map<string, { name: string; type: string; count: number; employees: number }>();
     stats.forEach((s) => {
@@ -124,7 +159,7 @@ export class DashboardService {
         name: existing.name,
         type: existing.type,
         count: existing.count + s.violationCount,
-        employees: existing.employees + s.uniqueEmployees,
+        employees: uniqueEmployeeCountByZone.get(key) || 0,
       });
     });
 
@@ -211,6 +246,8 @@ export class DashboardService {
     // 직원별 집계
     const empMap = new Map<string, any>();
     rawStats.forEach((stat) => {
+      const statTotalEvents = (stat as any).totalEvents ?? stat.totalBlocks;
+      const statAllowedEvents = (stat as any).allowedEvents ?? 0;
       const empId = stat.employeeId;
       const existing = empMap.get(empId);
       if (!existing) {
@@ -222,6 +259,8 @@ export class DashboardService {
           workType: stat.employee?.workType?.name || '',
           hireDate: stat.employee?.hireDate || null,
           totalBlocks: stat.totalBlocks,
+          totalEvents: statTotalEvents,
+          allowedEvents: statAllowedEvents,
           behaviorBlocks: stat.behaviorBlocks,
           harmfulAppBlocks: stat.harmfulAppBlocks,
           zoneViolations: stat.zoneViolations,
@@ -230,6 +269,8 @@ export class DashboardService {
         });
       } else {
         existing.totalBlocks += stat.totalBlocks;
+        existing.totalEvents += statTotalEvents;
+        existing.allowedEvents += statAllowedEvents;
         existing.behaviorBlocks += stat.behaviorBlocks;
         existing.harmfulAppBlocks += stat.harmfulAppBlocks;
         existing.zoneViolations += stat.zoneViolations;
@@ -254,13 +295,13 @@ export class DashboardService {
       if (recentTotal > olderTotal * 1.2) trend = 'up';
       else if (recentTotal < olderTotal * 0.8) trend = 'down';
 
-      const complianceRate = emp.totalBlocks > 0
-        ? Math.max(0, Math.round(100 - emp.totalBlocks * 2))
+      const complianceRate = emp.totalEvents > 0
+        ? Math.round((emp.allowedEvents / emp.totalEvents) * 100)
         : 100;
 
       let riskLevel = '낮음';
-      if (emp.totalBlocks > 20 || emp.zoneViolations > 5) riskLevel = '높음';
-      else if (emp.totalBlocks > 10 || emp.zoneViolations > 2) riskLevel = '보통';
+      if (emp.totalBlocks > 20 || emp.zoneViolations > 5 || complianceRate < 60) riskLevel = '높음';
+      else if (emp.totalBlocks > 10 || emp.zoneViolations > 2 || complianceRate < 80) riskLevel = '보통';
 
       return {
         id: emp.employeeId,
@@ -329,7 +370,31 @@ export class DashboardService {
       orderBy: { timestamp: 'desc' },
     });
 
+    const [zoneVisitSessions, workSessions] = await Promise.all([
+      this.prisma.zoneVisitSession.findMany({
+        where: {
+          employeeId,
+          enteredAt: { gte: startDate30 },
+        },
+        include: {
+          zone: { select: { id: true, name: true, type: true } },
+        },
+      }),
+      this.prisma.workSession.findMany({
+        where: {
+          employeeId,
+          startedAt: { gte: startDate30 },
+          endedAt: { not: null },
+        },
+        select: {
+          durationSeconds: true,
+        },
+      }),
+    ]);
+
     // ── 집계: 통계 ──
+    const totalEvents = dailyStats.reduce((s, d) => s + ((d as any).totalEvents ?? d.totalBlocks), 0);
+    const allowedEvents = dailyStats.reduce((s, d) => s + ((d as any).allowedEvents ?? 0), 0);
     const totalBlocks = dailyStats.reduce((s, d) => s + d.totalBlocks, 0);
     const behaviorBlocks = dailyStats.reduce((s, d) => s + d.behaviorBlocks, 0);
     const harmfulAppBlocks = dailyStats.reduce((s, d) => s + d.harmfulAppBlocks, 0);
@@ -350,11 +415,11 @@ export class DashboardService {
     if (recentTotal > olderTotal * 1.2) trend = 'up';
     else if (recentTotal < olderTotal * 0.8) trend = 'down';
 
-    const complianceRate = totalBlocks > 0 ? Math.max(0, Math.round(100 - totalBlocks * 2)) : 100;
+    const complianceRate = totalEvents > 0 ? Math.round((allowedEvents / totalEvents) * 100) : 100;
 
     let riskLevel = '낮음';
-    if (totalBlocks > 20 || zoneViolations > 5) riskLevel = '높음';
-    else if (totalBlocks > 10 || zoneViolations > 2) riskLevel = '보통';
+    if (totalBlocks > 20 || zoneViolations > 5 || complianceRate < 60) riskLevel = '높음';
+    else if (totalBlocks > 10 || zoneViolations > 2 || complianceRate < 80) riskLevel = '보통';
 
     const weeklyIncreaseRate = olderTotal > 0
       ? Math.round(((recentTotal - olderTotal) / olderTotal) * 100)
@@ -374,14 +439,15 @@ export class DashboardService {
     const topBlockedApp = topViolationApps.length > 0 ? topViolationApps[0].name : '-';
 
     // ── 인사이트: 구역별 진입 Top 3 (ControlLog 기반) ──
+    const restrictedZoneTypes = new Set(['danger', 'work']);
     const zoneCounts = new Map<string, { name: string; count: number }>();
-    controlLogs
-      .filter((l) => l.zone)
-      .forEach((l) => {
-        const key = l.zone!.id;
+    zoneVisitSessions
+      .filter((s) => s.zone && restrictedZoneTypes.has(s.zone.type))
+      .forEach((s) => {
+        const key = s.zone.id;
         const existing = zoneCounts.get(key);
         if (existing) existing.count++;
-        else zoneCounts.set(key, { name: l.zone!.name, count: 1 });
+        else zoneCounts.set(key, { name: s.zone.name, count: 1 });
       });
     const topRestrictedZones = Array.from(zoneCounts.values())
       .sort((a, b) => b.count - a.count)
@@ -402,19 +468,102 @@ export class DashboardService {
       }
     });
 
-    const totalLogCount = controlLogs.length || 1;
-    const morningLogs = controlLogs.filter((l) => {
+    const blockedLogs = controlLogs.filter((l) => l.action === 'blocked');
+    const totalLogCount = blockedLogs.length || 1;
+    const morningLogs = blockedLogs.filter((l) => {
       const h = l.timestamp.getHours();
       return h >= 8 && h <= 10;
     }).length;
-    const eveningLogs = controlLogs.filter((l) => {
+    const eveningLogs = blockedLogs.filter((l) => {
       const h = l.timestamp.getHours();
       return h >= 16 && h <= 18;
     }).length;
-    const offHoursActivity = controlLogs.filter((l) => {
+    const offHoursActivity = blockedLogs.filter((l) => {
       const h = l.timestamp.getHours();
       return h < 7 || h > 19;
     }).length;
+
+    const blockedLogsAsc = [...blockedLogs].sort(
+      (a, b) => a.timestamp.getTime() - b.timestamp.getTime(),
+    );
+
+    let consecutiveBlocks = 0;
+    let currentStreak = 0;
+    for (let i = 0; i < blockedLogsAsc.length; i++) {
+      if (i === 0) {
+        currentStreak = 1;
+      } else {
+        const diffMinutes =
+          (blockedLogsAsc[i].timestamp.getTime() - blockedLogsAsc[i - 1].timestamp.getTime()) /
+          60000;
+        currentStreak = diffMinutes <= 10 ? currentStreak + 1 : 1;
+      }
+      if (currentStreak > consecutiveBlocks) {
+        consecutiveBlocks = currentStreak;
+      }
+    }
+
+    const closedRestrictedZoneSessions = zoneVisitSessions.filter(
+      (s) =>
+        s.zone &&
+        restrictedZoneTypes.has(s.zone.type) &&
+        s.exitedAt &&
+        s.durationSeconds !== null,
+    );
+    const avgStayTime =
+      closedRestrictedZoneSessions.length > 0
+        ? Math.round(
+            closedRestrictedZoneSessions.reduce(
+              (sum, session) => sum + Math.max(0, (session.durationSeconds || 0) / 60),
+              0,
+            ) / closedRestrictedZoneSessions.length,
+          )
+        : 0;
+    const longStayInRestrictedZone = closedRestrictedZoneSessions.filter(
+      (s) => (s.durationSeconds || 0) >= 30 * 60,
+    ).length;
+
+    const locationLogs = await this.prisma.deviceLocation.findMany({
+      where: {
+        device: { employeeId },
+        timestamp: { gte: startDate30 },
+      },
+      select: { timestamp: true },
+      orderBy: { timestamp: 'asc' },
+    });
+
+    const dayRangeMap = new Map<string, { min: number; max: number }>();
+    locationLogs.forEach((entry) => {
+      const key = entry.timestamp.toISOString().split('T')[0];
+      const timestamp = entry.timestamp.getTime();
+      const existing = dayRangeMap.get(key);
+      if (!existing) {
+        dayRangeMap.set(key, { min: timestamp, max: timestamp });
+        return;
+      }
+      if (timestamp < existing.min) existing.min = timestamp;
+      if (timestamp > existing.max) existing.max = timestamp;
+    });
+
+    const dailyHours = Array.from(dayRangeMap.values())
+      .map((range) => (range.max - range.min) / 3600000)
+      .filter((hours) => hours > 0)
+      .map((hours) => Math.min(hours, 16));
+    const avgWorkHoursFromSession =
+      workSessions.length > 0
+        ? Math.round(
+            (workSessions.reduce((sum, item) => sum + ((item.durationSeconds || 0) / 3600), 0) /
+              workSessions.length) *
+              10,
+          ) / 10
+        : 0;
+
+    const avgWorkHours =
+      avgWorkHoursFromSession > 0
+        ? avgWorkHoursFromSession
+        : dailyHours.length > 0
+          ? Math.round((dailyHours.reduce((sum, value) => sum + value, 0) / dailyHours.length) * 10) / 10
+          : 0;
 
     // ── 비교 분석: 근무유형 평균 / 현장 평균 대비 ──
     let vsWorkTypeAvg = 0;
@@ -491,7 +640,7 @@ export class DashboardService {
         : null,
       tenure,
       period: '최근 30일',
-      avgWorkHours: 8.0,
+      avgWorkHours,
 
       totalBlocks,
       last7DaysBlocks: recentTotal,
@@ -505,8 +654,10 @@ export class DashboardService {
 
       insights: {
         topViolationApps,
-        restrictedZoneEntries: zoneViolations,
-        avgStayTime: 0,
+        restrictedZoneEntries: zoneVisitSessions.filter(
+          (s) => s.zone && restrictedZoneTypes.has(s.zone.type),
+        ).length,
+        avgStayTime,
         topRestrictedZones,
         peakBlockTime:
           controlLogs.length > 0
@@ -515,11 +666,11 @@ export class DashboardService {
         morningBlockRate: Math.round((morningLogs / totalLogCount) * 100),
         eveningBlockRate: Math.round((eveningLogs / totalLogCount) * 100),
         weeklyIncreaseRate,
-        consecutiveBlocks: 0,
+        consecutiveBlocks,
         vsWorkTypeAvg,
         vsSiteAvg,
         offHoursActivity,
-        longStayInRestrictedZone: 0,
+        longStayInRestrictedZone,
       },
 
       trendData,
@@ -529,8 +680,14 @@ export class DashboardService {
 
   async getSiteReports() {
     const endDate = new Date();
-    const startDate = new Date(endDate.getTime() - 7 * 86400000);
-    startDate.setHours(0, 0, 0, 0);
+    const currentStartDate = new Date(endDate.getTime() - 7 * 86400000);
+    currentStartDate.setHours(0, 0, 0, 0);
+
+    const trendStartDate = new Date(endDate.getTime() - 29 * 86400000);
+    trendStartDate.setHours(0, 0, 0, 0);
+
+    const prevWeekStartDate = new Date(currentStartDate.getTime() - 7 * 86400000);
+    prevWeekStartDate.setHours(0, 0, 0, 0);
 
     // 회사(root) 제외 모든 조직 조회 (현장, 부서, 팀, 현장조 등)
     const sites = await this.prisma.organization.findMany({
@@ -543,27 +700,34 @@ export class DashboardService {
 
     const result = [];
     for (const site of sites) {
-      const stats = await this.prisma.organizationDailyStat.findMany({
+      const trendStats = await this.prisma.organizationDailyStat.findMany({
         where: {
           organizationId: site.id,
-          date: { gte: startDate, lte: endDate },
+          date: { gte: trendStartDate, lte: endDate },
         },
-        orderBy: { date: 'desc' },
+        orderBy: { date: 'asc' },
       });
 
-      const totalViolations = stats.reduce((sum, s) => sum + s.totalBlocks, 0);
-      const behaviorBlocks = stats.reduce((sum, s) => sum + s.behaviorBlocks, 0);
-      const harmfulAppBlocks = stats.reduce((sum, s) => sum + s.harmfulAppBlocks, 0);
-      const avgCompliance = stats.length > 0
-        ? stats.reduce((sum, s) => sum + Number(s.complianceRate || 0), 0) / stats.length
-        : 0;
+      const currentStats = trendStats.filter((s) => s.date >= currentStartDate);
+
+      const totalViolations = currentStats.reduce((sum, s) => sum + s.totalBlocks, 0);
+      const behaviorBlocks = currentStats.reduce((sum, s) => sum + s.behaviorBlocks, 0);
+      const harmfulAppBlocks = currentStats.reduce((sum, s) => sum + s.harmfulAppBlocks, 0);
+      const totalEvents = currentStats.reduce(
+        (sum, s) => sum + ((s as any).totalEvents ?? s.totalBlocks),
+        0,
+      );
+      const allowedEvents = currentStats.reduce(
+        (sum, s) => sum + ((s as any).allowedEvents ?? 0),
+        0,
+      );
+      const complianceRate = totalEvents > 0 ? (allowedEvents / totalEvents) * 100 : 100;
 
       // 이전 주 데이터
-      const prevStart = new Date(startDate.getTime() - 7 * 86400000);
       const prevStats = await this.prisma.organizationDailyStat.findMany({
         where: {
           organizationId: site.id,
-          date: { gte: prevStart, lt: startDate },
+          date: { gte: prevWeekStartDate, lt: currentStartDate },
         },
       });
       const prevTotal = prevStats.reduce((sum, s) => sum + s.totalBlocks, 0);
@@ -576,7 +740,7 @@ export class DashboardService {
       const hourlyStats = await this.prisma.hourlyBlockStat.findMany({
         where: {
           organizationId: site.id,
-          date: { gte: startDate },
+          date: { gte: currentStartDate },
         },
       });
 
@@ -592,6 +756,27 @@ export class DashboardService {
         }
       });
 
+      const dailyStatMap = new Map<string, { harmful: number; behavior: number }>();
+      trendStats.forEach((item) => {
+        const key = item.date.toISOString().split('T')[0];
+        dailyStatMap.set(key, {
+          harmful: item.harmfulAppBlocks,
+          behavior: item.behaviorBlocks,
+        });
+      });
+
+      const trendDates: string[] = [];
+      const harmfulAppTrend: number[] = [];
+      const behaviorTrend: number[] = [];
+      for (let day = 0; day < 30; day++) {
+        const date = new Date(trendStartDate.getTime() + day * 86400000);
+        const key = date.toISOString().split('T')[0];
+        const data = dailyStatMap.get(key) || { harmful: 0, behavior: 0 };
+        trendDates.push(key);
+        harmfulAppTrend.push(data.harmful);
+        behaviorTrend.push(data.behavior);
+      }
+
       result.push({
         id: site.id,
         name: site.name,
@@ -601,14 +786,15 @@ export class DashboardService {
         totalViolations,
         harmfulAppBlocks,
         behaviorBlocks,
-        complianceRate: Math.round(avgCompliance * 10) / 10,
+        complianceRate: Math.round(complianceRate * 10) / 10,
         trend: trendValue > 0 ? 'up' : trendValue < 0 ? 'down' : 'stable',
         trendValue: Math.abs(trendValue),
         peakHour,
         peakBlocks,
-        previousWeek: {
-          totalViolations: prevTotal,
-        },
+        previousWeek: prevTotal,
+        trendDates,
+        harmfulAppTrend,
+        behaviorTrend,
       });
     }
 

@@ -59,13 +59,25 @@ JWT_EXPIRATION=1d
 CORS_ORIGIN=*
 ```
 
-### 4. DB 마이그레이션 & 시드
+### 4. DB 마이그레이션 & 시드 (공용 Prisma)
+
+먼저 공용 Prisma 레포를 별도 폴더로 클론합니다.
 
 ```bash
-npx prisma generate
-npx prisma migrate dev
-npx prisma db seed
+cd ..
+git clone <SMOMBIE_PRISMA_REPO_URL> smombie-prisma
+cd smombie-admin-backend
 ```
+
+```bash
+npm run prisma:generate
+npm run prisma:migrate
+npm run prisma:seed
+```
+
+`admin-backend`는 상위 경로의 `../smombie-prisma/prisma`를 단일 소스로 사용하며, 마이그레이션 실행 권한도 이 서비스가 소유합니다.
+
+전환 기간 호환을 위해 스크립트는 `../smombie-prisma/prisma`를 우선 사용하고, 없으면 기존 `../../prisma`를 fallback으로 참조합니다.
 
 시드 데이터: 관리자 4명, 조직 11개, 직원 55명, 디바이스 45개, 구역 22개, 정책 15개 외 다수
 
@@ -134,10 +146,10 @@ src/
 └── prisma/
     ├── prisma.module.ts
     └── prisma.service.ts
-prisma/
-├── schema.prisma               # DB 스키마 (29 모델)
-├── seed.ts                     # 시드 데이터 (1070줄)
-└── migrations/                 # 마이그레이션 파일
+../smombie-prisma/prisma/
+├── schema.prisma               # 공용 DB 스키마
+├── seed.ts                     # 공용 시드 스크립트
+└── migrations/                 # 공용 마이그레이션 파일
 ```
 
 ## 데모 계정

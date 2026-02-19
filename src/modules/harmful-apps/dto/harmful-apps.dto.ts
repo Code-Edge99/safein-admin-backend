@@ -6,6 +6,7 @@ import {
   IsBoolean,
   IsNumber,
   IsArray,
+  IsIn,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -30,6 +31,7 @@ export class CreateHarmfulAppDto {
   @ApiPropertyOptional({ description: '플랫폼 (android | ios)', default: 'android' })
   @IsString()
   @IsOptional()
+  @IsIn(['android', 'ios'])
   platform?: string;
 
   @ApiPropertyOptional({ description: '아이콘 URL' })
@@ -98,6 +100,7 @@ export class HarmfulAppFilterDto {
   @ApiPropertyOptional({ description: '플랫폼 필터 (android | ios | all)', default: 'all' })
   @IsString()
   @IsOptional()
+  @IsIn(['all', 'android', 'ios'])
   platform?: string;
 
   @ApiPropertyOptional({ description: '페이지 번호', default: 1 })
@@ -146,6 +149,7 @@ export class CreateHarmfulAppPresetDto {
   @ApiProperty({ description: '플랫폼 (android | ios)', default: 'android' })
   @IsString()
   @IsNotEmpty()
+  @IsIn(['android', 'ios'])
   platform: string;
 
   @ApiProperty({ description: '조직 ID' })
@@ -219,6 +223,7 @@ export class HarmfulAppPresetFilterDto {
   @ApiPropertyOptional({ description: '플랫폼 필터 (android | ios)', default: 'all' })
   @IsString()
   @IsOptional()
+  @IsIn(['all', 'android', 'ios'])
   platform?: string;
 
   @ApiPropertyOptional({ description: '조직 ID' })

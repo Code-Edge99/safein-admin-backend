@@ -120,6 +120,24 @@ export class ZoneResponseDto {
   @ApiPropertyOptional({ description: '반경' })
   radius?: number;
 
+  @ApiPropertyOptional({ description: '최소 위도(BBox)' })
+  bboxMinLat?: number;
+
+  @ApiPropertyOptional({ description: '최소 경도(BBox)' })
+  bboxMinLon?: number;
+
+  @ApiPropertyOptional({ description: '최대 위도(BBox)' })
+  bboxMaxLat?: number;
+
+  @ApiPropertyOptional({ description: '최대 경도(BBox)' })
+  bboxMaxLon?: number;
+
+  @ApiPropertyOptional({ description: '중심 위도(원형 구역)' })
+  centerLat?: number;
+
+  @ApiPropertyOptional({ description: '중심 경도(원형 구역)' })
+  centerLon?: number;
+
   @ApiPropertyOptional({ description: '그룹 ID' })
   groupId?: string;
 

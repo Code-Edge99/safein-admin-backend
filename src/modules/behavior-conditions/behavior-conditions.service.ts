@@ -13,6 +13,44 @@ import {
 export class BehaviorConditionsService {
   constructor(private prisma: PrismaService) {}
 
+  private async deactivatePoliciesWithoutConditions(tx: any, policyIds: string[]): Promise<void> {
+    const uniquePolicyIds = Array.from(new Set(policyIds.filter(Boolean)));
+    if (uniquePolicyIds.length === 0) return;
+
+    const policies = await tx.controlPolicy.findMany({
+      where: { id: { in: uniquePolicyIds } },
+      select: {
+        id: true,
+        _count: {
+          select: {
+            zones: true,
+            timePolicies: true,
+            behaviors: true,
+            harmfulApps: true,
+          },
+        },
+      },
+    });
+
+    const emptyPolicyIds = policies
+      .filter(
+        (p: any) =>
+          p._count.zones + p._count.timePolicies + p._count.behaviors + p._count.harmfulApps === 0,
+      )
+      .map((p: any) => p.id);
+
+    if (emptyPolicyIds.length === 0) return;
+
+    await tx.controlPolicy.updateMany({
+      where: { id: { in: emptyPolicyIds } },
+      data: { isActive: false },
+    });
+
+    await tx.controlPolicyEmployee.deleteMany({
+      where: { policyId: { in: emptyPolicyIds } },
+    });
+  }
+
   async create(createDto: CreateBehaviorConditionDto): Promise<BehaviorConditionResponseDto> {
     const { organizationId, workTypeId, type, ...rest } = createDto;
 
@@ -182,14 +220,22 @@ export class BehaviorConditionsService {
   }
 
   async remove(id: string): Promise<void> {
-    const condition = await this.findOne(id);
+    await this.findOne(id);
 
-    // Check if used by any policy
-    if (condition.policyCount > 0) {
-      throw new BadRequestException('정책에서 사용 중인 조건은 삭제할 수 없습니다.');
-    }
+    await this.prisma.$transaction(async (tx) => {
+      const impacted = await tx.controlPolicyBehavior.findMany({
+        where: { behaviorConditionId: id },
+        select: { policyId: true },
+      });
 
-    await this.prisma.behaviorCondition.delete({ where: { id } });
+      await tx.controlPolicyBehavior.deleteMany({ where: { behaviorConditionId: id } });
+      await tx.behaviorCondition.delete({ where: { id } });
+
+      await this.deactivatePoliciesWithoutConditions(
+        tx,
+        impacted.map((item: any) => item.policyId),
+      );
+    });
   }
 
   async toggleActive(id: string): Promise<BehaviorConditionResponseDto> {

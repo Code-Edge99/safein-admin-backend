@@ -19,16 +19,17 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev",
-    "prisma:migrate:prod": "prisma migrate deploy",
-    "prisma:studio": "prisma studio",
-    "prisma:seed": "ts-node prisma/seed.ts",
-    "db:push": "prisma db push",
-    "db:reset": "prisma migrate reset"
+    "prisma:generate": "node scripts/prisma-runner.js prisma generate",
+    "prisma:migrate": "node scripts/prisma-runner.js prisma migrate dev",
+    "prisma:migrate:prod": "node scripts/prisma-runner.js prisma migrate deploy",
+    "prisma:studio": "node scripts/prisma-runner.js prisma studio",
+    "prisma:seed": "node scripts/prisma-runner.js seed",
+    "db:push": "node scripts/prisma-runner.js prisma db push",
+    "db:reset": "node scripts/prisma-runner.js prisma migrate reset"
   },
   "prisma": {
-    "seed": "ts-node prisma/seed.ts"
+    "seed": "node scripts/prisma-runner.js seed",
+    "schema": "../smombie-prisma/prisma/schema.prisma"
   },
   "dependencies": {
     "@nestjs/common": "^10.0.0",

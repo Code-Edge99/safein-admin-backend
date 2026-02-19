@@ -59,51 +59,51 @@ export class EmployeesController {
     return this.employeesService.getStats();
   }
 
-  @Get(':id')
+  @Get(':employeeId')
   @ApiOperation({ summary: '직원 상세 조회' })
-  @ApiParam({ name: 'id', description: '직원 ID' })
+  @ApiParam({ name: 'employeeId', description: '직원 ID' })
   @ApiResponse({ status: 200, description: '직원 상세', type: EmployeeDetailDto })
   @ApiResponse({ status: 404, description: '직원을 찾을 수 없음' })
-  findOne(@Param('id') id: string): Promise<EmployeeDetailDto> {
-    return this.employeesService.findOne(id);
+  findOne(@Param('employeeId') employeeId: string): Promise<EmployeeDetailDto> {
+    return this.employeesService.findOne(employeeId);
   }
 
-  @Patch(':id')
+  @Patch(':employeeId')
   @ApiOperation({ summary: '직원 수정' })
-  @ApiParam({ name: 'id', description: '직원 ID' })
+  @ApiParam({ name: 'employeeId', description: '직원 ID' })
   @ApiResponse({ status: 200, description: '직원 수정 성공', type: EmployeeResponseDto })
   update(
-    @Param('id') id: string,
+    @Param('employeeId') employeeId: string,
     @Body() updateEmployeeDto: UpdateEmployeeDto,
   ): Promise<EmployeeResponseDto> {
-    return this.employeesService.update(id, updateEmployeeDto);
+    return this.employeesService.update(employeeId, updateEmployeeDto);
   }
 
-  @Patch(':id/assign-device')
+  @Patch(':employeeId/assign-device')
   @ApiOperation({ summary: '직원에 장치 할당' })
-  @ApiParam({ name: 'id', description: '직원 ID' })
+  @ApiParam({ name: 'employeeId', description: '직원 ID' })
   @ApiResponse({ status: 200, description: '장치 할당 성공', type: EmployeeResponseDto })
   assignDevice(
-    @Param('id') id: string,
+    @Param('employeeId') employeeId: string,
     @Body() body: { deviceId: string },
   ): Promise<EmployeeResponseDto> {
-    return this.employeesService.assignDevice(id, body.deviceId);
+    return this.employeesService.assignDevice(employeeId, body.deviceId);
   }
 
-  @Patch(':id/unassign-device')
+  @Patch(':employeeId/unassign-device')
   @ApiOperation({ summary: '직원 장치 할당 해제' })
-  @ApiParam({ name: 'id', description: '직원 ID' })
+  @ApiParam({ name: 'employeeId', description: '직원 ID' })
   @ApiResponse({ status: 200, description: '장치 할당 해제 성공', type: EmployeeResponseDto })
-  unassignDevice(@Param('id') id: string): Promise<EmployeeResponseDto> {
-    return this.employeesService.unassignDevice(id);
+  unassignDevice(@Param('employeeId') employeeId: string): Promise<EmployeeResponseDto> {
+    return this.employeesService.unassignDevice(employeeId);
   }
 
-  @Delete(':id')
+  @Delete(':employeeId')
   @ApiOperation({ summary: '직원 삭제' })
-  @ApiParam({ name: 'id', description: '직원 ID' })
+  @ApiParam({ name: 'employeeId', description: '직원 ID' })
   @ApiResponse({ status: 200, description: '직원 삭제 성공' })
-  remove(@Param('id') id: string): Promise<void> {
-    return this.employeesService.remove(id);
+  remove(@Param('employeeId') employeeId: string): Promise<void> {
+    return this.employeesService.remove(employeeId);
   }
 
   @Post('bulk/assign-work-type')
