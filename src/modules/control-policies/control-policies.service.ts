@@ -467,8 +467,23 @@ export class ControlPoliciesService {
   }
 
   async remove(id: string): Promise<void> {
-    await this.findOne(id);
-    await this.prisma.controlPolicy.delete({ where: { id } });
+    const policy = await this.prisma.controlPolicy.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!policy) {
+      throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.controlPolicyZone.deleteMany({ where: { policyId: id } });
+      await tx.controlPolicyTimePolicy.deleteMany({ where: { policyId: id } });
+      await tx.controlPolicyBehavior.deleteMany({ where: { policyId: id } });
+      await tx.controlPolicyHarmfulApp.deleteMany({ where: { policyId: id } });
+      await tx.controlPolicyEmployee.deleteMany({ where: { policyId: id } });
+      await tx.controlPolicy.delete({ where: { id } });
+    });
   }
 
   async toggleActive(id: string): Promise<ControlPolicyResponseDto> {

@@ -7,6 +7,7 @@ import {
   IsEnum,
   IsArray,
   IsDateString,
+  Matches,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { BaseFilterDto } from '../../../common/dto';
@@ -54,10 +55,13 @@ export class CreateEmployeeDto {
   @IsEmail()
   email?: string;
 
-  @ApiPropertyOptional({ description: '전화번호' })
-  @IsOptional()
+  @ApiProperty({ description: '전화번호 (중복 불가, 필수)' })
   @IsString()
-  phone?: string;
+  @IsNotEmpty()
+  @Matches(/^01[0-9]-?\d{3,4}-?\d{4}$/, {
+    message: '전화번호 형식이 올바르지 않습니다. (예: 010-1234-5678)',
+  })
+  phone: string;
 
   @ApiPropertyOptional({ description: '근무 유형 ID' })
   @IsOptional()

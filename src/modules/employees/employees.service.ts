@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { Prisma, EmployeeStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResponse } from '../../common/dto';
@@ -18,6 +18,18 @@ export class EmployeesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateEmployeeDto): Promise<EmployeeResponseDto> {
+    const normalizedEmployeeCode = dto.employeeCode?.trim() || null;
+    const normalizedPhone = this.normalizePhone(dto.phone);
+
+    if (!normalizedPhone) {
+      throw new BadRequestException('전화번호는 필수 입력값입니다.');
+    }
+
+    await this.ensureUniqueEmployeeIdentity({
+      employeeCode: normalizedEmployeeCode,
+      phone: normalizedPhone,
+    });
+
     // 조직 존재 여부 확인
     const organization = await this.prisma.organization.findUnique({
       where: { id: dto.organizationId },
@@ -46,26 +58,32 @@ export class EmployeesService {
       }
     }
 
-    const employee = await this.prisma.employee.create({
-      data: {
-        employeeId: dto.employeeCode,
-        name: dto.name,
-        organizationId: dto.organizationId,
-        siteId: dto.siteId,
-        position: dto.position,
-        role: dto.role,
-        email: dto.email,
-        phone: dto.phone,
-        workTypeId: dto.workTypeId,
-        status: (dto.status as EmployeeStatus) || EmployeeStatus.ACTIVE,
-        hireDate: dto.hireDate ? new Date(dto.hireDate) : undefined,
-      },
-      include: {
-        organization: true,
-        site: true,
-        workType: true,
-      },
-    });
+    let employee;
+    try {
+      employee = await this.prisma.employee.create({
+        data: {
+          employeeId: normalizedEmployeeCode,
+          name: dto.name,
+          organizationId: dto.organizationId,
+          siteId: dto.siteId,
+          position: dto.position,
+          role: dto.role,
+          email: dto.email,
+          phone: normalizedPhone,
+          workTypeId: dto.workTypeId,
+          status: (dto.status as EmployeeStatus) || EmployeeStatus.ACTIVE,
+          hireDate: dto.hireDate ? new Date(dto.hireDate) : undefined,
+        },
+        include: {
+          organization: true,
+          site: true,
+          workType: true,
+        },
+      });
+    } catch (error) {
+      this.handleUniqueConstraintError(error);
+      throw error;
+    }
 
     return this.toResponseDto(employee);
   }
@@ -187,6 +205,19 @@ export class EmployeesService {
   async update(employeeId: string, dto: UpdateEmployeeDto): Promise<EmployeeResponseDto> {
     await this.findOne(employeeId); // 존재 여부 확인
 
+    const normalizedEmployeeCode = dto.employeeCode !== undefined ? dto.employeeCode?.trim() || null : undefined;
+    const normalizedPhone = dto.phone !== undefined ? this.normalizePhone(dto.phone) : undefined;
+
+    if (dto.phone !== undefined && !normalizedPhone) {
+      throw new BadRequestException('전화번호는 비워둘 수 없습니다.');
+    }
+
+    await this.ensureUniqueEmployeeIdentity({
+      employeeCode: normalizedEmployeeCode,
+      phone: normalizedPhone,
+      excludeEmployeeId: employeeId,
+    });
+
     // 조직 존재 여부 확인
     if (dto.organizationId) {
       const organization = await this.prisma.organization.findUnique({
@@ -217,27 +248,33 @@ export class EmployeesService {
       }
     }
 
-    const employee = await this.prisma.employee.update({
-      where: { id: employeeId },
-      data: {
-        employeeId: dto.employeeCode,
-        name: dto.name,
-        organizationId: dto.organizationId,
-        siteId: dto.siteId,
-        position: dto.position,
-        role: dto.role,
-        email: dto.email,
-        phone: dto.phone,
-        workTypeId: dto.workTypeId,
-        status: dto.status as EmployeeStatus | undefined,
-        hireDate: dto.hireDate ? new Date(dto.hireDate) : undefined,
-      },
-      include: {
-        organization: true,
-        site: true,
-        workType: true,
-      },
-    });
+    let employee;
+    try {
+      employee = await this.prisma.employee.update({
+        where: { id: employeeId },
+        data: {
+          employeeId: normalizedEmployeeCode,
+          name: dto.name,
+          organizationId: dto.organizationId,
+          siteId: dto.siteId,
+          position: dto.position,
+          role: dto.role,
+          email: dto.email,
+          phone: normalizedPhone,
+          workTypeId: dto.workTypeId,
+          status: dto.status as EmployeeStatus | undefined,
+          hireDate: dto.hireDate ? new Date(dto.hireDate) : undefined,
+        },
+        include: {
+          organization: true,
+          site: true,
+          workType: true,
+        },
+      });
+    } catch (error) {
+      this.handleUniqueConstraintError(error);
+      throw error;
+    }
 
     return this.toResponseDto(employee);
   }
@@ -417,5 +454,80 @@ export class EmployeesService {
       createdAt: employee.createdAt,
       updatedAt: employee.updatedAt,
     };
+  }
+
+  private normalizePhone(phone?: string): string | undefined {
+    if (phone === undefined || phone === null) {
+      return undefined;
+    }
+
+    const digits = phone.replace(/\D/g, '');
+    if (!digits) {
+      return '';
+    }
+
+    if (digits.length === 11) {
+      return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
+    }
+
+    if (digits.length === 10) {
+      return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+    }
+
+    return phone.trim();
+  }
+
+  private async ensureUniqueEmployeeIdentity(params: {
+    employeeCode?: string | null;
+    phone?: string;
+    excludeEmployeeId?: string;
+  }): Promise<void> {
+    const { employeeCode, phone, excludeEmployeeId } = params;
+
+    if (employeeCode) {
+      const existingByCode = await this.prisma.employee.findFirst({
+        where: {
+          employeeId: employeeCode,
+          ...(excludeEmployeeId ? { id: { not: excludeEmployeeId } } : {}),
+        },
+        select: { id: true },
+      });
+
+      if (existingByCode) {
+        throw new ConflictException('이미 사용 중인 사번/코드입니다.');
+      }
+    }
+
+    if (phone) {
+      const existingByPhone = await this.prisma.employee.findFirst({
+        where: {
+          phone,
+          ...(excludeEmployeeId ? { id: { not: excludeEmployeeId } } : {}),
+        },
+        select: { id: true },
+      });
+
+      if (existingByPhone) {
+        throw new ConflictException('이미 사용 중인 연락처입니다.');
+      }
+    }
+  }
+
+  private handleUniqueConstraintError(error: unknown): void {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+      return;
+    }
+
+    const target = Array.isArray(error.meta?.target) ? error.meta?.target : [];
+
+    if (target.includes('phone')) {
+      throw new ConflictException('이미 사용 중인 연락처입니다.');
+    }
+
+    if (target.includes('employeeId')) {
+      throw new ConflictException('이미 사용 중인 사번/코드입니다.');
+    }
+
+    throw new ConflictException('중복된 값이 있어 저장할 수 없습니다.');
   }
 }

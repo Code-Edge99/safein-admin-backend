@@ -6,7 +6,7 @@
 
 | 항목 | 버전 |
 |------|------|
-| Node.js | 20.x |
+| Node.js | 24.x |
 | NestJS | 10.x |
 | Prisma | 5.x |
 | PostgreSQL | 16 |
