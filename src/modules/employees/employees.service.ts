@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { Prisma, EmployeeStatus } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResponse } from '../../common/dto';
 import {
@@ -205,6 +206,14 @@ export class EmployeesService {
   async update(employeeId: string, dto: UpdateEmployeeDto): Promise<EmployeeResponseDto> {
     await this.findOne(employeeId); // 존재 여부 확인
 
+    if ((dto.newPassword && !dto.confirmPassword) || (!dto.newPassword && dto.confirmPassword)) {
+      throw new BadRequestException('새 비밀번호와 확인 비밀번호를 모두 입력해주세요.');
+    }
+
+    if (dto.newPassword && dto.confirmPassword && dto.newPassword !== dto.confirmPassword) {
+      throw new BadRequestException('새 비밀번호가 일치하지 않습니다.');
+    }
+
     const normalizedEmployeeCode = dto.employeeCode !== undefined ? dto.employeeCode?.trim() || null : undefined;
     const normalizedPhone = dto.phone !== undefined ? this.normalizePhone(dto.phone) : undefined;
 
@@ -250,26 +259,43 @@ export class EmployeesService {
 
     let employee;
     try {
-      employee = await this.prisma.employee.update({
-        where: { id: employeeId },
-        data: {
-          employeeId: normalizedEmployeeCode,
-          name: dto.name,
-          organizationId: dto.organizationId,
-          siteId: dto.siteId,
-          position: dto.position,
-          role: dto.role,
-          email: dto.email,
-          phone: normalizedPhone,
-          workTypeId: dto.workTypeId,
-          status: dto.status as EmployeeStatus | undefined,
-          hireDate: dto.hireDate ? new Date(dto.hireDate) : undefined,
-        },
-        include: {
-          organization: true,
-          site: true,
-          workType: true,
-        },
+      employee = await this.prisma.$transaction(async (tx) => {
+        const updatedEmployee = await tx.employee.update({
+          where: { id: employeeId },
+          data: {
+            employeeId: normalizedEmployeeCode,
+            name: dto.name,
+            organizationId: dto.organizationId,
+            siteId: dto.siteId,
+            position: dto.position,
+            role: dto.role,
+            email: dto.email,
+            phone: normalizedPhone,
+            workTypeId: dto.workTypeId,
+            status: dto.status as EmployeeStatus | undefined,
+            hireDate: dto.hireDate ? new Date(dto.hireDate) : undefined,
+          },
+          include: {
+            organization: true,
+            site: true,
+            workType: true,
+          },
+        });
+
+        if (dto.newPassword) {
+          const passwordHash = await bcrypt.hash(dto.newPassword, 10);
+          await tx.employeeAccount.upsert({
+            where: { employeeId },
+            update: { passwordHash, isActive: true },
+            create: {
+              employeeId,
+              passwordHash,
+              isActive: true,
+            },
+          });
+        }
+
+        return updatedEmployee;
       });
     } catch (error) {
       this.handleUniqueConstraintError(error);

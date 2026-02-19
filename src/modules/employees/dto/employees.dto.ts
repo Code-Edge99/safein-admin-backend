@@ -79,7 +79,22 @@ export class CreateEmployeeDto {
   hireDate?: string;
 }
 
-export class UpdateEmployeeDto extends PartialType(CreateEmployeeDto) {}
+export class UpdateEmployeeDto extends PartialType(CreateEmployeeDto) {
+  @ApiPropertyOptional({ description: '새 비밀번호 (수정 시 선택)', minLength: 8 })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^.{8,}$/, {
+    message: '새 비밀번호는 최소 8자 이상이어야 합니다.',
+  })
+  newPassword?: string;
+
+  @ApiPropertyOptional({ description: '새 비밀번호 확인 (수정 시 선택)' })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  confirmPassword?: string;
+}
 
 export class EmployeeResponseDto {
   @ApiProperty({ description: '직원 ID' })
