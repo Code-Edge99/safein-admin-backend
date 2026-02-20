@@ -6,6 +6,7 @@ import {
   IsNumber,
   IsBoolean,
   IsArray,
+  ArrayMaxSize,
   Min,
   Max,
 } from 'class-validator';
@@ -48,18 +49,21 @@ export class CreateControlPolicyDto {
   @ApiPropertyOptional({ description: '적용 시간 정책 ID 목록' })
   @IsArray()
   @IsString({ each: true })
+  @ArrayMaxSize(1)
   @IsOptional()
   timePolicyIds?: string[];
 
   @ApiPropertyOptional({ description: '적용 행동 조건 ID 목록' })
   @IsArray()
   @IsString({ each: true })
+  @ArrayMaxSize(1)
   @IsOptional()
   behaviorConditionIds?: string[];
 
   @ApiPropertyOptional({ description: '적용 유해앱 프리셋 ID 목록' })
   @IsArray()
   @IsString({ each: true })
+  @ArrayMaxSize(1)
   @IsOptional()
   harmfulAppPresetIds?: string[];
 
@@ -217,6 +221,7 @@ export class AssignTimePoliciesDto {
   @ApiProperty({ description: '시간 정책 ID 목록' })
   @IsArray()
   @IsString({ each: true })
+  @ArrayMaxSize(1)
   timePolicyIds: string[];
 }
 
@@ -224,6 +229,7 @@ export class AssignBehaviorConditionsDto {
   @ApiProperty({ description: '행동 조건 ID 목록' })
   @IsArray()
   @IsString({ each: true })
+  @ArrayMaxSize(1)
   behaviorConditionIds: string[];
 }
 
@@ -231,6 +237,7 @@ export class AssignHarmfulAppsDto {
   @ApiProperty({ description: '유해앱 프리셋 ID 목록' })
   @IsArray()
   @IsString({ each: true })
+  @ArrayMaxSize(1)
   harmfulAppPresetIds: string[];
 }
 

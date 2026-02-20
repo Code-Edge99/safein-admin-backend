@@ -81,6 +81,8 @@ export class OrganizationsService {
       orderBy: [{ type: 'asc' }, { name: 'asc' }],
     });
 
+    const organizationIdSet = new Set(organizations.map((org) => org.id));
+
     // 조직 트리 구조로 변환
     const buildTree = (parentId: string | null): OrganizationTreeDto[] => {
       return organizations
@@ -92,6 +94,19 @@ export class OrganizationsService {
           children: buildTree(org.id),
         }));
     };
+
+    if (scopeOrganizationIds) {
+      const scopedRoots = organizations.filter(
+        (org) => !org.parentId || !organizationIdSet.has(org.parentId),
+      );
+
+      return scopedRoots.map((org) => ({
+        ...this.toResponseDto(org),
+        employeeCount: org._count.employees,
+        deviceCount: org._count.devices,
+        children: buildTree(org.id),
+      }));
+    }
 
     return buildTree(null);
   }

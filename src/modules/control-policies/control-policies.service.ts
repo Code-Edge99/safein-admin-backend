@@ -89,6 +89,12 @@ export class ControlPoliciesService {
       employeeIds,
     });
 
+    this.ensureSingleSelectionConstraints({
+      timePolicyIds,
+      behaviorConditionIds,
+      harmfulAppPresetIds,
+    });
+
     this.ensureAtLeastOneControlConditionInput({
       zoneIds,
       timePolicyIds,
@@ -446,6 +452,12 @@ export class ControlPoliciesService {
         employeeIds,
       });
 
+      this.ensureSingleSelectionConstraints({
+        timePolicyIds,
+        behaviorConditionIds,
+        harmfulAppPresetIds,
+      });
+
       // Check if policy already exists for this work type (1:1 relationship)
       const existingPolicy = await tx.controlPolicy.findUnique({ where: { workTypeId: targetWorkTypeId } });
       if (existingPolicy && existingPolicy.id !== id) {
@@ -650,6 +662,7 @@ export class ControlPoliciesService {
     }
 
     await this.validatePolicyRelations(this.prisma, policy.organizationId, { timePolicyIds });
+    this.ensureSingleSelectionConstraints({ timePolicyIds });
 
     await this.prisma.$transaction(async (tx) => {
       await tx.controlPolicyTimePolicy.deleteMany({ where: { policyId } });
@@ -681,6 +694,7 @@ export class ControlPoliciesService {
     }
 
     await this.validatePolicyRelations(this.prisma, policy.organizationId, { behaviorConditionIds });
+    this.ensureSingleSelectionConstraints({ behaviorConditionIds });
 
     await this.prisma.$transaction(async (tx) => {
       await tx.controlPolicyBehavior.deleteMany({ where: { policyId } });
@@ -715,6 +729,7 @@ export class ControlPoliciesService {
     }
 
     await this.validatePolicyRelations(this.prisma, policy.organizationId, { harmfulAppPresetIds });
+    this.ensureSingleSelectionConstraints({ harmfulAppPresetIds });
 
     await this.prisma.$transaction(async (tx) => {
       await tx.controlPolicyHarmfulApp.deleteMany({ where: { policyId } });
@@ -842,6 +857,24 @@ export class ControlPoliciesService {
       throw new BadRequestException(
         '정책에는 최소 1개 이상의 통제 조건(구역/시간 정책/행동 조건/유해앱 프리셋)이 필요합니다.',
       );
+    }
+  }
+
+  private ensureSingleSelectionConstraints(params: {
+    timePolicyIds?: string[];
+    behaviorConditionIds?: string[];
+    harmfulAppPresetIds?: string[];
+  }): void {
+    if (params.timePolicyIds !== undefined && this.normalizeIds(params.timePolicyIds).length > 1) {
+      throw new BadRequestException('시간 조건은 1개만 설정할 수 있습니다.');
+    }
+
+    if (params.behaviorConditionIds !== undefined && this.normalizeIds(params.behaviorConditionIds).length > 1) {
+      throw new BadRequestException('행동 조건은 1개만 설정할 수 있습니다.');
+    }
+
+    if (params.harmfulAppPresetIds !== undefined && this.normalizeIds(params.harmfulAppPresetIds).length > 1) {
+      throw new BadRequestException('유해앱 프리셋은 1개만 설정할 수 있습니다.');
     }
   }
 

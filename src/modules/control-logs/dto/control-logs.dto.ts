@@ -161,6 +161,16 @@ export class ControlLogResponseDto {
 }
 
 export class ControlLogFilterDto {
+  @ApiPropertyOptional({ description: '검색어 (직원명/사유/앱명/패키지명/구역명/정책명)' })
+  @IsString()
+  @IsOptional()
+  search?: string;
+
+  @ApiPropertyOptional({ description: '조직 ID' })
+  @IsString()
+  @IsOptional()
+  organizationId?: string;
+
   @ApiPropertyOptional({ description: '직원 ID' })
   @IsString()
   @IsOptional()

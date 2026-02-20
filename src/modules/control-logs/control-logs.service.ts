@@ -83,6 +83,8 @@ export class ControlLogsService {
     scopeOrganizationIds?: string[],
   ): Promise<ControlLogListResponseDto> {
     const {
+      search,
+      organizationId,
       employeeId,
       deviceId,
       policyId,
@@ -130,6 +132,25 @@ export class ControlLogsService {
       if (endDate) {
         where.timestamp.lte = new Date(endDate);
       }
+    }
+
+    if (organizationId) {
+      this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
+      where.employee = {
+        ...(where.employee || {}),
+        organizationId,
+      };
+    }
+
+    if (search) {
+      where.OR = [
+        { reason: { contains: search, mode: 'insensitive' } },
+        { appName: { contains: search, mode: 'insensitive' } },
+        { packageName: { contains: search, mode: 'insensitive' } },
+        { employee: { name: { contains: search, mode: 'insensitive' } } },
+        { zone: { name: { contains: search, mode: 'insensitive' } } },
+        { policy: { name: { contains: search, mode: 'insensitive' } } },
+      ];
     }
 
     this.applyScopeToWhere(where, scopeOrganizationIds);
