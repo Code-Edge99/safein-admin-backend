@@ -55,8 +55,8 @@ async function bootstrap() {
 
   // Swagger
   const swaggerConfig = new DocumentBuilder()
-    .setTitle('Smombie Admin API')
-    .setDescription('Smombie Admin Backend API Documentation')
+    .setTitle('Safein Admin API')
+    .setDescription('Safein Admin Backend API Documentation')
     .setVersion('1.0')
     .addBearerAuth()
     .build();

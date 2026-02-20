@@ -1,7 +1,7 @@
 {
   "name": "smombie-admin-backend",
   "version": "1.0.0",
-  "description": "Smombie Admin Backend - NestJS with Prisma",
+  "description": "Safein Admin Backend - NestJS with Prisma",
   "author": "",
   "private": true,
   "license": "UNLICENSED",

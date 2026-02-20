@@ -1,6 +1,6 @@
-# Smombie Admin Backend
+# Safein Admin Backend
 
-스몸비 관리자 API 서버 (NestJS + Prisma + PostgreSQL)
+세이프인 관리자 API 서버 (NestJS + Prisma + PostgreSQL)
 
 ## 빠른 시작 (로컬 실행)
 

@@ -16,6 +16,7 @@ function resolveSchemaPath() {
   const schemaEnv = process.env.PRISMA_SCHEMA_PATH;
   const candidates = [
     schemaEnv,
+    path.resolve(__dirname, '..', 'prisma', 'schema.prisma'),
     path.resolve(__dirname, '..', '..', 'smombie-prisma', 'prisma', 'schema.prisma'),
     path.resolve(__dirname, '..', '..', 'smombie-prisma', 'schema.prisma'),
     path.resolve(__dirname, '..', 'smombie-prisma', 'prisma', 'schema.prisma'),
