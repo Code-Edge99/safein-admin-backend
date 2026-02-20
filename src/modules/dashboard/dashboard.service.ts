@@ -663,6 +663,12 @@ export class DashboardService {
       }),
     ]);
 
+    const appliedPolicy = await this.resolveAppliedPolicyForEmployee(
+      employee.id,
+      employee.organizationId,
+      employee.workTypeId,
+    );
+
     // ── 집계: 통계 ──
     const totalEvents = dailyStats.reduce((s, d) => s + ((d as any).totalEvents ?? d.totalBlocks), 0);
     const allowedEvents = dailyStats.reduce((s, d) => s + ((d as any).allowedEvents ?? 0), 0);
@@ -946,6 +952,113 @@ export class DashboardService {
 
       trendData,
       violationHistory,
+      appliedPolicy,
+    };
+  }
+
+  private async resolveAppliedPolicyForEmployee(
+    employeeId: string,
+    organizationId: string,
+    workTypeId?: string | null,
+  ) {
+    const [assignedPolicies, workTypePolicy] = await Promise.all([
+      this.prisma.controlPolicyEmployee.findMany({
+        where: {
+          employeeId,
+          policy: {
+            isActive: true,
+            organizationId,
+          },
+        },
+        include: {
+          policy: {
+            include: {
+              zones: {
+                include: {
+                  zone: { select: { id: true, name: true, type: true, description: true } },
+                },
+              },
+              timePolicies: {
+                include: {
+                  timePolicy: {
+                    select: { id: true, name: true, startTime: true, endTime: true, days: true },
+                  },
+                },
+              },
+              behaviors: {
+                include: {
+                  behaviorCondition: {
+                    select: { id: true, name: true, description: true, type: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+      workTypeId
+        ? this.prisma.controlPolicy.findFirst({
+            where: {
+              organizationId,
+              workTypeId,
+              isActive: true,
+            },
+            include: {
+              zones: {
+                include: {
+                  zone: { select: { id: true, name: true, type: true, description: true } },
+                },
+              },
+              timePolicies: {
+                include: {
+                  timePolicy: {
+                    select: { id: true, name: true, startTime: true, endTime: true, days: true },
+                  },
+                },
+              },
+              behaviors: {
+                include: {
+                  behaviorCondition: {
+                    select: { id: true, name: true, description: true, type: true },
+                  },
+                },
+              },
+            },
+          })
+        : Promise.resolve(null),
+    ]);
+
+    const assignedPolicyIds = new Set(assignedPolicies.map((item) => item.policyId));
+    const mergedPolicies = [
+      ...assignedPolicies.map((item) => item.policy),
+      ...(workTypePolicy ? [workTypePolicy] : []),
+    ];
+
+    const uniquePolicies = Array.from(new Map(mergedPolicies.map((policy: any) => [policy.id, policy])).values());
+    if (uniquePolicies.length === 0) {
+      return null;
+    }
+
+    uniquePolicies.sort((a: any, b: any) => {
+      const priorityDiff = (a.priority ?? 9999) - (b.priority ?? 9999);
+      if (priorityDiff !== 0) {
+        return priorityDiff;
+      }
+      return b.createdAt.getTime() - a.createdAt.getTime();
+    });
+
+    const selectedPolicy: any = uniquePolicies[0];
+
+    return {
+      id: selectedPolicy.id,
+      name: selectedPolicy.name,
+      description: selectedPolicy.description || '',
+      isActive: !!selectedPolicy.isActive,
+      priority: selectedPolicy.priority,
+      source: assignedPolicyIds.has(selectedPolicy.id) ? 'EMPLOYEE' : 'WORK_TYPE',
+      timePolicies: (selectedPolicy.timePolicies || []).map((item: any) => item.timePolicy),
+      zones: (selectedPolicy.zones || []).map((item: any) => item.zone),
+      behaviorConditions: (selectedPolicy.behaviors || []).map((item: any) => item.behaviorCondition),
     };
   }
 

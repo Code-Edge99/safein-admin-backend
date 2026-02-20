@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
+import { AdminRole } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 
 @Injectable()
@@ -19,6 +20,11 @@ export class OrganizationScopeGuard implements CanActivate {
 
     if (!user) {
       throw new ForbiddenException('인증 정보가 없습니다.');
+    }
+
+    if (user.role === AdminRole.SUPER_ADMIN) {
+      request.organizationScopeIds = undefined;
+      return true;
     }
 
     if (!user.organizationId) {
