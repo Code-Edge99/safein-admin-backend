@@ -641,7 +641,7 @@ export class DashboardService {
       orderBy: { timestamp: 'desc' },
     });
 
-    const [zoneVisitSessions, workSessions] = await Promise.all([
+    const [zoneVisitSessions, workSessions, appUsageSessions] = await Promise.all([
       this.prisma.zoneVisitSession.findMany({
         where: {
           employeeId,
@@ -658,7 +658,23 @@ export class DashboardService {
           endedAt: { not: null },
         },
         select: {
+          id: true,
+          startedAt: true,
+          endedAt: true,
           durationSeconds: true,
+        },
+      }),
+      this.prisma.appUsageSession.findMany({
+        where: {
+          employeeId,
+          startedAt: { gte: startDate30 },
+        },
+        select: {
+          id: true,
+          packageName: true,
+          appName: true,
+          startedAt: true,
+          endedAt: true,
         },
       }),
     ]);
@@ -895,6 +911,92 @@ export class DashboardService {
           : '행동 패턴 감지'),
     }));
 
+    const recentActivity = [
+      ...controlLogs.map((log) => ({
+        id: `control-${log.id}`,
+        timestamp: log.timestamp.toISOString(),
+        actionLabel: log.action === 'blocked' ? '위반 차단' : '정책 허용',
+        category: 'control',
+        description:
+          log.reason ||
+          (log.type === 'harmful_app'
+            ? `${log.appName || '유해앱'} 사용 감지`
+            : '행동 패턴 감지'),
+      })),
+      ...zoneVisitSessions.flatMap((session) => {
+        const events: Array<any> = [
+          {
+            id: `zone-enter-${session.id}`,
+            timestamp: session.enteredAt.toISOString(),
+            actionLabel: '구역 진입',
+            category: 'zone',
+            description: `${session.zone?.name || '미지정'} 진입`,
+          },
+        ];
+
+        if (session.exitedAt) {
+          events.push({
+            id: `zone-exit-${session.id}`,
+            timestamp: session.exitedAt.toISOString(),
+            actionLabel: '구역 이탈',
+            category: 'zone',
+            description: `${session.zone?.name || '미지정'} 이탈`,
+          });
+        }
+
+        return events;
+      }),
+      ...workSessions.flatMap((session: any, index: number) => {
+        const events: Array<any> = [
+          {
+            id: `work-start-${index}-${session.startedAt?.toISOString?.() || index}`,
+            timestamp: session.startedAt.toISOString(),
+            actionLabel: '근무 시작',
+            category: 'work',
+            description: '근무 세션 시작',
+          },
+        ];
+
+        if (session.endedAt) {
+          events.push({
+            id: `work-end-${index}-${session.endedAt.toISOString()}`,
+            timestamp: session.endedAt.toISOString(),
+            actionLabel: '근무 종료',
+            category: 'work',
+            description: '근무 세션 종료',
+          });
+        }
+
+        return events;
+      }),
+      ...appUsageSessions.flatMap((session) => {
+        const appLabel = session.appName || session.packageName;
+        const events: Array<any> = [
+          {
+            id: `app-foreground-${session.id}`,
+            timestamp: session.startedAt.toISOString(),
+            actionLabel: '앱 전경 진입',
+            category: 'app',
+            description: `${appLabel} 실행`,
+          },
+        ];
+
+        if (session.endedAt) {
+          events.push({
+            id: `app-background-${session.id}`,
+            timestamp: session.endedAt.toISOString(),
+            actionLabel: '앱 종료/백그라운드',
+            category: 'app',
+            description: `${appLabel} 종료`,
+          });
+        }
+
+        return events;
+      }),
+    ]
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 50);
+
     // ── 근속 기간 계산 ──
     let tenure = '-';
     if (employee.hireDate) {
@@ -952,6 +1054,7 @@ export class DashboardService {
 
       trendData,
       violationHistory,
+      recentActivity,
       appliedPolicy,
     };
   }
