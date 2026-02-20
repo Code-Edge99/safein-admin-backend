@@ -17,6 +17,8 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { HarmfulAppsService } from './harmful-apps.service';
 import {
   CreateHarmfulAppDto,
@@ -28,7 +30,8 @@ import {
 
 @ApiTags('유해 앱')
 @Controller('harmful-apps')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('SUPER_ADMIN')
 @ApiBearerAuth()
 export class HarmfulAppsController {
   constructor(private readonly harmfulAppsService: HarmfulAppsService) {}

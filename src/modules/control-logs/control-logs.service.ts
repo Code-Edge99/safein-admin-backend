@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateControlLogDto,
@@ -12,6 +12,41 @@ import {
 @Injectable()
 export class ControlLogsService {
   constructor(private prisma: PrismaService) {}
+
+  private ensureOrganizationInScope(
+    organizationId: string | undefined,
+    scopeOrganizationIds?: string[],
+  ): void {
+    if (!organizationId || !scopeOrganizationIds) {
+      return;
+    }
+
+    if (!scopeOrganizationIds.includes(organizationId)) {
+      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
+    }
+  }
+
+  private applyScopeToWhere(where: any, scopeOrganizationIds?: string[]): void {
+    if (!scopeOrganizationIds) {
+      return;
+    }
+
+    where.employee = {
+      ...(where.employee || {}),
+      organizationId: { in: scopeOrganizationIds },
+    };
+  }
+
+  private async resolveDeviceInternalId(rawDeviceId: string): Promise<string> {
+    const matchedDevice = await this.prisma.device.findFirst({
+      where: {
+        OR: [{ id: rawDeviceId }, { deviceId: rawDeviceId }],
+      },
+      select: { id: true },
+    });
+
+    return matchedDevice?.id ?? rawDeviceId;
+  }
 
   async create(createDto: CreateControlLogDto): Promise<ControlLogResponseDto> {
     const log = await this.prisma.controlLog.create({
@@ -43,7 +78,10 @@ export class ControlLogsService {
     return this.toResponseDto(log);
   }
 
-  async findAll(filter: ControlLogFilterDto): Promise<ControlLogListResponseDto> {
+  async findAll(
+    filter: ControlLogFilterDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<ControlLogListResponseDto> {
     const {
       employeeId,
       deviceId,
@@ -65,7 +103,7 @@ export class ControlLogsService {
     }
 
     if (deviceId) {
-      where.deviceId = deviceId;
+      where.deviceId = await this.resolveDeviceInternalId(deviceId);
     }
 
     if (policyId) {
@@ -93,6 +131,8 @@ export class ControlLogsService {
         where.timestamp.lte = new Date(endDate);
       }
     }
+
+    this.applyScopeToWhere(where, scopeOrganizationIds);
 
     const [logs, total] = await Promise.all([
       this.prisma.controlLog.findMany({
@@ -126,11 +166,18 @@ export class ControlLogsService {
     };
   }
 
-  async findOne(id: string): Promise<ControlLogResponseDto> {
+  async findOne(id: string, scopeOrganizationIds?: string[]): Promise<ControlLogResponseDto> {
     const log = await this.prisma.controlLog.findUnique({
       where: { id },
       include: {
-        employee: { select: { id: true, name: true } },
+        employee: {
+          select: {
+            id: true,
+            name: true,
+            organizationId: true,
+            organization: { select: { id: true, name: true } },
+          },
+        },
         device: { select: { id: true, deviceId: true } },
         policy: { select: { id: true, name: true } },
         zone: { select: { id: true, name: true } },
@@ -141,18 +188,34 @@ export class ControlLogsService {
       throw new NotFoundException('제어 로그를 찾을 수 없습니다.');
     }
 
+    if (scopeOrganizationIds && !scopeOrganizationIds.includes(log.employee.organizationId)) {
+      throw new NotFoundException('제어 로그를 찾을 수 없습니다.');
+    }
+
     return this.toResponseDto(log);
   }
 
-  async findByEmployee(employeeId: string, filter: ControlLogFilterDto): Promise<ControlLogListResponseDto> {
-    return this.findAll({ ...filter, employeeId });
+  async findByEmployee(
+    employeeId: string,
+    filter: ControlLogFilterDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<ControlLogListResponseDto> {
+    return this.findAll({ ...filter, employeeId }, scopeOrganizationIds);
   }
 
-  async findByDevice(deviceId: string, filter: ControlLogFilterDto): Promise<ControlLogListResponseDto> {
-    return this.findAll({ ...filter, deviceId });
+  async findByDevice(
+    deviceId: string,
+    filter: ControlLogFilterDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<ControlLogListResponseDto> {
+    return this.findAll({ ...filter, deviceId }, scopeOrganizationIds);
   }
 
-  async getStats(startDate?: string, endDate?: string): Promise<ControlLogStatsDto> {
+  async getStats(
+    startDate?: string,
+    endDate?: string,
+    scopeOrganizationIds?: string[],
+  ): Promise<ControlLogStatsDto> {
     const where: any = {};
 
     if (startDate || endDate) {
@@ -164,6 +227,8 @@ export class ControlLogsService {
         where.timestamp.lte = new Date(endDate);
       }
     }
+
+    this.applyScopeToWhere(where, scopeOrganizationIds);
 
     const [totalLogs, blockedCount, allowedCount, byTypeResult] = await Promise.all([
       this.prisma.controlLog.count({ where }),
@@ -188,6 +253,13 @@ export class ControlLogsService {
     const dailyLogs = await this.prisma.controlLog.findMany({
       where: {
         timestamp: { gte: sevenDaysAgo },
+        ...(scopeOrganizationIds
+          ? {
+              employee: {
+                organizationId: { in: scopeOrganizationIds },
+              },
+            }
+          : {}),
       },
       select: { timestamp: true },
     });
@@ -221,11 +293,17 @@ export class ControlLogsService {
   async getEmployeeStats(
     organizationId?: string,
     limit: number = 10,
+    scopeOrganizationIds?: string[],
   ): Promise<EmployeeLogStatsDto[]> {
     const where: any = {};
 
     if (organizationId) {
+      this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
       where.employee = { organizationId };
+    } else if (scopeOrganizationIds) {
+      where.employee = {
+        organizationId: { in: scopeOrganizationIds },
+      };
     }
 
     // Get employees with most logs
@@ -253,10 +331,29 @@ export class ControlLogsService {
     for (const empLog of employeeLogs) {
       const [blockedCount, lastLog] = await Promise.all([
         this.prisma.controlLog.count({
-          where: { employeeId: empLog.employeeId, action: 'blocked' },
+          where: {
+            employeeId: empLog.employeeId,
+            action: 'blocked',
+            ...(scopeOrganizationIds
+              ? {
+                  employee: {
+                    organizationId: { in: scopeOrganizationIds },
+                  },
+                }
+              : {}),
+          },
         }),
         this.prisma.controlLog.findFirst({
-          where: { employeeId: empLog.employeeId },
+          where: {
+            employeeId: empLog.employeeId,
+            ...(scopeOrganizationIds
+              ? {
+                  employee: {
+                    organizationId: { in: scopeOrganizationIds },
+                  },
+                }
+              : {}),
+          },
           orderBy: { timestamp: 'desc' },
           select: { timestamp: true },
         }),
@@ -274,10 +371,20 @@ export class ControlLogsService {
     return stats;
   }
 
-  async getRecentLogs(limit: number = 20): Promise<ControlLogResponseDto[]> {
+  async getRecentLogs(
+    limit: number = 20,
+    scopeOrganizationIds?: string[],
+  ): Promise<ControlLogResponseDto[]> {
     const logs = await this.prisma.controlLog.findMany({
       take: limit,
       orderBy: { timestamp: 'desc' },
+      where: scopeOrganizationIds
+        ? {
+            employee: {
+              organizationId: { in: scopeOrganizationIds },
+            },
+          }
+        : undefined,
       include: {
         employee: { select: { id: true, name: true } },
         device: { select: { id: true, deviceId: true } },

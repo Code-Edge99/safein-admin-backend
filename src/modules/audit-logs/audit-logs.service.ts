@@ -1,9 +1,22 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class AuditLogsService {
   constructor(private prisma: PrismaService) {}
+
+  private ensureOrganizationInScope(
+    organizationId: string | undefined,
+    scopeOrganizationIds?: string[],
+  ): void {
+    if (!organizationId || !scopeOrganizationIds) {
+      return;
+    }
+
+    if (!scopeOrganizationIds.includes(organizationId)) {
+      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
+    }
+  }
 
   async findAll(filter: {
     search?: string;
@@ -14,7 +27,7 @@ export class AuditLogsService {
     endDate?: string;
     page?: number;
     limit?: number;
-  }) {
+  }, scopeOrganizationIds?: string[]) {
     const page = filter.page || 1;
     const limit = filter.limit || 20;
     const skip = (page - 1) * limit;
@@ -30,7 +43,10 @@ export class AuditLogsService {
     }
 
     if (filter.organizationId) {
+      this.ensureOrganizationInScope(filter.organizationId, scopeOrganizationIds);
       where.organizationId = filter.organizationId;
+    } else if (scopeOrganizationIds) {
+      where.organizationId = { in: scopeOrganizationIds };
     }
 
     if (filter.startDate || filter.endDate) {
@@ -68,7 +84,7 @@ export class AuditLogsService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, scopeOrganizationIds?: string[]) {
     const log = await this.prisma.auditLog.findUnique({
       where: { id },
       include: {
@@ -77,6 +93,10 @@ export class AuditLogsService {
     });
 
     if (!log) {
+      throw new NotFoundException('감사 로그를 찾을 수 없습니다.');
+    }
+
+    if (scopeOrganizationIds && (!log.organizationId || !scopeOrganizationIds.includes(log.organizationId))) {
       throw new NotFoundException('감사 로그를 찾을 수 없습니다.');
     }
 

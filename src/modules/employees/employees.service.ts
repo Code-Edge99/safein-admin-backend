@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { Prisma, EmployeeStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -18,7 +24,27 @@ import {
 export class EmployeesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateEmployeeDto): Promise<EmployeeResponseDto> {
+  private ensureOrganizationInScope(
+    organizationId: string | undefined,
+    scopeOrganizationIds?: string[],
+  ): void {
+    if (!organizationId || !scopeOrganizationIds) return;
+    if (!scopeOrganizationIds.includes(organizationId)) {
+      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
+    }
+  }
+
+  private assertOrganizationInScope(
+    organizationId: string | null | undefined,
+    scopeOrganizationIds?: string[],
+  ): void {
+    if (!scopeOrganizationIds) return;
+    if (!organizationId || !scopeOrganizationIds.includes(organizationId)) {
+      throw new NotFoundException('직원을 찾을 수 없습니다.');
+    }
+  }
+
+  async create(dto: CreateEmployeeDto, scopeOrganizationIds?: string[]): Promise<EmployeeResponseDto> {
     const normalizedEmployeeCode = dto.employeeCode?.trim() || null;
     const normalizedPhone = this.normalizePhone(dto.phone);
 
@@ -30,6 +56,9 @@ export class EmployeesService {
       employeeCode: normalizedEmployeeCode,
       phone: normalizedPhone,
     });
+
+    this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
+    this.ensureOrganizationInScope(dto.siteId, scopeOrganizationIds);
 
     // 조직 존재 여부 확인
     const organization = await this.prisma.organization.findUnique({
@@ -89,16 +118,23 @@ export class EmployeesService {
     return this.toResponseDto(employee);
   }
 
-  async findAll(filter: EmployeeFilterDto): Promise<PaginatedResponse<EmployeeResponseDto>> {
+  async findAll(
+    filter: EmployeeFilterDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<PaginatedResponse<EmployeeResponseDto>> {
     const where: Prisma.EmployeeWhereInput = {};
 
     // 조직 필터
     if (filter.organizationId) {
+      this.ensureOrganizationInScope(filter.organizationId, scopeOrganizationIds);
       where.organizationId = filter.organizationId;
+    } else if (scopeOrganizationIds) {
+      where.organizationId = { in: scopeOrganizationIds };
     }
 
     // 현장 필터
     if (filter.siteId) {
+      this.ensureOrganizationInScope(filter.siteId, scopeOrganizationIds);
       where.siteId = filter.siteId;
     }
 
@@ -144,7 +180,7 @@ export class EmployeesService {
     return new PaginatedResponse(data, total, filter.page || 1, filter.limit || 20);
   }
 
-  async findOne(employeeId: string): Promise<EmployeeDetailDto> {
+  async findOne(employeeId: string, scopeOrganizationIds?: string[]): Promise<EmployeeDetailDto> {
     const employee = await this.prisma.employee.findUnique({
       where: { id: employeeId },
       include: {
@@ -183,6 +219,8 @@ export class EmployeesService {
       throw new NotFoundException('직원을 찾을 수 없습니다.');
     }
 
+    this.assertOrganizationInScope(employee.organizationId, scopeOrganizationIds);
+
     return {
       ...this.toResponseDto(employee),
       devices: employee.devices.map(d => ({
@@ -203,8 +241,12 @@ export class EmployeesService {
     };
   }
 
-  async update(employeeId: string, dto: UpdateEmployeeDto): Promise<EmployeeResponseDto> {
-    await this.findOne(employeeId); // 존재 여부 확인
+  async update(
+    employeeId: string,
+    dto: UpdateEmployeeDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<EmployeeResponseDto> {
+    await this.findOne(employeeId, scopeOrganizationIds); // 존재 여부 확인
 
     if ((dto.newPassword && !dto.confirmPassword) || (!dto.newPassword && dto.confirmPassword)) {
       throw new BadRequestException('새 비밀번호와 확인 비밀번호를 모두 입력해주세요.');
@@ -226,6 +268,9 @@ export class EmployeesService {
       phone: normalizedPhone,
       excludeEmployeeId: employeeId,
     });
+
+    this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
+    this.ensureOrganizationInScope(dto.siteId, scopeOrganizationIds);
 
     // 조직 존재 여부 확인
     if (dto.organizationId) {
@@ -305,7 +350,7 @@ export class EmployeesService {
     return this.toResponseDto(employee);
   }
 
-  async remove(employeeId: string): Promise<void> {
+  async remove(employeeId: string, scopeOrganizationIds?: string[]): Promise<void> {
     const employee = await this.prisma.employee.findUnique({
       where: { id: employeeId },
       include: {
@@ -318,6 +363,8 @@ export class EmployeesService {
     if (!employee) {
       throw new NotFoundException('직원을 찾을 수 없습니다.');
     }
+
+    this.assertOrganizationInScope(employee.organizationId, scopeOrganizationIds);
 
     // 연결된 장치가 있으면 퇴사 처리
     if (employee._count.devices > 0) {
@@ -332,7 +379,10 @@ export class EmployeesService {
     }
   }
 
-  async bulkAssignWorkType(dto: BulkAssignWorkTypeDto): Promise<{ updated: number }> {
+  async bulkAssignWorkType(
+    dto: BulkAssignWorkTypeDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<{ updated: number }> {
     // 근무 유형 존재 여부 확인
     const workType = await this.prisma.workType.findUnique({
       where: { id: dto.workTypeId },
@@ -342,14 +392,22 @@ export class EmployeesService {
     }
 
     const result = await this.prisma.employee.updateMany({
-      where: { id: { in: dto.employeeIds } },
+      where: {
+        id: { in: dto.employeeIds },
+        ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+      },
       data: { workTypeId: dto.workTypeId },
     });
 
     return { updated: result.count };
   }
 
-  async bulkMoveOrganization(dto: BulkMoveOrganizationDto): Promise<{ updated: number }> {
+  async bulkMoveOrganization(
+    dto: BulkMoveOrganizationDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<{ updated: number }> {
+    this.ensureOrganizationInScope(dto.targetOrganizationId, scopeOrganizationIds);
+
     // 대상 조직 존재 여부 확인
     const organization = await this.prisma.organization.findUnique({
       where: { id: dto.targetOrganizationId },
@@ -360,7 +418,10 @@ export class EmployeesService {
 
     const result = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.employee.updateMany({
-        where: { id: { in: dto.employeeIds } },
+        where: {
+          id: { in: dto.employeeIds },
+          ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+        },
         data: { organizationId: dto.targetOrganizationId },
       });
 
@@ -368,6 +429,13 @@ export class EmployeesService {
       await tx.controlPolicyEmployee.deleteMany({
         where: {
           employeeId: { in: dto.employeeIds },
+          ...(scopeOrganizationIds
+            ? {
+                employee: {
+                  organizationId: { in: scopeOrganizationIds },
+                },
+              }
+            : {}),
           policy: {
             organizationId: { not: dto.targetOrganizationId },
           },
@@ -380,22 +448,39 @@ export class EmployeesService {
     return { updated: result.count };
   }
 
-  async bulkUpdateStatus(employeeIds: string[], status: EmployeeStatusEnum): Promise<{ updated: number }> {
+  async bulkUpdateStatus(
+    employeeIds: string[],
+    status: EmployeeStatusEnum,
+    scopeOrganizationIds?: string[],
+  ): Promise<{ updated: number }> {
     const result = await this.prisma.employee.updateMany({
-      where: { id: { in: employeeIds } },
+      where: {
+        id: { in: employeeIds },
+        ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+      },
       data: { status: status as EmployeeStatus },
     });
     return { updated: result.count };
   }
 
-  async getStats(): Promise<{
+  async getStats(scopeOrganizationIds?: string[]): Promise<{
     total: number; active: number; resigned: number; exception: number; leave: number;
     byOrganization: Record<string, number>;
   }> {
     const [total, byStatus, byOrg] = await Promise.all([
-      this.prisma.employee.count(),
-      this.prisma.employee.groupBy({ by: ['status'], _count: true }),
-      this.prisma.employee.groupBy({ by: ['organizationId'], _count: true }),
+      this.prisma.employee.count({
+        where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
+      }),
+      this.prisma.employee.groupBy({
+        by: ['status'],
+        where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
+        _count: true,
+      }),
+      this.prisma.employee.groupBy({
+        by: ['organizationId'],
+        where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
+        _count: true,
+      }),
     ]);
 
     const statusMap: Record<string, number> = {};
@@ -422,9 +507,14 @@ export class EmployeesService {
     };
   }
 
-  async assignDevice(employeeId: string, deviceId: string): Promise<EmployeeResponseDto> {
+  async assignDevice(
+    employeeId: string,
+    deviceId: string,
+    scopeOrganizationIds?: string[],
+  ): Promise<EmployeeResponseDto> {
     const employee = await this.prisma.employee.findUnique({ where: { id: employeeId } });
     if (!employee) throw new NotFoundException('직원을 찾을 수 없습니다.');
+    this.assertOrganizationInScope(employee.organizationId, scopeOrganizationIds);
 
     const device = await this.prisma.device.findUnique({ where: { id: deviceId } });
     if (!device) throw new NotFoundException('장치를 찾을 수 없습니다.');
@@ -444,9 +534,10 @@ export class EmployeesService {
     return this.toResponseDto(updated);
   }
 
-  async unassignDevice(employeeId: string): Promise<EmployeeResponseDto> {
+  async unassignDevice(employeeId: string, scopeOrganizationIds?: string[]): Promise<EmployeeResponseDto> {
     const employee = await this.prisma.employee.findUnique({ where: { id: employeeId } });
     if (!employee) throw new NotFoundException('직원을 찾을 수 없습니다.');
+    this.assertOrganizationInScope(employee.organizationId, scopeOrganizationIds);
 
     await this.prisma.device.updateMany({
       where: { employeeId },

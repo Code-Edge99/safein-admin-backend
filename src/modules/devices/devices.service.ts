@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { Prisma, DeviceOS, DeviceStatus, DeviceOperationStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResponse } from '../../common/dto';
@@ -16,7 +22,24 @@ import {
 export class DevicesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateDeviceDto): Promise<DeviceResponseDto> {
+  private ensureOrganizationInScope(
+    organizationId: string | undefined,
+    scopeOrganizationIds?: string[],
+  ): void {
+    if (!organizationId || !scopeOrganizationIds) return;
+    if (!scopeOrganizationIds.includes(organizationId)) {
+      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
+    }
+  }
+
+  private assertDeviceInScope(device: { organizationId?: string | null }, scopeOrganizationIds?: string[]): void {
+    if (!scopeOrganizationIds) return;
+    if (!device.organizationId || !scopeOrganizationIds.includes(device.organizationId)) {
+      throw new NotFoundException('장치를 찾을 수 없습니다.');
+    }
+  }
+
+  async create(dto: CreateDeviceDto, scopeOrganizationIds?: string[]): Promise<DeviceResponseDto> {
     // 장치 ID 중복 체크
     const existing = await this.prisma.device.findUnique({
       where: { deviceId: dto.deviceId },
@@ -34,10 +57,12 @@ export class DevicesService {
       if (!employee) {
         throw new NotFoundException('직원을 찾을 수 없습니다.');
       }
+      this.ensureOrganizationInScope(employee.organizationId || undefined, scopeOrganizationIds);
     }
 
     // 조직 존재 여부 확인
     if (dto.organizationId) {
+      this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
       const organization = await this.prisma.organization.findUnique({
         where: { id: dto.organizationId },
       });
@@ -68,12 +93,18 @@ export class DevicesService {
     return this.toResponseDto(device);
   }
 
-  async findAll(filter: DeviceFilterDto): Promise<PaginatedResponse<DeviceResponseDto>> {
+  async findAll(
+    filter: DeviceFilterDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<PaginatedResponse<DeviceResponseDto>> {
     const where: Prisma.DeviceWhereInput = {};
 
     // 조직 필터
     if (filter.organizationId) {
+      this.ensureOrganizationInScope(filter.organizationId, scopeOrganizationIds);
       where.organizationId = filter.organizationId;
+    } else if (scopeOrganizationIds) {
+      where.organizationId = { in: scopeOrganizationIds };
     }
 
     // 검색어 필터
@@ -129,7 +160,7 @@ export class DevicesService {
     return new PaginatedResponse(data, total, filter.page || 1, filter.limit || 20);
   }
 
-  async findOne(id: string): Promise<DeviceDetailDto> {
+  async findOne(id: string, scopeOrganizationIds?: string[]): Promise<DeviceDetailDto> {
     const device = await this.prisma.device.findUnique({
       where: { id },
       include: {
@@ -147,6 +178,8 @@ export class DevicesService {
       throw new NotFoundException('장치를 찾을 수 없습니다.');
     }
 
+    this.assertDeviceInScope(device, scopeOrganizationIds);
+
     return {
       ...this.toResponseDto(device),
       tokenInfo: device.token ? {
@@ -163,7 +196,7 @@ export class DevicesService {
     };
   }
 
-  async findByDeviceId(deviceId: string): Promise<DeviceResponseDto> {
+  async findByDeviceId(deviceId: string, scopeOrganizationIds?: string[]): Promise<DeviceResponseDto> {
     const device = await this.prisma.device.findUnique({
       where: { deviceId },
       include: {
@@ -176,11 +209,13 @@ export class DevicesService {
       throw new NotFoundException('장치를 찾을 수 없습니다.');
     }
 
+    this.assertDeviceInScope(device, scopeOrganizationIds);
+
     return this.toResponseDto(device);
   }
 
-  async update(id: string, dto: UpdateDeviceDto): Promise<DeviceResponseDto> {
-    await this.findOne(id); // 존재 여부 확인
+  async update(id: string, dto: UpdateDeviceDto, scopeOrganizationIds?: string[]): Promise<DeviceResponseDto> {
+    await this.findOne(id, scopeOrganizationIds); // 존재 여부 확인
 
     // 직원 존재 여부 확인
     if (dto.employeeId) {
@@ -190,7 +225,10 @@ export class DevicesService {
       if (!employee) {
         throw new NotFoundException('직원을 찾을 수 없습니다.');
       }
+      this.ensureOrganizationInScope(employee.organizationId || undefined, scopeOrganizationIds);
     }
+
+    this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
 
     const device = await this.prisma.device.update({
       where: { id },
@@ -216,7 +254,11 @@ export class DevicesService {
     return this.toResponseDto(device);
   }
 
-  async assignToEmployee(id: string, dto: AssignDeviceDto): Promise<DeviceResponseDto> {
+  async assignToEmployee(
+    id: string,
+    dto: AssignDeviceDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<DeviceResponseDto> {
     const device = await this.prisma.device.findUnique({
       where: { id },
     });
@@ -224,6 +266,7 @@ export class DevicesService {
     if (!device) {
       throw new NotFoundException('장치를 찾을 수 없습니다.');
     }
+    this.assertDeviceInScope(device, scopeOrganizationIds);
 
     const employee = await this.prisma.employee.findUnique({
       where: { id: dto.employeeId },
@@ -232,6 +275,7 @@ export class DevicesService {
     if (!employee) {
       throw new NotFoundException('직원을 찾을 수 없습니다.');
     }
+    this.ensureOrganizationInScope(employee.organizationId || undefined, scopeOrganizationIds);
 
     const updatedDevice = await this.prisma.device.update({
       where: { id },
@@ -249,7 +293,7 @@ export class DevicesService {
     return this.toResponseDto(updatedDevice);
   }
 
-  async unassign(id: string): Promise<DeviceResponseDto> {
+  async unassign(id: string, scopeOrganizationIds?: string[]): Promise<DeviceResponseDto> {
     const device = await this.prisma.device.findUnique({
       where: { id },
     });
@@ -257,6 +301,7 @@ export class DevicesService {
     if (!device) {
       throw new NotFoundException('장치를 찾을 수 없습니다.');
     }
+    this.assertDeviceInScope(device, scopeOrganizationIds);
 
     const updatedDevice = await this.prisma.device.update({
       where: { id },
@@ -273,7 +318,7 @@ export class DevicesService {
     return this.toResponseDto(updatedDevice);
   }
 
-  async updateLocation(id: string, dto: DeviceLocationDto): Promise<void> {
+  async updateLocation(id: string, dto: DeviceLocationDto, scopeOrganizationIds?: string[]): Promise<void> {
     const device = await this.prisma.device.findUnique({
       where: { id },
     });
@@ -281,6 +326,7 @@ export class DevicesService {
     if (!device) {
       throw new NotFoundException('장치를 찾을 수 없습니다.');
     }
+    this.assertDeviceInScope(device, scopeOrganizationIds);
 
     await this.prisma.deviceLocation.create({
       data: {
@@ -299,7 +345,7 @@ export class DevicesService {
     });
   }
 
-  async markAsLost(id: string): Promise<DeviceResponseDto> {
+  async markAsLost(id: string, scopeOrganizationIds?: string[]): Promise<DeviceResponseDto> {
     const device = await this.prisma.device.findUnique({
       where: { id },
     });
@@ -307,6 +353,7 @@ export class DevicesService {
     if (!device) {
       throw new NotFoundException('장치를 찾을 수 없습니다.');
     }
+    this.assertDeviceInScope(device, scopeOrganizationIds);
 
     const updatedDevice = await this.prisma.device.update({
       where: { id },
@@ -322,7 +369,7 @@ export class DevicesService {
     return this.toResponseDto(updatedDevice);
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(id: string, scopeOrganizationIds?: string[]): Promise<void> {
     const device = await this.prisma.device.findUnique({
       where: { id },
     });
@@ -330,6 +377,7 @@ export class DevicesService {
     if (!device) {
       throw new NotFoundException('장치를 찾을 수 없습니다.');
     }
+    this.assertDeviceInScope(device, scopeOrganizationIds);
 
     // 관련 데이터 삭제
     await this.prisma.$transaction([
@@ -339,13 +387,21 @@ export class DevicesService {
     ]);
   }
 
-  async getDeviceStats(organizationId?: string): Promise<{
+  async getDeviceStats(organizationId?: string, scopeOrganizationIds?: string[]): Promise<{
     total: number;
     byStatus: Record<string, number>;
     byOS: Record<string, number>;
     byOperationStatus: Record<string, number>;
   }> {
-    const where: Prisma.DeviceWhereInput = organizationId ? { organizationId } : {};
+    if (organizationId) {
+      this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
+    }
+
+    const where: Prisma.DeviceWhereInput = organizationId
+      ? { organizationId }
+      : scopeOrganizationIds
+        ? { organizationId: { in: scopeOrganizationIds } }
+        : {};
 
     const [total, byStatus, byOS, byOperationStatus] = await Promise.all([
       this.prisma.device.count({ where }),

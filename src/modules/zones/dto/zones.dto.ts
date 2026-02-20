@@ -124,7 +124,7 @@ export class ZoneResponseDto {
   bboxMinLat?: number;
 
   @ApiPropertyOptional({ description: '최소 경도(BBox)' })
-  bboxMinLon?: number;
+  bboxMinLng?: number;
 
   @ApiPropertyOptional({ description: '최대 위도(BBox)' })
   bboxMaxLat?: number;

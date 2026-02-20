@@ -13,7 +13,7 @@ export class LoginHistoryService {
     endDate?: string;
     page?: number;
     limit?: number;
-  }) {
+  }, scopeOrganizationIds?: string[]) {
     const page = filter.page || 1;
     const limit = filter.limit || 20;
     const skip = (page - 1) * limit;
@@ -26,6 +26,12 @@ export class LoginHistoryService {
 
     if (filter.accountId) {
       where.accountId = filter.accountId;
+    }
+
+    if (scopeOrganizationIds) {
+      where.account = {
+        organizationId: { in: scopeOrganizationIds },
+      };
     }
 
     if (filter.startDate || filter.endDate) {
@@ -64,16 +70,25 @@ export class LoginHistoryService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, scopeOrganizationIds?: string[]) {
     const log = await this.prisma.adminLoginHistory.findUnique({
       where: { id },
       include: {
-        account: { select: { id: true, name: true, username: true, role: true } },
+        account: {
+          select: { id: true, name: true, username: true, role: true, organizationId: true },
+        },
       },
     });
 
     if (!log) {
       throw new NotFoundException('로그인 이력을 찾을 수 없습니다.');
+    }
+
+    if (scopeOrganizationIds) {
+      const organizationId = log.account?.organizationId;
+      if (!organizationId || !scopeOrganizationIds.includes(organizationId)) {
+        throw new NotFoundException('로그인 이력을 찾을 수 없습니다.');
+      }
     }
 
     return this.toResponseDto(log);

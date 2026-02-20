@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateWorkTypeDto,
@@ -11,7 +11,29 @@ import {
 export class WorkTypesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateWorkTypeDto): Promise<WorkTypeResponseDto> {
+  private ensureOrganizationInScope(
+    organizationId: string | undefined,
+    scopeOrganizationIds?: string[],
+  ): void {
+    if (!organizationId || !scopeOrganizationIds) return;
+    if (!scopeOrganizationIds.includes(organizationId)) {
+      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
+    }
+  }
+
+  private assertWorkTypeInScope(
+    workType: { organizationId: string },
+    scopeOrganizationIds?: string[],
+  ): void {
+    if (!scopeOrganizationIds) return;
+    if (!scopeOrganizationIds.includes(workType.organizationId)) {
+      throw new NotFoundException('근무 유형을 찾을 수 없습니다.');
+    }
+  }
+
+  async create(dto: CreateWorkTypeDto, scopeOrganizationIds?: string[]): Promise<WorkTypeResponseDto> {
+    this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
+
     // 조직 존재 여부 확인
     const organization = await this.prisma.organization.findUnique({
       where: { id: dto.organizationId },
@@ -39,8 +61,16 @@ export class WorkTypesService {
     return this.toResponseDto(workType);
   }
 
-  async findAll(organizationId?: string): Promise<WorkTypeResponseDto[]> {
-    const where = organizationId ? { organizationId } : {};
+  async findAll(organizationId?: string, scopeOrganizationIds?: string[]): Promise<WorkTypeResponseDto[]> {
+    if (organizationId) {
+      this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
+    }
+
+    const where = organizationId
+      ? { organizationId }
+      : scopeOrganizationIds
+        ? { organizationId: { in: scopeOrganizationIds } }
+        : {};
 
     const workTypes = await this.prisma.workType.findMany({
       where,
@@ -59,7 +89,7 @@ export class WorkTypesService {
     return workTypes.map((wt) => this.toResponseDto(wt));
   }
 
-  async findOne(id: string): Promise<WorkTypeDetailDto> {
+  async findOne(id: string, scopeOrganizationIds?: string[]): Promise<WorkTypeDetailDto> {
     const workType = await this.prisma.workType.findUnique({
       where: { id },
       include: {
@@ -77,6 +107,8 @@ export class WorkTypesService {
       throw new NotFoundException('근무 유형을 찾을 수 없습니다.');
     }
 
+    this.assertWorkTypeInScope(workType, scopeOrganizationIds);
+
     return {
       ...this.toResponseDto(workType),
       controlPolicyId: workType.controlPolicy?.id,
@@ -84,11 +116,16 @@ export class WorkTypesService {
     };
   }
 
-  async update(id: string, dto: UpdateWorkTypeDto): Promise<WorkTypeResponseDto> {
-    await this.findOne(id); // 존재 여부 확인
+  async update(
+    id: string,
+    dto: UpdateWorkTypeDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<WorkTypeResponseDto> {
+    await this.findOne(id, scopeOrganizationIds); // 존재 여부 확인
 
     // 조직 존재 여부 확인
     if (dto.organizationId) {
+      this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
       const organization = await this.prisma.organization.findUnique({
         where: { id: dto.organizationId },
       });
@@ -111,7 +148,7 @@ export class WorkTypesService {
     return this.toResponseDto(workType);
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(id: string, scopeOrganizationIds?: string[]): Promise<void> {
     const workType = await this.prisma.workType.findUnique({
       where: { id },
       include: {
@@ -127,6 +164,8 @@ export class WorkTypesService {
     if (!workType) {
       throw new NotFoundException('근무 유형을 찾을 수 없습니다.');
     }
+
+    this.assertWorkTypeInScope(workType, scopeOrganizationIds);
 
     if (workType._count.employees > 0) {
       throw new BadRequestException(
@@ -147,11 +186,13 @@ export class WorkTypesService {
     });
   }
 
-  async toggleActive(id: string): Promise<WorkTypeResponseDto> {
+  async toggleActive(id: string, scopeOrganizationIds?: string[]): Promise<WorkTypeResponseDto> {
     const workType = await this.prisma.workType.findUnique({ where: { id } });
     if (!workType) {
       throw new NotFoundException('근무 유형을 찾을 수 없습니다.');
     }
+
+    this.assertWorkTypeInScope(workType, scopeOrganizationIds);
 
     const updated = await this.prisma.workType.update({
       where: { id },

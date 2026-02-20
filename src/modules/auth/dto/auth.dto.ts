@@ -89,4 +89,7 @@ export class AuthUserDto {
 
   @ApiProperty({ description: '조직 ID' })
   organizationId: string;
+
+  @ApiProperty({ description: '조직 유형', required: false })
+  organizationType?: string;
 }

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateZoneDto,
@@ -13,6 +13,23 @@ import {
 @Injectable()
 export class ZonesService {
   constructor(private prisma: PrismaService) {}
+
+  private ensureOrganizationInScope(
+    organizationId: string | undefined,
+    scopeOrganizationIds?: string[],
+  ): void {
+    if (!organizationId || !scopeOrganizationIds) return;
+    if (!scopeOrganizationIds.includes(organizationId)) {
+      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
+    }
+  }
+
+  private assertZoneInScope(zone: { organizationId: string }, scopeOrganizationIds?: string[]): void {
+    if (!scopeOrganizationIds) return;
+    if (!scopeOrganizationIds.includes(zone.organizationId)) {
+      throw new NotFoundException('구역을 찾을 수 없습니다.');
+    }
+  }
 
   private async deactivatePoliciesWithoutConditions(tx: any, policyIds: string[]): Promise<void> {
     const uniquePolicyIds = Array.from(new Set(policyIds.filter(Boolean)));
@@ -52,8 +69,10 @@ export class ZonesService {
     });
   }
 
-  async create(createZoneDto: CreateZoneDto): Promise<ZoneResponseDto> {
+  async create(createZoneDto: CreateZoneDto, scopeOrganizationIds?: string[]): Promise<ZoneResponseDto> {
     const { coordinates, organizationId, workTypeId, type, shape, ...rest } = createZoneDto;
+
+    this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
 
     // Validate organization
     const org = await this.prisma.organization.findUnique({
@@ -104,7 +123,7 @@ export class ZonesService {
     return this.toResponseDto(zone);
   }
 
-  async findAll(filter: ZoneFilterDto): Promise<ZoneListResponseDto> {
+  async findAll(filter: ZoneFilterDto, scopeOrganizationIds?: string[]): Promise<ZoneListResponseDto> {
     const { search, type, organizationId, workTypeId, isActive, page = 1, limit = 20 } = filter;
     const skip = (page - 1) * limit;
 
@@ -119,7 +138,10 @@ export class ZonesService {
     }
 
     if (organizationId) {
+      this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
       where.organizationId = organizationId;
+    } else if (scopeOrganizationIds) {
+      where.organizationId = { in: scopeOrganizationIds };
     }
 
     if (workTypeId) {
@@ -157,7 +179,7 @@ export class ZonesService {
     };
   }
 
-  async findOne(id: string): Promise<ZoneResponseDto> {
+  async findOne(id: string, scopeOrganizationIds?: string[]): Promise<ZoneResponseDto> {
     const zone = await this.prisma.zone.findUnique({
       where: { id },
       include: {
@@ -174,10 +196,17 @@ export class ZonesService {
       throw new NotFoundException('구역을 찾을 수 없습니다.');
     }
 
+    this.assertZoneInScope(zone, scopeOrganizationIds);
+
     return this.toResponseDto(zone);
   }
 
-  async findByOrganization(organizationId: string): Promise<ZoneResponseDto[]> {
+  async findByOrganization(
+    organizationId: string,
+    scopeOrganizationIds?: string[],
+  ): Promise<ZoneResponseDto[]> {
+    this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
+
     const zones = await this.prisma.zone.findMany({
       where: {
         organizationId,
@@ -197,8 +226,12 @@ export class ZonesService {
     return zones.map((z) => this.toResponseDto(z));
   }
 
-  async update(id: string, updateZoneDto: UpdateZoneDto): Promise<ZoneResponseDto> {
-    await this.findOne(id);
+  async update(
+    id: string,
+    updateZoneDto: UpdateZoneDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<ZoneResponseDto> {
+    await this.findOne(id, scopeOrganizationIds);
 
     const { coordinates, organizationId, workTypeId, ...rest } = updateZoneDto;
 
@@ -229,6 +262,7 @@ export class ZonesService {
 
     if (organizationId !== undefined) {
       if (organizationId) {
+        this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
         const org = await this.prisma.organization.findUnique({
           where: { id: organizationId },
         });
@@ -267,7 +301,7 @@ export class ZonesService {
     return this.toResponseDto(zone);
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(id: string, scopeOrganizationIds?: string[]): Promise<void> {
     const zone = await this.prisma.zone.findUnique({
       where: { id },
       include: {
@@ -284,6 +318,8 @@ export class ZonesService {
     if (!zone) {
       throw new NotFoundException('구역을 찾을 수 없습니다.');
     }
+
+    this.assertZoneInScope(zone, scopeOrganizationIds);
 
     if (zone._count.dailyStats > 0 || zone._count.zoneVisitSessions > 0) {
       throw new BadRequestException('이력 데이터가 있는 구역은 삭제할 수 없습니다. 비활성화로 관리해주세요.');
@@ -305,8 +341,8 @@ export class ZonesService {
     });
   }
 
-  async toggleActive(id: string): Promise<ZoneResponseDto> {
-    const zone = await this.findOne(id);
+  async toggleActive(id: string, scopeOrganizationIds?: string[]): Promise<ZoneResponseDto> {
+    const zone = await this.findOne(id, scopeOrganizationIds);
 
     const updated = await this.prisma.zone.update({
       where: { id },
@@ -324,8 +360,12 @@ export class ZonesService {
     return this.toResponseDto(updated);
   }
 
-  async checkPointInZone(zoneId: string, point: CheckPointInZoneDto): Promise<boolean> {
-    const zone = await this.findOne(zoneId);
+  async checkPointInZone(
+    zoneId: string,
+    point: CheckPointInZoneDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<boolean> {
+    const zone = await this.findOne(zoneId, scopeOrganizationIds);
     const pointLat = point.latitude ?? (point as any).lat ?? 0;
     const pointLng = point.longitude ?? (point as any).lng ?? 0;
 
@@ -350,12 +390,20 @@ export class ZonesService {
     return false;
   }
 
-  async getZoneStats(): Promise<ZoneStatsDto> {
+  async getZoneStats(scopeOrganizationIds?: string[]): Promise<ZoneStatsDto> {
     const [totalZones, activeZones, byTypeResult] = await Promise.all([
-      this.prisma.zone.count(),
-      this.prisma.zone.count({ where: { isActive: true } }),
+      this.prisma.zone.count({
+        where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
+      }),
+      this.prisma.zone.count({
+        where: {
+          isActive: true,
+          ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+        },
+      }),
       this.prisma.zone.groupBy({
         by: ['type'],
+        where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
         _count: { type: true },
       }),
     ]);
@@ -492,7 +540,7 @@ export class ZonesService {
       coordinates,
       radius: zone.radius,
       bboxMinLat: zone.bboxMinLat ?? undefined,
-      bboxMinLon: zone.bboxMinLon ?? undefined,
+      bboxMinLng: zone.bboxMinLon ?? undefined,
       bboxMaxLat: zone.bboxMaxLat ?? undefined,
       bboxMaxLon: zone.bboxMaxLon ?? undefined,
       centerLat: zone.centerLat ?? undefined,

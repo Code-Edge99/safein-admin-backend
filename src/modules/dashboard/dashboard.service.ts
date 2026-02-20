@@ -1,11 +1,31 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class DashboardService {
   constructor(private prisma: PrismaService) {}
 
-  async getStats() {
+  private ensureOrganizationInScope(
+    organizationId: string | undefined,
+    scopeOrganizationIds?: string[],
+  ): void {
+    if (!organizationId || !scopeOrganizationIds) {
+      return;
+    }
+
+    if (!scopeOrganizationIds.includes(organizationId)) {
+      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
+    }
+  }
+
+  private inScope(scopeOrganizationIds?: string[]): { in: string[] } | undefined {
+    if (!scopeOrganizationIds) {
+      return undefined;
+    }
+    return { in: scopeOrganizationIds };
+  }
+
+  async getStats(scopeOrganizationIds?: string[]) {
     const now = new Date();
     const onlineThreshold = new Date(now.getTime() - 15 * 60 * 1000);
 
@@ -19,20 +39,68 @@ export class DashboardService {
       todayLogs,
       onlineEmployees,
     ] = await Promise.all([
-      this.prisma.employee.count(),
-      this.prisma.employee.count({ where: { status: 'ACTIVE' } }),
-      this.prisma.device.count(),
+      this.prisma.employee.count({
+        where: scopeOrganizationIds
+          ? { organizationId: { in: scopeOrganizationIds } }
+          : undefined,
+      }),
+      this.prisma.employee.count({
+        where: {
+          status: 'ACTIVE',
+          ...(scopeOrganizationIds
+            ? {
+                organizationId: { in: scopeOrganizationIds },
+              }
+            : {}),
+        },
+      }),
+      this.prisma.device.count({
+        where: scopeOrganizationIds
+          ? { organizationId: { in: scopeOrganizationIds } }
+          : undefined,
+      }),
       this.prisma.device.count({
         where: {
           status: 'NORMAL',
           lastCommunication: { gte: onlineThreshold },
+          ...(scopeOrganizationIds
+            ? {
+                organizationId: { in: scopeOrganizationIds },
+              }
+            : {}),
         },
       }),
-      this.prisma.controlPolicy.count({ where: { isActive: true } }),
-      this.prisma.zone.count({ where: { type: 'danger', isActive: true } }),
+      this.prisma.controlPolicy.count({
+        where: {
+          isActive: true,
+          ...(scopeOrganizationIds
+            ? {
+                organizationId: { in: scopeOrganizationIds },
+              }
+            : {}),
+        },
+      }),
+      this.prisma.zone.count({
+        where: {
+          type: 'danger',
+          isActive: true,
+          ...(scopeOrganizationIds
+            ? {
+                organizationId: { in: scopeOrganizationIds },
+              }
+            : {}),
+        },
+      }),
       this.prisma.controlLog.count({
         where: {
           timestamp: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
+          ...(scopeOrganizationIds
+            ? {
+                employee: {
+                  organizationId: { in: scopeOrganizationIds },
+                },
+              }
+            : {}),
         },
       }),
       this.prisma.device.groupBy({
@@ -41,6 +109,15 @@ export class DashboardService {
           employeeId: { not: null },
           status: 'NORMAL',
           lastCommunication: { gte: onlineThreshold },
+          ...(scopeOrganizationIds
+            ? {
+                employee: {
+                  is: {
+                    organizationId: { in: scopeOrganizationIds },
+                  },
+                },
+              }
+            : {}),
         },
       }),
     ]);
@@ -57,7 +134,7 @@ export class DashboardService {
     };
   }
 
-  async getHourlyData(organizationId?: string, date?: string) {
+  async getHourlyData(organizationId?: string, date?: string, scopeOrganizationIds?: string[]) {
     let targetDate: Date;
     if (date) {
       targetDate = new Date(date);
@@ -67,9 +144,13 @@ export class DashboardService {
     }
     targetDate.setHours(0, 0, 0, 0);
 
+    this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
+
     const where: any = { date: targetDate };
     if (organizationId) {
       where.organizationId = organizationId;
+    } else if (scopeOrganizationIds) {
+      where.organizationId = { in: scopeOrganizationIds };
     }
 
     let stats = await this.prisma.hourlyBlockStat.findMany({
@@ -114,13 +195,20 @@ export class DashboardService {
     return result;
   }
 
-  async getZoneViolationData(startDate?: string, endDate?: string) {
+  async getZoneViolationData(startDate?: string, endDate?: string, scopeOrganizationIds?: string[]) {
     const end = endDate ? new Date(endDate) : new Date();
     const start = startDate ? new Date(startDate) : new Date(end.getTime() - 7 * 86400000);
 
     const stats = await this.prisma.zoneViolationStat.findMany({
       where: {
         date: { gte: start, lte: end },
+        ...(scopeOrganizationIds
+          ? {
+              zone: {
+                organizationId: { in: scopeOrganizationIds },
+              },
+            }
+          : {}),
       },
       include: {
         zone: { select: { id: true, name: true, type: true } },
@@ -133,6 +221,13 @@ export class DashboardService {
         action: 'blocked',
         zoneId: { not: null },
         timestamp: { gte: start, lte: end },
+        ...(scopeOrganizationIds
+          ? {
+              employee: {
+                organizationId: { in: scopeOrganizationIds },
+              },
+            }
+          : {}),
       },
     });
 
@@ -186,14 +281,22 @@ export class DashboardService {
     }));
   }
 
-  async getOrganizationDailyStats(organizationId?: string, days = 30) {
+  async getOrganizationDailyStats(
+    organizationId?: string,
+    days = 30,
+    scopeOrganizationIds?: string[],
+  ) {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
     startDate.setHours(0, 0, 0, 0);
 
+    this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
+
     const where: any = { date: { gte: startDate } };
     if (organizationId) {
       where.organizationId = organizationId;
+    } else if (scopeOrganizationIds) {
+      where.organizationId = { in: scopeOrganizationIds };
     }
 
     return this.prisma.organizationDailyStat.findMany({
@@ -211,6 +314,7 @@ export class DashboardService {
     days?: number;
     page?: number;
     limit?: number;
+    scopeOrganizationIds?: string[];
   }) {
     const days = filter.days || 7;
     const page = filter.page || 1;
@@ -221,9 +325,12 @@ export class DashboardService {
     startDate.setDate(startDate.getDate() - days);
     startDate.setHours(0, 0, 0, 0);
 
+    this.ensureOrganizationInScope(filter.organizationId, filter.scopeOrganizationIds);
+
     const where: any = { date: { gte: startDate } };
     if (filter.employeeId) where.employeeId = filter.employeeId;
     if (filter.organizationId) where.organizationId = filter.organizationId;
+    else if (filter.scopeOrganizationIds) where.organizationId = { in: filter.scopeOrganizationIds };
 
     // 직원별로 집계
     const rawStats = await this.prisma.employeeDailyStat.findMany({
@@ -336,7 +443,7 @@ export class DashboardService {
    * 직원 리포트 상세 — Employee + ControlLog + EmployeeDailyStat 기반
    * 직원이 존재하기만 하면 항상 전체 구조를 반환 (데이터 없으면 0값)
    */
-  async getEmployeeReportDetail(employeeId: string) {
+  async getEmployeeReportDetail(employeeId: string, scopeOrganizationIds?: string[]) {
     // 1. 직원 기본 정보 (항상 존재해야 상세페이지 표시)
     const employee = await this.prisma.employee.findUnique({
       where: { id: employeeId },
@@ -348,6 +455,8 @@ export class DashboardService {
     });
 
     if (!employee) return null;
+
+    this.ensureOrganizationInScope(employee.organizationId, scopeOrganizationIds);
 
     const now = new Date();
     const startDate30 = new Date();
@@ -678,7 +787,7 @@ export class DashboardService {
     };
   }
 
-  async getSiteReports() {
+  async getSiteReports(scopeOrganizationIds?: string[]) {
     const endDate = new Date();
     const currentStartDate = new Date(endDate.getTime() - 7 * 86400000);
     currentStartDate.setHours(0, 0, 0, 0);
@@ -691,7 +800,10 @@ export class DashboardService {
 
     // 회사(root) 제외 모든 조직 조회 (현장, 부서, 팀, 현장조 등)
     const sites = await this.prisma.organization.findMany({
-      where: { type: { not: 'company' } },
+      where: {
+        type: { not: 'company' },
+        ...(scopeOrganizationIds ? { id: { in: scopeOrganizationIds } } : {}),
+      },
       include: {
         _count: { select: { employees: true } },
         parent: { select: { id: true, name: true } },

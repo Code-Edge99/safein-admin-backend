@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateTimePolicyDto,
@@ -13,6 +13,23 @@ import {
 @Injectable()
 export class TimePoliciesService {
   constructor(private prisma: PrismaService) {}
+
+  private ensureOrganizationInScope(
+    organizationId: string | undefined,
+    scopeOrganizationIds?: string[],
+  ): void {
+    if (!organizationId || !scopeOrganizationIds) return;
+    if (!scopeOrganizationIds.includes(organizationId)) {
+      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
+    }
+  }
+
+  private assertPolicyInScope(policy: { organizationId: string }, scopeOrganizationIds?: string[]): void {
+    if (!scopeOrganizationIds) return;
+    if (!scopeOrganizationIds.includes(policy.organizationId)) {
+      throw new NotFoundException('시간 정책을 찾을 수 없습니다.');
+    }
+  }
 
   private async deactivatePoliciesWithoutConditions(tx: any, policyIds: string[]): Promise<void> {
     const uniquePolicyIds = Array.from(new Set(policyIds.filter(Boolean)));
@@ -52,8 +69,13 @@ export class TimePoliciesService {
     });
   }
 
-  async create(createTimePolicyDto: CreateTimePolicyDto): Promise<TimePolicyResponseDto> {
+  async create(
+    createTimePolicyDto: CreateTimePolicyDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<TimePolicyResponseDto> {
     const { organizationId, workTypeId, timeSlots, excludePeriods, ...rest } = createTimePolicyDto;
+
+    this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
 
     // Validate organization
     const org = await this.prisma.organization.findUnique({
@@ -112,7 +134,10 @@ export class TimePoliciesService {
     return this.toResponseDto(policy, timeSlots);
   }
 
-  async findAll(filter: TimePolicyFilterDto): Promise<TimePolicyListResponseDto> {
+  async findAll(
+    filter: TimePolicyFilterDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<TimePolicyListResponseDto> {
     const { search, organizationId, workTypeId, status, page = 1, limit = 20 } = filter;
     const skip = (page - 1) * limit;
 
@@ -123,7 +148,10 @@ export class TimePoliciesService {
     }
 
     if (organizationId) {
+      this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
       where.organizationId = organizationId;
+    } else if (scopeOrganizationIds) {
+      where.organizationId = { in: scopeOrganizationIds };
     }
 
     if (workTypeId) {
@@ -162,7 +190,7 @@ export class TimePoliciesService {
     };
   }
 
-  async findOne(id: string): Promise<TimePolicyResponseDto> {
+  async findOne(id: string, scopeOrganizationIds?: string[]): Promise<TimePolicyResponseDto> {
     const policy = await this.prisma.timePolicy.findUnique({
       where: { id },
       include: {
@@ -180,10 +208,17 @@ export class TimePoliciesService {
       throw new NotFoundException('시간 정책을 찾을 수 없습니다.');
     }
 
+    this.assertPolicyInScope(policy, scopeOrganizationIds);
+
     return this.toResponseDto(policy);
   }
 
-  async findByOrganization(organizationId: string): Promise<TimePolicyResponseDto[]> {
+  async findByOrganization(
+    organizationId: string,
+    scopeOrganizationIds?: string[],
+  ): Promise<TimePolicyResponseDto[]> {
+    this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
+
     const policies = await this.prisma.timePolicy.findMany({
       where: {
         organizationId,
@@ -203,14 +238,19 @@ export class TimePoliciesService {
     return policies.map((p) => this.toResponseDto(p));
   }
 
-  async update(id: string, updateTimePolicyDto: UpdateTimePolicyDto): Promise<TimePolicyResponseDto> {
-    await this.findOne(id);
+  async update(
+    id: string,
+    updateTimePolicyDto: UpdateTimePolicyDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<TimePolicyResponseDto> {
+    await this.findOne(id, scopeOrganizationIds);
 
     const { organizationId, workTypeId, timeSlots, status, excludePeriods, ...rest } = updateTimePolicyDto;
 
     const updateData: any = { ...rest };
 
     if (organizationId) {
+      this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
       const org = await this.prisma.organization.findUnique({
         where: { id: organizationId },
       });
@@ -277,7 +317,7 @@ export class TimePoliciesService {
     return this.toResponseDto(policy, timeSlots);
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(id: string, scopeOrganizationIds?: string[]): Promise<void> {
     const policy = await this.prisma.timePolicy.findUnique({
       where: { id },
       include: {
@@ -292,6 +332,8 @@ export class TimePoliciesService {
     if (!policy) {
       throw new NotFoundException('시간 정책을 찾을 수 없습니다.');
     }
+
+    this.assertPolicyInScope(policy, scopeOrganizationIds);
 
     await this.prisma.$transaction(async (tx) => {
       const impacted = await tx.controlPolicyTimePolicy.findMany({
@@ -309,7 +351,7 @@ export class TimePoliciesService {
     });
   }
 
-  async toggleActive(id: string): Promise<TimePolicyResponseDto> {
+  async toggleActive(id: string, scopeOrganizationIds?: string[]): Promise<TimePolicyResponseDto> {
     const policy = await this.prisma.timePolicy.findUnique({
       where: { id },
     });
@@ -317,6 +359,8 @@ export class TimePoliciesService {
     if (!policy) {
       throw new NotFoundException('시간 정책을 찾을 수 없습니다.');
     }
+
+    this.assertPolicyInScope(policy, scopeOrganizationIds);
 
     const updated = await this.prisma.timePolicy.update({
       where: { id },
@@ -334,13 +378,17 @@ export class TimePoliciesService {
     return this.toResponseDto(updated);
   }
 
-  async isTimeActive(policyId: string, checkTime?: Date): Promise<boolean> {
+  async isTimeActive(policyId: string, checkTime?: Date, scopeOrganizationIds?: string[]): Promise<boolean> {
     const policy = await this.prisma.timePolicy.findUnique({
       where: { id: policyId },
       include: { excludePeriods: true },
     });
 
     if (!policy || !policy.isActive) {
+      return false;
+    }
+
+    if (scopeOrganizationIds && !scopeOrganizationIds.includes(policy.organizationId)) {
       return false;
     }
 
@@ -373,12 +421,20 @@ export class TimePoliciesService {
     return true;
   }
 
-  async getStats(): Promise<TimePolicyStatsDto> {
+  async getStats(scopeOrganizationIds?: string[]): Promise<TimePolicyStatsDto> {
     const [totalPolicies, activePolicies, byOrgResult] = await Promise.all([
-      this.prisma.timePolicy.count(),
-      this.prisma.timePolicy.count({ where: { isActive: true } }),
+      this.prisma.timePolicy.count({
+        where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
+      }),
+      this.prisma.timePolicy.count({
+        where: {
+          isActive: true,
+          ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+        },
+      }),
       this.prisma.timePolicy.groupBy({
         by: ['organizationId'],
+        where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
         _count: { organizationId: true },
       }),
     ]);

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateBehaviorConditionDto,
@@ -12,6 +12,26 @@ import {
 @Injectable()
 export class BehaviorConditionsService {
   constructor(private prisma: PrismaService) {}
+
+  private ensureOrganizationInScope(
+    organizationId: string | undefined,
+    scopeOrganizationIds?: string[],
+  ): void {
+    if (!organizationId || !scopeOrganizationIds) return;
+    if (!scopeOrganizationIds.includes(organizationId)) {
+      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
+    }
+  }
+
+  private assertConditionInScope(
+    condition: { organizationId: string },
+    scopeOrganizationIds?: string[],
+  ): void {
+    if (!scopeOrganizationIds) return;
+    if (!scopeOrganizationIds.includes(condition.organizationId)) {
+      throw new NotFoundException('행동 조건을 찾을 수 없습니다.');
+    }
+  }
 
   private async deactivatePoliciesWithoutConditions(tx: any, policyIds: string[]): Promise<void> {
     const uniquePolicyIds = Array.from(new Set(policyIds.filter(Boolean)));
@@ -51,8 +71,13 @@ export class BehaviorConditionsService {
     });
   }
 
-  async create(createDto: CreateBehaviorConditionDto): Promise<BehaviorConditionResponseDto> {
+  async create(
+    createDto: CreateBehaviorConditionDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<BehaviorConditionResponseDto> {
     const { organizationId, workTypeId, type, ...rest } = createDto;
+
+    this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
 
     // Validate organization
     const org = await this.prisma.organization.findUnique({
@@ -89,7 +114,10 @@ export class BehaviorConditionsService {
     return this.toResponseDto(condition);
   }
 
-  async findAll(filter: BehaviorConditionFilterDto): Promise<BehaviorConditionListResponseDto> {
+  async findAll(
+    filter: BehaviorConditionFilterDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<BehaviorConditionListResponseDto> {
     const { search, type, organizationId, workTypeId, isActive, page = 1, limit = 20 } = filter;
     const skip = (page - 1) * limit;
 
@@ -104,7 +132,10 @@ export class BehaviorConditionsService {
     }
 
     if (organizationId) {
+      this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
       where.organizationId = organizationId;
+    } else if (scopeOrganizationIds) {
+      where.organizationId = { in: scopeOrganizationIds };
     }
 
     if (workTypeId) {
@@ -139,7 +170,7 @@ export class BehaviorConditionsService {
     };
   }
 
-  async findOne(id: string): Promise<BehaviorConditionResponseDto> {
+  async findOne(id: string, scopeOrganizationIds?: string[]): Promise<BehaviorConditionResponseDto> {
     const condition = await this.prisma.behaviorCondition.findUnique({
       where: { id },
       include: {
@@ -153,10 +184,17 @@ export class BehaviorConditionsService {
       throw new NotFoundException('행동 조건을 찾을 수 없습니다.');
     }
 
+    this.assertConditionInScope(condition, scopeOrganizationIds);
+
     return this.toResponseDto(condition);
   }
 
-  async findByOrganization(organizationId: string): Promise<BehaviorConditionResponseDto[]> {
+  async findByOrganization(
+    organizationId: string,
+    scopeOrganizationIds?: string[],
+  ): Promise<BehaviorConditionResponseDto[]> {
+    this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
+
     const conditions = await this.prisma.behaviorCondition.findMany({
       where: {
         organizationId,
@@ -173,14 +211,19 @@ export class BehaviorConditionsService {
     return conditions.map((c) => this.toResponseDto(c));
   }
 
-  async update(id: string, updateDto: UpdateBehaviorConditionDto): Promise<BehaviorConditionResponseDto> {
-    await this.findOne(id);
+  async update(
+    id: string,
+    updateDto: UpdateBehaviorConditionDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<BehaviorConditionResponseDto> {
+    await this.findOne(id, scopeOrganizationIds);
 
     const { organizationId, workTypeId, type, ...rest } = updateDto;
 
     const updateData: any = { ...rest };
 
     if (organizationId) {
+      this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
       const org = await this.prisma.organization.findUnique({
         where: { id: organizationId },
       });
@@ -219,8 +262,8 @@ export class BehaviorConditionsService {
     return this.toResponseDto(condition);
   }
 
-  async remove(id: string): Promise<void> {
-    await this.findOne(id);
+  async remove(id: string, scopeOrganizationIds?: string[]): Promise<void> {
+    await this.findOne(id, scopeOrganizationIds);
 
     await this.prisma.$transaction(async (tx) => {
       const impacted = await tx.controlPolicyBehavior.findMany({
@@ -238,12 +281,14 @@ export class BehaviorConditionsService {
     });
   }
 
-  async toggleActive(id: string): Promise<BehaviorConditionResponseDto> {
+  async toggleActive(id: string, scopeOrganizationIds?: string[]): Promise<BehaviorConditionResponseDto> {
     const condition = await this.prisma.behaviorCondition.findUnique({ where: { id } });
 
     if (!condition) {
       throw new NotFoundException('행동 조건을 찾을 수 없습니다.');
     }
+
+    this.assertConditionInScope(condition, scopeOrganizationIds);
 
     const updated = await this.prisma.behaviorCondition.update({
       where: { id },
@@ -258,12 +303,20 @@ export class BehaviorConditionsService {
     return this.toResponseDto(updated);
   }
 
-  async getStats(): Promise<BehaviorConditionStatsDto> {
+  async getStats(scopeOrganizationIds?: string[]): Promise<BehaviorConditionStatsDto> {
     const [totalConditions, activeConditions, byTypeResult] = await Promise.all([
-      this.prisma.behaviorCondition.count(),
-      this.prisma.behaviorCondition.count({ where: { isActive: true } }),
+      this.prisma.behaviorCondition.count({
+        where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
+      }),
+      this.prisma.behaviorCondition.count({
+        where: {
+          isActive: true,
+          ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+        },
+      }),
       this.prisma.behaviorCondition.groupBy({
         by: ['type'],
+        where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
         _count: { type: true },
       }),
     ]);

@@ -7,6 +7,7 @@ import {
   Param,
   Delete,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -29,11 +30,12 @@ import {
   EmployeeStatusEnum,
 } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard';
 import { PaginatedResponse } from '../../common/dto';
 
 @ApiTags('직원')
 @Controller('employees')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, OrganizationScopeGuard)
 @ApiBearerAuth()
 export class EmployeesController {
   constructor(private readonly employeesService: EmployeesService) {}
@@ -41,22 +43,22 @@ export class EmployeesController {
   @Post()
   @ApiOperation({ summary: '직원 생성' })
   @ApiResponse({ status: 201, description: '직원 생성 성공', type: EmployeeResponseDto })
-  create(@Body() createEmployeeDto: CreateEmployeeDto): Promise<EmployeeResponseDto> {
-    return this.employeesService.create(createEmployeeDto);
+  create(@Req() req: any, @Body() createEmployeeDto: CreateEmployeeDto): Promise<EmployeeResponseDto> {
+    return this.employeesService.create(createEmployeeDto, req.organizationScopeIds ?? undefined);
   }
 
   @Get()
   @ApiOperation({ summary: '직원 목록 조회' })
   @ApiResponse({ status: 200, description: '직원 목록' })
-  findAll(@Query() filter: EmployeeFilterDto): Promise<PaginatedResponse<EmployeeResponseDto>> {
-    return this.employeesService.findAll(filter);
+  findAll(@Req() req: any, @Query() filter: EmployeeFilterDto): Promise<PaginatedResponse<EmployeeResponseDto>> {
+    return this.employeesService.findAll(filter, req.organizationScopeIds ?? undefined);
   }
 
   @Get('stats')
   @ApiOperation({ summary: '직원 통계 조회' })
   @ApiResponse({ status: 200, description: '직원 통계' })
-  getStats() {
-    return this.employeesService.getStats();
+  getStats(@Req() req: any) {
+    return this.employeesService.getStats(req.organizationScopeIds ?? undefined);
   }
 
   @Get(':employeeId')
@@ -64,8 +66,8 @@ export class EmployeesController {
   @ApiParam({ name: 'employeeId', description: '직원 ID' })
   @ApiResponse({ status: 200, description: '직원 상세', type: EmployeeDetailDto })
   @ApiResponse({ status: 404, description: '직원을 찾을 수 없음' })
-  findOne(@Param('employeeId') employeeId: string): Promise<EmployeeDetailDto> {
-    return this.employeesService.findOne(employeeId);
+  findOne(@Req() req: any, @Param('employeeId') employeeId: string): Promise<EmployeeDetailDto> {
+    return this.employeesService.findOne(employeeId, req.organizationScopeIds ?? undefined);
   }
 
   @Patch(':employeeId')
@@ -73,10 +75,11 @@ export class EmployeesController {
   @ApiParam({ name: 'employeeId', description: '직원 ID' })
   @ApiResponse({ status: 200, description: '직원 수정 성공', type: EmployeeResponseDto })
   update(
+    @Req() req: any,
     @Param('employeeId') employeeId: string,
     @Body() updateEmployeeDto: UpdateEmployeeDto,
   ): Promise<EmployeeResponseDto> {
-    return this.employeesService.update(employeeId, updateEmployeeDto);
+    return this.employeesService.update(employeeId, updateEmployeeDto, req.organizationScopeIds ?? undefined);
   }
 
   @Patch(':employeeId/assign-device')
@@ -84,53 +87,62 @@ export class EmployeesController {
   @ApiParam({ name: 'employeeId', description: '직원 ID' })
   @ApiResponse({ status: 200, description: '장치 할당 성공', type: EmployeeResponseDto })
   assignDevice(
+    @Req() req: any,
     @Param('employeeId') employeeId: string,
     @Body() body: { deviceId: string },
   ): Promise<EmployeeResponseDto> {
-    return this.employeesService.assignDevice(employeeId, body.deviceId);
+    return this.employeesService.assignDevice(employeeId, body.deviceId, req.organizationScopeIds ?? undefined);
   }
 
   @Patch(':employeeId/unassign-device')
   @ApiOperation({ summary: '직원 장치 할당 해제' })
   @ApiParam({ name: 'employeeId', description: '직원 ID' })
   @ApiResponse({ status: 200, description: '장치 할당 해제 성공', type: EmployeeResponseDto })
-  unassignDevice(@Param('employeeId') employeeId: string): Promise<EmployeeResponseDto> {
-    return this.employeesService.unassignDevice(employeeId);
+  unassignDevice(@Req() req: any, @Param('employeeId') employeeId: string): Promise<EmployeeResponseDto> {
+    return this.employeesService.unassignDevice(employeeId, req.organizationScopeIds ?? undefined);
   }
 
   @Delete(':employeeId')
   @ApiOperation({ summary: '직원 삭제' })
   @ApiParam({ name: 'employeeId', description: '직원 ID' })
   @ApiResponse({ status: 200, description: '직원 삭제 성공' })
-  remove(@Param('employeeId') employeeId: string): Promise<void> {
-    return this.employeesService.remove(employeeId);
+  remove(@Req() req: any, @Param('employeeId') employeeId: string): Promise<void> {
+    return this.employeesService.remove(employeeId, req.organizationScopeIds ?? undefined);
   }
 
   @Post('bulk/assign-work-type')
   @ApiOperation({ summary: '일괄 근무 유형 할당' })
   @ApiResponse({ status: 200, description: '처리된 직원 수' })
-  bulkAssignWorkType(@Body() dto: BulkAssignWorkTypeDto): Promise<{ updated: number }> {
-    return this.employeesService.bulkAssignWorkType(dto);
+  bulkAssignWorkType(@Req() req: any, @Body() dto: BulkAssignWorkTypeDto): Promise<{ updated: number }> {
+    return this.employeesService.bulkAssignWorkType(dto, req.organizationScopeIds ?? undefined);
   }
 
   @Post('bulk/move-organization')
   @ApiOperation({ summary: '일괄 조직 이동' })
   @ApiResponse({ status: 200, description: '처리된 직원 수' })
-  bulkMoveOrganization(@Body() dto: BulkMoveOrganizationDto): Promise<{ updated: number }> {
-    return this.employeesService.bulkMoveOrganization(dto);
+  bulkMoveOrganization(@Req() req: any, @Body() dto: BulkMoveOrganizationDto): Promise<{ updated: number }> {
+    return this.employeesService.bulkMoveOrganization(dto, req.organizationScopeIds ?? undefined);
   }
 
   @Post('bulk/activate')
   @ApiOperation({ summary: '일괄 활성화' })
   @ApiResponse({ status: 200, description: '처리된 직원 수' })
-  bulkActivate(@Body() dto: BulkEmployeeActionDto): Promise<{ updated: number }> {
-    return this.employeesService.bulkUpdateStatus(dto.employeeIds, EmployeeStatusEnum.ACTIVE);
+  bulkActivate(@Req() req: any, @Body() dto: BulkEmployeeActionDto): Promise<{ updated: number }> {
+    return this.employeesService.bulkUpdateStatus(
+      dto.employeeIds,
+      EmployeeStatusEnum.ACTIVE,
+      req.organizationScopeIds ?? undefined,
+    );
   }
 
   @Post('bulk/deactivate')
   @ApiOperation({ summary: '일괄 퇴사 처리' })
   @ApiResponse({ status: 200, description: '처리된 직원 수' })
-  bulkDeactivate(@Body() dto: BulkEmployeeActionDto): Promise<{ updated: number }> {
-    return this.employeesService.bulkUpdateStatus(dto.employeeIds, EmployeeStatusEnum.RESIGNED);
+  bulkDeactivate(@Req() req: any, @Body() dto: BulkEmployeeActionDto): Promise<{ updated: number }> {
+    return this.employeesService.bulkUpdateStatus(
+      dto.employeeIds,
+      EmployeeStatusEnum.RESIGNED,
+      req.organizationScopeIds ?? undefined,
+    );
   }
 }

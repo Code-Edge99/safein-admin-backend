@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OrganizationType as PrismaOrgType, DeviceStatus } from '@prisma/client';
 import {
@@ -13,7 +13,29 @@ import {
 export class OrganizationsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateOrganizationDto): Promise<OrganizationResponseDto> {
+  private ensureOrganizationInScope(
+    organizationId: string | undefined,
+    scopeOrganizationIds?: string[],
+  ): void {
+    if (!organizationId || !scopeOrganizationIds) return;
+    if (!scopeOrganizationIds.includes(organizationId)) {
+      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
+    }
+  }
+
+  private assertOrganizationInScope(
+    organization: { id: string },
+    scopeOrganizationIds?: string[],
+  ): void {
+    if (!scopeOrganizationIds) return;
+    if (!scopeOrganizationIds.includes(organization.id)) {
+      throw new NotFoundException('조직을 찾을 수 없습니다.');
+    }
+  }
+
+  async create(dto: CreateOrganizationDto, scopeOrganizationIds?: string[]): Promise<OrganizationResponseDto> {
+    this.ensureOrganizationInScope(dto.parentId || undefined, scopeOrganizationIds);
+
     // 상위 조직 검증
     if (dto.parentId) {
       const parent = await this.prisma.organization.findUnique({
@@ -36,16 +58,18 @@ export class OrganizationsService {
     return this.toResponseDto(organization);
   }
 
-  async findAll(): Promise<OrganizationResponseDto[]> {
+  async findAll(scopeOrganizationIds?: string[]): Promise<OrganizationResponseDto[]> {
     const organizations = await this.prisma.organization.findMany({
+      where: scopeOrganizationIds ? { id: { in: scopeOrganizationIds } } : undefined,
       orderBy: [{ type: 'asc' }, { name: 'asc' }],
     });
 
     return organizations.map(org => this.toResponseDto(org));
   }
 
-  async findTree(): Promise<OrganizationTreeDto[]> {
+  async findTree(scopeOrganizationIds?: string[]): Promise<OrganizationTreeDto[]> {
     const organizations = await this.prisma.organization.findMany({
+      where: scopeOrganizationIds ? { id: { in: scopeOrganizationIds } } : undefined,
       include: {
         _count: {
           select: {
@@ -72,7 +96,9 @@ export class OrganizationsService {
     return buildTree(null);
   }
 
-  async findOne(id: string): Promise<OrganizationResponseDto> {
+  async findOne(id: string, scopeOrganizationIds?: string[]): Promise<OrganizationResponseDto> {
+    this.ensureOrganizationInScope(id, scopeOrganizationIds);
+
     const organization = await this.prisma.organization.findUnique({
       where: { id },
     });
@@ -84,7 +110,9 @@ export class OrganizationsService {
     return this.toResponseDto(organization);
   }
 
-  async findOneWithStats(id: string): Promise<OrganizationStatsDto> {
+  async findOneWithStats(id: string, scopeOrganizationIds?: string[]): Promise<OrganizationStatsDto> {
+    this.ensureOrganizationInScope(id, scopeOrganizationIds);
+
     const organization = await this.prisma.organization.findUnique({
       where: { id },
       include: {
@@ -120,17 +148,22 @@ export class OrganizationsService {
     };
   }
 
-  async update(id: string, dto: UpdateOrganizationDto): Promise<OrganizationResponseDto> {
-    await this.findOne(id); // 존재 여부 확인
+  async update(
+    id: string,
+    dto: UpdateOrganizationDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<OrganizationResponseDto> {
+    await this.findOne(id, scopeOrganizationIds); // 존재 여부 확인
 
     // 순환 참조 방지
     if (dto.parentId) {
+      this.ensureOrganizationInScope(dto.parentId, scopeOrganizationIds);
       if (dto.parentId === id) {
         throw new BadRequestException('조직은 자기 자신을 상위 조직으로 설정할 수 없습니다.');
       }
 
       // 하위 조직을 상위로 설정하는지 확인
-      const descendants = await this.getDescendants(id);
+      const descendants = await this.getDescendants(id, scopeOrganizationIds);
       if (descendants.some((d) => d.id === dto.parentId)) {
         throw new BadRequestException('하위 조직을 상위 조직으로 설정할 수 없습니다.');
       }
@@ -156,7 +189,9 @@ export class OrganizationsService {
     return this.toResponseDto(organization);
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(id: string, scopeOrganizationIds?: string[]): Promise<void> {
+    this.ensureOrganizationInScope(id, scopeOrganizationIds);
+
     const organization = await this.prisma.organization.findUnique({
       where: { id },
       include: {
@@ -179,6 +214,8 @@ export class OrganizationsService {
     if (!organization) {
       throw new NotFoundException('조직을 찾을 수 없습니다.');
     }
+
+    this.assertOrganizationInScope(organization, scopeOrganizationIds);
 
     if (organization._count.children > 0) {
       throw new BadRequestException('하위 조직이 있는 조직은 삭제할 수 없습니다.');
@@ -204,8 +241,12 @@ export class OrganizationsService {
     });
   }
 
-  async getDescendants(id: string): Promise<OrganizationResponseDto[]> {
-    const allOrgs = await this.prisma.organization.findMany();
+  async getDescendants(id: string, scopeOrganizationIds?: string[]): Promise<OrganizationResponseDto[]> {
+    this.ensureOrganizationInScope(id, scopeOrganizationIds);
+
+    const allOrgs = await this.prisma.organization.findMany({
+      where: scopeOrganizationIds ? { id: { in: scopeOrganizationIds } } : undefined,
+    });
     const descendants: OrganizationResponseDto[] = [];
 
     const findDescendants = (parentId: string) => {
@@ -220,7 +261,9 @@ export class OrganizationsService {
     return descendants;
   }
 
-  async getAncestors(id: string): Promise<OrganizationResponseDto[]> {
+  async getAncestors(id: string, scopeOrganizationIds?: string[]): Promise<OrganizationResponseDto[]> {
+    this.ensureOrganizationInScope(id, scopeOrganizationIds);
+
     const ancestors: OrganizationResponseDto[] = [];
     let current = await this.prisma.organization.findUnique({
       where: { id },
@@ -231,6 +274,9 @@ export class OrganizationsService {
         where: { id: current.parentId },
       });
       if (parent) {
+        if (scopeOrganizationIds && !scopeOrganizationIds.includes(parent.id)) {
+          break;
+        }
         ancestors.unshift(this.toResponseDto(parent));
         current = parent;
       } else {

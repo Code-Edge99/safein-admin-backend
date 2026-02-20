@@ -7,6 +7,7 @@ import {
   Param,
   Delete,
   Query,
+  Req,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -28,10 +29,11 @@ import {
   BehaviorConditionStatsDto,
 } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard';
 
 @ApiTags('Behavior Conditions')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, OrganizationScopeGuard)
 @Controller('behavior-conditions')
 export class BehaviorConditionsController {
   constructor(private readonly behaviorConditionsService: BehaviorConditionsService) {}
@@ -39,22 +41,22 @@ export class BehaviorConditionsController {
   @Post()
   @ApiOperation({ summary: '행동 조건 생성' })
   @ApiResponse({ status: 201, description: '조건 생성 성공', type: BehaviorConditionResponseDto })
-  async create(@Body() createDto: CreateBehaviorConditionDto): Promise<BehaviorConditionResponseDto> {
-    return this.behaviorConditionsService.create(createDto);
+  async create(@Req() req: any, @Body() createDto: CreateBehaviorConditionDto): Promise<BehaviorConditionResponseDto> {
+    return this.behaviorConditionsService.create(createDto, req.organizationScopeIds ?? undefined);
   }
 
   @Get()
   @ApiOperation({ summary: '행동 조건 목록 조회' })
   @ApiResponse({ status: 200, description: '조건 목록', type: BehaviorConditionListResponseDto })
-  async findAll(@Query() filter: BehaviorConditionFilterDto): Promise<BehaviorConditionListResponseDto> {
-    return this.behaviorConditionsService.findAll(filter);
+  async findAll(@Req() req: any, @Query() filter: BehaviorConditionFilterDto): Promise<BehaviorConditionListResponseDto> {
+    return this.behaviorConditionsService.findAll(filter, req.organizationScopeIds ?? undefined);
   }
 
   @Get('stats')
   @ApiOperation({ summary: '행동 조건 통계 조회' })
   @ApiResponse({ status: 200, description: '조건 통계', type: BehaviorConditionStatsDto })
-  async getStats(): Promise<BehaviorConditionStatsDto> {
-    return this.behaviorConditionsService.getStats();
+  async getStats(@Req() req: any): Promise<BehaviorConditionStatsDto> {
+    return this.behaviorConditionsService.getStats(req.organizationScopeIds ?? undefined);
   }
 
   @Get('organization/:organizationId')
@@ -62,9 +64,13 @@ export class BehaviorConditionsController {
   @ApiParam({ name: 'organizationId', description: '조직 ID' })
   @ApiResponse({ status: 200, description: '조직별 조건 목록', type: [BehaviorConditionResponseDto] })
   async findByOrganization(
+    @Req() req: any,
     @Param('organizationId') organizationId: string,
   ): Promise<BehaviorConditionResponseDto[]> {
-    return this.behaviorConditionsService.findByOrganization(organizationId);
+    return this.behaviorConditionsService.findByOrganization(
+      organizationId,
+      req.organizationScopeIds ?? undefined,
+    );
   }
 
   @Get(':id')
@@ -72,8 +78,8 @@ export class BehaviorConditionsController {
   @ApiParam({ name: 'id', description: '조건 ID' })
   @ApiResponse({ status: 200, description: '조건 상세 정보', type: BehaviorConditionResponseDto })
   @ApiResponse({ status: 404, description: '조건을 찾을 수 없음' })
-  async findOne(@Param('id') id: string): Promise<BehaviorConditionResponseDto> {
-    return this.behaviorConditionsService.findOne(id);
+  async findOne(@Req() req: any, @Param('id') id: string): Promise<BehaviorConditionResponseDto> {
+    return this.behaviorConditionsService.findOne(id, req.organizationScopeIds ?? undefined);
   }
 
   @Patch(':id')
@@ -82,18 +88,19 @@ export class BehaviorConditionsController {
   @ApiResponse({ status: 200, description: '조건 수정 성공', type: BehaviorConditionResponseDto })
   @ApiResponse({ status: 404, description: '조건을 찾을 수 없음' })
   async update(
+    @Req() req: any,
     @Param('id') id: string,
     @Body() updateDto: UpdateBehaviorConditionDto,
   ): Promise<BehaviorConditionResponseDto> {
-    return this.behaviorConditionsService.update(id, updateDto);
+    return this.behaviorConditionsService.update(id, updateDto, req.organizationScopeIds ?? undefined);
   }
 
   @Patch(':id/toggle-active')
   @ApiOperation({ summary: '행동 조건 활성/비활성 토글' })
   @ApiParam({ name: 'id', description: '조건 ID' })
   @ApiResponse({ status: 200, description: '상태 변경 성공', type: BehaviorConditionResponseDto })
-  async toggleActive(@Param('id') id: string): Promise<BehaviorConditionResponseDto> {
-    return this.behaviorConditionsService.toggleActive(id);
+  async toggleActive(@Req() req: any, @Param('id') id: string): Promise<BehaviorConditionResponseDto> {
+    return this.behaviorConditionsService.toggleActive(id, req.organizationScopeIds ?? undefined);
   }
 
   @Delete(':id')
@@ -102,7 +109,7 @@ export class BehaviorConditionsController {
   @ApiParam({ name: 'id', description: '조건 ID' })
   @ApiResponse({ status: 204, description: '조건 삭제 성공' })
   @ApiResponse({ status: 404, description: '조건을 찾을 수 없음' })
-  async remove(@Param('id') id: string): Promise<void> {
-    return this.behaviorConditionsService.remove(id);
+  async remove(@Req() req: any, @Param('id') id: string): Promise<void> {
+    return this.behaviorConditionsService.remove(id, req.organizationScopeIds ?? undefined);
   }
 }

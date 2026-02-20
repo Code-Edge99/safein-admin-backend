@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateControlPolicyDto,
@@ -14,7 +14,51 @@ import {
 export class ControlPoliciesService {
   constructor(private prisma: PrismaService) {}
 
-  async create(createDto: CreateControlPolicyDto): Promise<ControlPolicyDetailDto> {
+  private ensureOrganizationInScope(
+    organizationId: string | undefined,
+    scopeOrganizationIds?: string[],
+  ): void {
+    if (!organizationId || !scopeOrganizationIds) {
+      return;
+    }
+
+    if (!scopeOrganizationIds.includes(organizationId)) {
+      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
+    }
+  }
+
+  private applyOrganizationScope(where: any, scopeOrganizationIds?: string[]): void {
+    if (!scopeOrganizationIds) {
+      return;
+    }
+
+    if (where.organizationId) {
+      this.ensureOrganizationInScope(where.organizationId, scopeOrganizationIds);
+      return;
+    }
+
+    where.organizationId = { in: scopeOrganizationIds };
+  }
+
+  private async assertPolicyInScope(policyId: string, scopeOrganizationIds?: string[]): Promise<void> {
+    if (!scopeOrganizationIds) {
+      return;
+    }
+
+    const policy = await this.prisma.controlPolicy.findUnique({
+      where: { id: policyId },
+      select: { organizationId: true },
+    });
+
+    if (!policy || !scopeOrganizationIds.includes(policy.organizationId)) {
+      throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
+    }
+  }
+
+  async create(
+    createDto: CreateControlPolicyDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<ControlPolicyDetailDto> {
     const {
       organizationId,
       workTypeId,
@@ -25,6 +69,8 @@ export class ControlPoliciesService {
       employeeIds,
       ...rest
     } = createDto;
+
+    this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
 
     // Validate organization
     const org = await this.prisma.organization.findUnique({
@@ -92,10 +138,13 @@ export class ControlPoliciesService {
       },
     });
 
-    return this.findOneDetail(policy.id);
+    return this.findOneDetail(policy.id, scopeOrganizationIds);
   }
 
-  async findAll(filter: ControlPolicyFilterDto): Promise<ControlPolicyListResponseDto> {
+  async findAll(
+    filter: ControlPolicyFilterDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<ControlPolicyListResponseDto> {
     const { search, organizationId, workTypeId, isActive, page = 1, limit = 20 } = filter;
     const skip = (page - 1) * limit;
 
@@ -108,6 +157,8 @@ export class ControlPoliciesService {
     if (organizationId) {
       where.organizationId = organizationId;
     }
+
+    this.applyOrganizationScope(where, scopeOrganizationIds);
 
     if (workTypeId) {
       where.workTypeId = workTypeId;
@@ -169,9 +220,16 @@ export class ControlPoliciesService {
     };
   }
 
-  async findOne(id: string): Promise<ControlPolicyResponseDto> {
-    const policy = await this.prisma.controlPolicy.findUnique({
-      where: { id },
+  async findOne(id: string, scopeOrganizationIds?: string[]): Promise<ControlPolicyResponseDto> {
+    const policy = await this.prisma.controlPolicy.findFirst({
+      where: {
+        id,
+        ...(scopeOrganizationIds
+          ? {
+              organizationId: { in: scopeOrganizationIds },
+            }
+          : {}),
+      },
       include: {
         organization: { select: { id: true, name: true } },
         workType: { select: { id: true, name: true } },
@@ -214,7 +272,12 @@ export class ControlPoliciesService {
     return this.toResponseDto(policy);
   }
 
-  async findByOrganization(organizationId: string): Promise<ControlPolicyResponseDto[]> {
+  async findByOrganization(
+    organizationId: string,
+    scopeOrganizationIds?: string[],
+  ): Promise<ControlPolicyResponseDto[]> {
+    this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
+
     const policies = await this.prisma.controlPolicy.findMany({
       where: { organizationId },
       orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }],
@@ -235,9 +298,16 @@ export class ControlPoliciesService {
     return policies.map(p => this.toResponseDto(p));
   }
 
-  async findOneDetail(id: string): Promise<ControlPolicyDetailDto> {
-    const policy = await this.prisma.controlPolicy.findUnique({
-      where: { id },
+  async findOneDetail(id: string, scopeOrganizationIds?: string[]): Promise<ControlPolicyDetailDto> {
+    const policy = await this.prisma.controlPolicy.findFirst({
+      where: {
+        id,
+        ...(scopeOrganizationIds
+          ? {
+              organizationId: { in: scopeOrganizationIds },
+            }
+          : {}),
+      },
       include: {
         organization: { select: { id: true, name: true } },
         workType: { select: { id: true, name: true } },
@@ -276,7 +346,10 @@ export class ControlPoliciesService {
     return this.toDetailDto(policy);
   }
 
-  async findByWorkType(workTypeId: string): Promise<ControlPolicyDetailDto | null> {
+  async findByWorkType(
+    workTypeId: string,
+    scopeOrganizationIds?: string[],
+  ): Promise<ControlPolicyDetailDto | null> {
     const policy = await this.prisma.controlPolicy.findUnique({
       where: { workTypeId },
       include: {
@@ -310,11 +383,20 @@ export class ControlPoliciesService {
       },
     });
 
+    if (policy && scopeOrganizationIds && !scopeOrganizationIds.includes(policy.organizationId)) {
+      return null;
+    }
+
     return policy ? this.toDetailDto(policy) : null;
   }
 
-  async update(id: string, updateDto: UpdateControlPolicyDto): Promise<ControlPolicyDetailDto> {
-    await this.findOne(id);
+  async update(
+    id: string,
+    updateDto: UpdateControlPolicyDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<ControlPolicyDetailDto> {
+    await this.assertPolicyInScope(id, scopeOrganizationIds);
+    await this.findOne(id, scopeOrganizationIds);
 
     const {
       organizationId,
@@ -341,6 +423,10 @@ export class ControlPoliciesService {
       }
 
       const targetOrganizationId = organizationId ?? currentPolicy.organizationId;
+            if (scopeOrganizationIds && !scopeOrganizationIds.includes(targetOrganizationId)) {
+              throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
+            }
+
       const targetWorkTypeId = workTypeId ?? currentPolicy.workTypeId;
       const organizationChanged =
         organizationId !== undefined && organizationId !== currentPolicy.organizationId;
@@ -463,10 +549,12 @@ export class ControlPoliciesService {
       await this.ensurePolicyHasControlConditions(tx, id);
     });
 
-    return this.findOneDetail(id);
+    return this.findOneDetail(id, scopeOrganizationIds);
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(id: string, scopeOrganizationIds?: string[]): Promise<void> {
+    await this.assertPolicyInScope(id, scopeOrganizationIds);
+
     const policy = await this.prisma.controlPolicy.findUnique({
       where: { id },
       select: { id: true },
@@ -486,7 +574,9 @@ export class ControlPoliciesService {
     });
   }
 
-  async toggleActive(id: string): Promise<ControlPolicyResponseDto> {
+  async toggleActive(id: string, scopeOrganizationIds?: string[]): Promise<ControlPolicyResponseDto> {
+    await this.assertPolicyInScope(id, scopeOrganizationIds);
+
     const policy = await this.prisma.controlPolicy.findUnique({ where: { id } });
     if (!policy) {
       throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
@@ -513,7 +603,13 @@ export class ControlPoliciesService {
     return this.toResponseDto(updated);
   }
 
-  async assignZones(policyId: string, zoneIds: string[]): Promise<ControlPolicyDetailDto> {
+  async assignZones(
+    policyId: string,
+    zoneIds: string[],
+    scopeOrganizationIds?: string[],
+  ): Promise<ControlPolicyDetailDto> {
+    await this.assertPolicyInScope(policyId, scopeOrganizationIds);
+
     const policy = await this.prisma.controlPolicy.findUnique({
       where: { id: policyId },
       select: { organizationId: true },
@@ -535,10 +631,16 @@ export class ControlPoliciesService {
       await this.ensurePolicyHasControlConditions(tx, policyId);
     });
 
-    return this.findOneDetail(policyId);
+    return this.findOneDetail(policyId, scopeOrganizationIds);
   }
 
-  async assignTimePolicies(policyId: string, timePolicyIds: string[]): Promise<ControlPolicyDetailDto> {
+  async assignTimePolicies(
+    policyId: string,
+    timePolicyIds: string[],
+    scopeOrganizationIds?: string[],
+  ): Promise<ControlPolicyDetailDto> {
+    await this.assertPolicyInScope(policyId, scopeOrganizationIds);
+
     const policy = await this.prisma.controlPolicy.findUnique({
       where: { id: policyId },
       select: { organizationId: true },
@@ -560,10 +662,16 @@ export class ControlPoliciesService {
       await this.ensurePolicyHasControlConditions(tx, policyId);
     });
 
-    return this.findOneDetail(policyId);
+    return this.findOneDetail(policyId, scopeOrganizationIds);
   }
 
-  async assignBehaviorConditions(policyId: string, behaviorConditionIds: string[]): Promise<ControlPolicyDetailDto> {
+  async assignBehaviorConditions(
+    policyId: string,
+    behaviorConditionIds: string[],
+    scopeOrganizationIds?: string[],
+  ): Promise<ControlPolicyDetailDto> {
+    await this.assertPolicyInScope(policyId, scopeOrganizationIds);
+
     const policy = await this.prisma.controlPolicy.findUnique({
       where: { id: policyId },
       select: { organizationId: true },
@@ -588,10 +696,16 @@ export class ControlPoliciesService {
       await this.ensurePolicyHasControlConditions(tx, policyId);
     });
 
-    return this.findOneDetail(policyId);
+    return this.findOneDetail(policyId, scopeOrganizationIds);
   }
 
-  async assignHarmfulApps(policyId: string, harmfulAppPresetIds: string[]): Promise<ControlPolicyDetailDto> {
+  async assignHarmfulApps(
+    policyId: string,
+    harmfulAppPresetIds: string[],
+    scopeOrganizationIds?: string[],
+  ): Promise<ControlPolicyDetailDto> {
+    await this.assertPolicyInScope(policyId, scopeOrganizationIds);
+
     const policy = await this.prisma.controlPolicy.findUnique({
       where: { id: policyId },
       select: { organizationId: true },
@@ -613,10 +727,16 @@ export class ControlPoliciesService {
       await this.ensurePolicyHasControlConditions(tx, policyId);
     });
 
-    return this.findOneDetail(policyId);
+    return this.findOneDetail(policyId, scopeOrganizationIds);
   }
 
-  async assignEmployees(policyId: string, employeeIds: string[]): Promise<ControlPolicyDetailDto> {
+  async assignEmployees(
+    policyId: string,
+    employeeIds: string[],
+    scopeOrganizationIds?: string[],
+  ): Promise<ControlPolicyDetailDto> {
+    await this.assertPolicyInScope(policyId, scopeOrganizationIds);
+
     const policy = await this.prisma.controlPolicy.findUnique({
       where: { id: policyId },
       select: { organizationId: true },
@@ -636,16 +756,42 @@ export class ControlPoliciesService {
       }
     });
 
-    return this.findOneDetail(policyId);
+    return this.findOneDetail(policyId, scopeOrganizationIds);
   }
 
-  async getStats(): Promise<ControlPolicyStatsDto> {
+  async getStats(scopeOrganizationIds?: string[]): Promise<ControlPolicyStatsDto> {
     const [totalPolicies, activePolicies, totalWorkTypes, byOrgResult] = await Promise.all([
-      this.prisma.controlPolicy.count(),
-      this.prisma.controlPolicy.count({ where: { isActive: true } }),
-      this.prisma.workType.count(),
+      this.prisma.controlPolicy.count({
+        where: scopeOrganizationIds
+          ? {
+              organizationId: { in: scopeOrganizationIds },
+            }
+          : undefined,
+      }),
+      this.prisma.controlPolicy.count({
+        where: {
+          isActive: true,
+          ...(scopeOrganizationIds
+            ? {
+                organizationId: { in: scopeOrganizationIds },
+              }
+            : {}),
+        },
+      }),
+      this.prisma.workType.count({
+        where: scopeOrganizationIds
+          ? {
+              organizationId: { in: scopeOrganizationIds },
+            }
+          : undefined,
+      }),
       this.prisma.controlPolicy.groupBy({
         by: ['organizationId'],
+        where: scopeOrganizationIds
+          ? {
+              organizationId: { in: scopeOrganizationIds },
+            }
+          : undefined,
         _count: { organizationId: true },
       }),
     ]);

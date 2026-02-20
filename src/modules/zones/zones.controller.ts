@@ -7,6 +7,7 @@ import {
   Param,
   Delete,
   Query,
+  Req,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -30,10 +31,11 @@ import {
   CheckPointInZoneDto,
 } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard';
 
 @ApiTags('Zones')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, OrganizationScopeGuard)
 @Controller('zones')
 export class ZonesController {
   constructor(private readonly zonesService: ZonesService) {}
@@ -41,22 +43,22 @@ export class ZonesController {
   @Post()
   @ApiOperation({ summary: '구역 생성' })
   @ApiResponse({ status: 201, description: '구역 생성 성공', type: ZoneResponseDto })
-  async create(@Body() createZoneDto: CreateZoneDto): Promise<ZoneResponseDto> {
-    return this.zonesService.create(createZoneDto);
+  async create(@Req() req: any, @Body() createZoneDto: CreateZoneDto): Promise<ZoneResponseDto> {
+    return this.zonesService.create(createZoneDto, req.organizationScopeIds ?? undefined);
   }
 
   @Get()
   @ApiOperation({ summary: '구역 목록 조회' })
   @ApiResponse({ status: 200, description: '구역 목록', type: ZoneListResponseDto })
-  async findAll(@Query() filter: ZoneFilterDto): Promise<ZoneListResponseDto> {
-    return this.zonesService.findAll(filter);
+  async findAll(@Req() req: any, @Query() filter: ZoneFilterDto): Promise<ZoneListResponseDto> {
+    return this.zonesService.findAll(filter, req.organizationScopeIds ?? undefined);
   }
 
   @Get('stats')
   @ApiOperation({ summary: '구역 통계 조회' })
   @ApiResponse({ status: 200, description: '구역 통계', type: ZoneStatsDto })
-  async getStats(): Promise<ZoneStatsDto> {
-    return this.zonesService.getZoneStats();
+  async getStats(@Req() req: any): Promise<ZoneStatsDto> {
+    return this.zonesService.getZoneStats(req.organizationScopeIds ?? undefined);
   }
 
   @Get('organization/:organizationId')
@@ -64,9 +66,10 @@ export class ZonesController {
   @ApiParam({ name: 'organizationId', description: '조직 ID' })
   @ApiResponse({ status: 200, description: '조직별 구역 목록', type: [ZoneResponseDto] })
   async findByOrganization(
+    @Req() req: any,
     @Param('organizationId') organizationId: string,
   ): Promise<ZoneResponseDto[]> {
-    return this.zonesService.findByOrganization(organizationId);
+    return this.zonesService.findByOrganization(organizationId, req.organizationScopeIds ?? undefined);
   }
 
   @Get(':id')
@@ -74,8 +77,8 @@ export class ZonesController {
   @ApiParam({ name: 'id', description: '구역 ID' })
   @ApiResponse({ status: 200, description: '구역 상세 정보', type: ZoneResponseDto })
   @ApiResponse({ status: 404, description: '구역을 찾을 수 없음' })
-  async findOne(@Param('id') id: string): Promise<ZoneResponseDto> {
-    return this.zonesService.findOne(id);
+  async findOne(@Req() req: any, @Param('id') id: string): Promise<ZoneResponseDto> {
+    return this.zonesService.findOne(id, req.organizationScopeIds ?? undefined);
   }
 
   @Patch(':id')
@@ -84,18 +87,19 @@ export class ZonesController {
   @ApiResponse({ status: 200, description: '구역 수정 성공', type: ZoneResponseDto })
   @ApiResponse({ status: 404, description: '구역을 찾을 수 없음' })
   async update(
+    @Req() req: any,
     @Param('id') id: string,
     @Body() updateZoneDto: UpdateZoneDto,
   ): Promise<ZoneResponseDto> {
-    return this.zonesService.update(id, updateZoneDto);
+    return this.zonesService.update(id, updateZoneDto, req.organizationScopeIds ?? undefined);
   }
 
   @Patch(':id/toggle-active')
   @ApiOperation({ summary: '구역 활성/비활성 토글' })
   @ApiParam({ name: 'id', description: '구역 ID' })
   @ApiResponse({ status: 200, description: '상태 변경 성공', type: ZoneResponseDto })
-  async toggleActive(@Param('id') id: string): Promise<ZoneResponseDto> {
-    return this.zonesService.toggleActive(id);
+  async toggleActive(@Req() req: any, @Param('id') id: string): Promise<ZoneResponseDto> {
+    return this.zonesService.toggleActive(id, req.organizationScopeIds ?? undefined);
   }
 
   @Post(':id/check-point')
@@ -107,10 +111,11 @@ export class ZonesController {
     schema: { type: 'object', properties: { isInside: { type: 'boolean' } } },
   })
   async checkPointInZone(
+    @Req() req: any,
     @Param('id') id: string,
     @Body() point: CheckPointInZoneDto,
   ): Promise<{ isInside: boolean }> {
-    const isInside = await this.zonesService.checkPointInZone(id, point);
+    const isInside = await this.zonesService.checkPointInZone(id, point, req.organizationScopeIds ?? undefined);
     return { isInside };
   }
 
@@ -120,7 +125,7 @@ export class ZonesController {
   @ApiParam({ name: 'id', description: '구역 ID' })
   @ApiResponse({ status: 204, description: '구역 삭제 성공' })
   @ApiResponse({ status: 404, description: '구역을 찾을 수 없음' })
-  async remove(@Param('id') id: string): Promise<void> {
-    return this.zonesService.remove(id);
+  async remove(@Req() req: any, @Param('id') id: string): Promise<void> {
+    return this.zonesService.remove(id, req.organizationScopeIds ?? undefined);
   }
 }

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateHarmfulAppPresetDto,
@@ -16,6 +16,26 @@ export class HarmfulAppPresetsService {
   private platformsNormalized = false;
 
   constructor(private prisma: PrismaService) {}
+
+  private ensureOrganizationInScope(
+    organizationId: string | undefined,
+    scopeOrganizationIds?: string[],
+  ): void {
+    if (!organizationId || !scopeOrganizationIds) return;
+    if (!scopeOrganizationIds.includes(organizationId)) {
+      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
+    }
+  }
+
+  private assertPresetInScope(
+    preset: { organizationId: string },
+    scopeOrganizationIds?: string[],
+  ): void {
+    if (!scopeOrganizationIds) return;
+    if (!scopeOrganizationIds.includes(preset.organizationId)) {
+      throw new NotFoundException('유해 앱 프리셋을 찾을 수 없습니다.');
+    }
+  }
 
   private normalizePlatform(platform?: string): 'android' | 'ios' {
     return platform === 'ios' ? 'ios' : 'android';
@@ -100,8 +120,10 @@ export class HarmfulAppPresetsService {
     });
   }
 
-  async create(dto: CreateHarmfulAppPresetDto): Promise<HarmfulAppPresetDetailDto> {
+  async create(dto: CreateHarmfulAppPresetDto, scopeOrganizationIds?: string[]): Promise<HarmfulAppPresetDetailDto> {
     await this.ensureValidPlatformData();
+
+    this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
 
     const platform = this.normalizePlatform(dto.platform);
     await this.validateAppsPlatform(dto.appIds, platform);
@@ -138,7 +160,10 @@ export class HarmfulAppPresetsService {
     return this.toDetailDto(preset);
   }
 
-  async findAll(filter: HarmfulAppPresetFilterDto): Promise<HarmfulAppPresetListResponseDto> {
+  async findAll(
+    filter: HarmfulAppPresetFilterDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<HarmfulAppPresetListResponseDto> {
     await this.ensureValidPlatformData();
 
     const page = filter.page || 1;
@@ -152,7 +177,10 @@ export class HarmfulAppPresetsService {
     }
 
     if (filter.organizationId) {
+      this.ensureOrganizationInScope(filter.organizationId, scopeOrganizationIds);
       where.organizationId = filter.organizationId;
+    } else if (scopeOrganizationIds) {
+      where.organizationId = { in: scopeOrganizationIds };
     }
 
     if (filter.workTypeId) {
@@ -194,7 +222,7 @@ export class HarmfulAppPresetsService {
     };
   }
 
-  async findOne(id: string): Promise<HarmfulAppPresetDetailDto> {
+  async findOne(id: string, scopeOrganizationIds?: string[]): Promise<HarmfulAppPresetDetailDto> {
     await this.ensureValidPlatformData();
 
     const preset = await this.prisma.harmfulAppPreset.findUnique({
@@ -217,12 +245,20 @@ export class HarmfulAppPresetsService {
       throw new NotFoundException('유해 앱 프리셋을 찾을 수 없습니다.');
     }
 
+    this.assertPresetInScope(preset, scopeOrganizationIds);
+
     return this.toDetailDto(preset);
   }
 
-  async update(id: string, dto: UpdateHarmfulAppPresetDto): Promise<HarmfulAppPresetDetailDto> {
+  async update(
+    id: string,
+    dto: UpdateHarmfulAppPresetDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<HarmfulAppPresetDetailDto> {
     await this.ensureValidPlatformData();
-    const existing = await this.findOne(id);
+    const existing = await this.findOne(id, scopeOrganizationIds);
+
+    this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
 
     const platform = this.normalizePlatform(dto.platform ?? existing.platform);
     await this.validateAppsPlatform(dto.appIds, platform);
@@ -271,7 +307,7 @@ export class HarmfulAppPresetsService {
     return this.toDetailDto(preset);
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(id: string, scopeOrganizationIds?: string[]): Promise<void> {
     await this.ensureValidPlatformData();
 
     const preset = await this.prisma.harmfulAppPreset.findUnique({
@@ -289,6 +325,8 @@ export class HarmfulAppPresetsService {
       throw new NotFoundException('유해 앱 프리셋을 찾을 수 없습니다.');
     }
 
+    this.assertPresetInScope(preset, scopeOrganizationIds);
+
     await this.prisma.$transaction(async (tx) => {
       const impacted = await tx.controlPolicyHarmfulApp.findMany({
         where: { presetId: id },
@@ -305,9 +343,13 @@ export class HarmfulAppPresetsService {
     });
   }
 
-  async addApps(id: string, appIds: string[]): Promise<HarmfulAppPresetDetailDto> {
+  async addApps(
+    id: string,
+    appIds: string[],
+    scopeOrganizationIds?: string[],
+  ): Promise<HarmfulAppPresetDetailDto> {
     await this.ensureValidPlatformData();
-    const preset = await this.findOne(id);
+    const preset = await this.findOne(id, scopeOrganizationIds);
     const platform = this.normalizePlatform(preset.platform);
     await this.validateAppsPlatform(appIds, platform);
 
@@ -332,10 +374,14 @@ export class HarmfulAppPresetsService {
     return this.findOne(id);
   }
 
-  async removeApps(id: string, appIds: string[]): Promise<HarmfulAppPresetDetailDto> {
+  async removeApps(
+    id: string,
+    appIds: string[],
+    scopeOrganizationIds?: string[],
+  ): Promise<HarmfulAppPresetDetailDto> {
     await this.ensureValidPlatformData();
 
-    await this.findOne(id);
+    await this.findOne(id, scopeOrganizationIds);
 
     await this.prisma.harmfulAppPresetItem.deleteMany({
       where: {
@@ -344,11 +390,16 @@ export class HarmfulAppPresetsService {
       },
     });
 
-    return this.findOne(id);
+    return this.findOne(id, scopeOrganizationIds);
   }
 
-  async findByOrganization(organizationId: string): Promise<HarmfulAppPresetResponseDto[]> {
+  async findByOrganization(
+    organizationId: string,
+    scopeOrganizationIds?: string[],
+  ): Promise<HarmfulAppPresetResponseDto[]> {
     await this.ensureValidPlatformData();
+
+    this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
 
     const presets = await this.prisma.harmfulAppPreset.findMany({
       where: { organizationId },
@@ -370,13 +421,15 @@ export class HarmfulAppPresetsService {
     return presets.map((preset) => this.toDetailDto(preset));
   }
 
-  async getStats(): Promise<HarmfulAppStatsDto> {
+  async getStats(scopeOrganizationIds?: string[]): Promise<HarmfulAppStatsDto> {
     await this.ensureValidPlatformData();
 
     const [totalApps, globalApps, totalPresets, categoryStats, platformStats] = await Promise.all([
       this.prisma.harmfulApp.count(),
       this.prisma.harmfulApp.count({ where: { isGlobal: true } }),
-      this.prisma.harmfulAppPreset.count(),
+      this.prisma.harmfulAppPreset.count({
+        where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
+      }),
       this.prisma.harmfulApp.groupBy({
         by: ['category'],
         _count: true,

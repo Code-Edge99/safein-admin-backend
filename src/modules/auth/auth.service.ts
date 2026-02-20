@@ -3,7 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto, ChangePasswordDto, TokenResponseDto, AuthUserDto } from './dto';
-import { AccountStatus, LoginStatus } from '@prisma/client';
+import { AccountStatus, AdminRole, LoginStatus } from '@prisma/client';
 
 @Injectable()
 export class AuthService {
@@ -32,6 +32,13 @@ export class AuthService {
 
     if (account.status !== AccountStatus.ACTIVE) {
       throw new UnauthorizedException('비활성화된 계정입니다.');
+    }
+
+    if (
+      account.role !== AdminRole.SUPER_ADMIN &&
+      (!account.organization || !account.organization.isActive || account.organization.type !== 'site')
+    ) {
+      throw new UnauthorizedException('비슈퍼관리자는 활성 현장(site) 정보가 필수입니다.');
     }
 
     const isPasswordValid = await bcrypt.compare(password, account.passwordHash);
@@ -105,12 +112,20 @@ export class AuthService {
       return null;
     }
 
+    if (
+      account.role !== AdminRole.SUPER_ADMIN &&
+      (!account.organization || !account.organization.isActive || account.organization.type !== 'site')
+    ) {
+      return null;
+    }
+
     return {
       id: account.id,
       username: account.username,
       name: account.name,
       role: account.role,
       organizationId: account.organizationId || '',
+      organizationType: account.organization?.type,
     };
   }
 
