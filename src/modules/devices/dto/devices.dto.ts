@@ -134,6 +134,22 @@ export class DeviceResponseDto {
   @ApiPropertyOptional({ description: '등록 시간' })
   registeredAt?: Date;
 
+  @ApiPropertyOptional({ description: '비활성화 시간' })
+  deactivatedAt?: Date;
+
+  @ApiPropertyOptional({ description: '비활성화 사유' })
+  deactivatedReason?: string;
+
+  @ApiPropertyOptional({ description: '토큰 정보' })
+  tokenInfo?: {
+    isValid: boolean;
+    lastLogin?: Date;
+    expiresAt?: Date;
+  };
+
+  @ApiPropertyOptional({ description: '푸시 토큰 원문' })
+  pushToken?: string;
+
   @ApiProperty({ description: '생성일시' })
   createdAt: Date;
 
@@ -142,16 +158,6 @@ export class DeviceResponseDto {
 }
 
 export class DeviceDetailDto extends DeviceResponseDto {
-  @ApiPropertyOptional({ description: '토큰 정보' })
-  tokenInfo?: {
-    isValid: boolean;
-    lastLogin?: Date;
-    expiresAt?: Date;
-  };
-
-  @ApiPropertyOptional({ description: '푸시 토큰' })
-  pushToken?: string;
-
   @ApiPropertyOptional({ description: '최근 위치' })
   lastLocation?: {
     latitude: number;

@@ -4,7 +4,6 @@ import {
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
-import { AdminRole } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 
 @Injectable()
@@ -22,13 +21,8 @@ export class OrganizationScopeGuard implements CanActivate {
       throw new ForbiddenException('인증 정보가 없습니다.');
     }
 
-    if (user.role === AdminRole.SUPER_ADMIN) {
-      request.organizationScopeIds = null;
-      return true;
-    }
-
     if (!user.organizationId) {
-      throw new ForbiddenException('현장 정보가 없는 계정은 접근할 수 없습니다.');
+      throw new ForbiddenException('소속 현장 정보가 없는 계정은 접근할 수 없습니다.');
     }
 
     const rootOrganization = await this.prisma.organization.findUnique({

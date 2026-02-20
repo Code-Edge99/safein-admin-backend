@@ -147,6 +147,7 @@ export class DevicesService {
         include: {
           employee: true,
           organization: true,
+          token: true,
         },
         skip: filter.skip,
         take: filter.take,
@@ -182,12 +183,6 @@ export class DevicesService {
 
     return {
       ...this.toResponseDto(device),
-      tokenInfo: device.token ? {
-        isValid: device.token.isValid,
-        lastLogin: device.token.lastLogin ?? undefined,
-        expiresAt: device.token.expiresAt ?? undefined,
-      } : undefined,
-      pushToken: device.pushToken ?? undefined,
       lastLocation: device.locations[0] ? {
         latitude: device.locations[0].latitude.toNumber(),
         longitude: device.locations[0].longitude.toNumber(),
@@ -447,6 +442,16 @@ export class DevicesService {
       deviceStatus: device.deviceStatus,
       lastCommunication: device.lastCommunication,
       registeredAt: device.registeredAt,
+      deactivatedAt: device.deactivatedAt,
+      deactivatedReason: device.deactivatedReason,
+      tokenInfo: device.token
+        ? {
+            isValid: device.token.isValid,
+            lastLogin: device.token.lastLogin ?? undefined,
+            expiresAt: device.token.expiresAt ?? undefined,
+          }
+        : undefined,
+      pushToken: device.pushToken,
       createdAt: device.createdAt,
       updatedAt: device.updatedAt,
     };
