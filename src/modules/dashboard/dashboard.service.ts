@@ -28,6 +28,14 @@ export class DashboardService {
   async getStats(scopeOrganizationIds?: string[]) {
     const now = new Date();
     const onlineThreshold = new Date(now.getTime() - 15 * 60 * 1000);
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+
+    const yesterdayStart = new Date(todayStart);
+    yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
 
     const [
       totalEmployees,
@@ -37,7 +45,10 @@ export class DashboardService {
       activePolicies,
       dangerZones,
       todayLogs,
+      yesterdayLogs,
       onlineEmployees,
+      employeesThisMonth,
+      employeesLastMonth,
     ] = await Promise.all([
       this.prisma.employee.count({
         where: scopeOrganizationIds
@@ -93,7 +104,21 @@ export class DashboardService {
       }),
       this.prisma.controlLog.count({
         where: {
-          timestamp: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
+          action: 'blocked',
+          timestamp: { gte: todayStart },
+          ...(scopeOrganizationIds
+            ? {
+                employee: {
+                  organizationId: { in: scopeOrganizationIds },
+                },
+              }
+            : {}),
+        },
+      }),
+      this.prisma.controlLog.count({
+        where: {
+          action: 'blocked',
+          timestamp: { gte: yesterdayStart, lt: todayStart },
           ...(scopeOrganizationIds
             ? {
                 employee: {
@@ -120,7 +145,41 @@ export class DashboardService {
             : {}),
         },
       }),
+        this.prisma.employee.count({
+          where: {
+            createdAt: { gte: monthStart },
+            ...(scopeOrganizationIds
+              ? {
+                  organizationId: { in: scopeOrganizationIds },
+                }
+              : {}),
+          },
+        }),
+        this.prisma.employee.count({
+          where: {
+            createdAt: { gte: previousMonthStart, lt: monthStart },
+            ...(scopeOrganizationIds
+              ? {
+                  organizationId: { in: scopeOrganizationIds },
+                }
+              : {}),
+          },
+        }),
     ]);
+
+      const employeeMonthlyGrowthRate =
+        employeesLastMonth > 0
+          ? Math.round(((employeesThisMonth - employeesLastMonth) / employeesLastMonth) * 100)
+          : employeesThisMonth > 0
+            ? 100
+            : 0;
+
+      const violationChangeRate =
+        yesterdayLogs > 0
+          ? Math.round(((todayLogs - yesterdayLogs) / yesterdayLogs) * 100)
+          : todayLogs > 0
+            ? 100
+            : 0;
 
     return {
       totalEmployees,
@@ -130,7 +189,11 @@ export class DashboardService {
       activePolicies,
       criticalZones: dangerZones,
       todayViolations: todayLogs,
+      yesterdayViolations: yesterdayLogs,
+      violationChangeRate,
       onlineEmployees: onlineEmployees.length,
+      employeesThisMonth,
+      employeeMonthlyGrowthRate,
     };
   }
 
@@ -168,6 +231,7 @@ export class DashboardService {
         where,
         orderBy: { hour: 'asc' },
       });
+      targetDate = yesterday;
     }
 
     // 24시간 데이터 구성 (없는 시간대는 0으로)
@@ -180,6 +244,46 @@ export class DashboardService {
         harmfulAppBlocks: existing.harmfulAppBlocks + s.harmfulAppBlocks,
       });
     });
+
+    if (stats.length === 0) {
+      const dayStart = new Date(targetDate);
+      const dayEnd = new Date(targetDate);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+
+      const logs = await this.prisma.controlLog.findMany({
+        where: {
+          action: 'blocked',
+          timestamp: { gte: dayStart, lt: dayEnd },
+          ...(organizationId
+            ? {
+                employee: {
+                  organizationId,
+                },
+              }
+            : scopeOrganizationIds
+              ? {
+                  employee: {
+                    organizationId: { in: scopeOrganizationIds },
+                  },
+                }
+              : {}),
+        },
+        select: {
+          timestamp: true,
+          type: true,
+        },
+      });
+
+      logs.forEach((log) => {
+        const hour = log.timestamp.getHours();
+        const existing = hourlyMap.get(hour) || { totalBlocks: 0, behaviorBlocks: 0, harmfulAppBlocks: 0 };
+        hourlyMap.set(hour, {
+          totalBlocks: existing.totalBlocks + 1,
+          behaviorBlocks: existing.behaviorBlocks + (log.type === 'behavior' ? 1 : 0),
+          harmfulAppBlocks: existing.harmfulAppBlocks + (log.type === 'harmful_app' ? 1 : 0),
+        });
+      });
+    }
 
     const result = [];
     for (let h = 0; h < 24; h++) {
@@ -258,6 +362,44 @@ export class DashboardService {
       });
     });
 
+    if (zoneMap.size === 0) {
+      const logs = await this.prisma.controlLog.findMany({
+        where: {
+          action: 'blocked',
+          zoneId: { not: null },
+          timestamp: { gte: start, lte: end },
+          ...(scopeOrganizationIds
+            ? {
+                employee: {
+                  organizationId: { in: scopeOrganizationIds },
+                },
+              }
+            : {}),
+        },
+        include: {
+          zone: { select: { id: true, name: true, type: true } },
+        },
+      });
+
+      logs.forEach((log) => {
+        if (!log.zoneId || !log.zone) return;
+        const key = log.zoneId;
+        const existing = zoneMap.get(key) || {
+          name: log.zone.name,
+          type: log.zone.type,
+          count: 0,
+          employees: 0,
+        };
+
+        zoneMap.set(key, {
+          name: existing.name,
+          type: existing.type,
+          count: existing.count + 1,
+          employees: uniqueEmployeeCountByZone.get(key) || 0,
+        });
+      });
+    }
+
     const severityMap: Record<string, string> = {
       danger: '위험',
       normal: '일반',
@@ -327,69 +469,89 @@ export class DashboardService {
 
     this.ensureOrganizationInScope(filter.organizationId, filter.scopeOrganizationIds);
 
-    const where: any = { date: { gte: startDate } };
-    if (filter.employeeId) where.employeeId = filter.employeeId;
-    if (filter.organizationId) where.organizationId = filter.organizationId;
-    else if (filter.scopeOrganizationIds) where.organizationId = { in: filter.scopeOrganizationIds };
+    const employeeWhere: any = {};
+    if (filter.employeeId) employeeWhere.id = filter.employeeId;
+    if (filter.organizationId) employeeWhere.organizationId = filter.organizationId;
+    else if (filter.scopeOrganizationIds) employeeWhere.organizationId = { in: filter.scopeOrganizationIds };
 
-    // 직원별로 집계
+    const employees = await this.prisma.employee.findMany({
+      where: employeeWhere,
+      select: {
+        id: true,
+        name: true,
+        organizationId: true,
+        organization: { select: { id: true, name: true } },
+        workType: { select: { id: true, name: true } },
+        hireDate: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    if (employees.length === 0) {
+      return {
+        data: [],
+        total: 0,
+        page,
+        limit,
+        totalPages: 0,
+      };
+    }
+
+    const employeeIds = employees.map((employee) => employee.id);
+
     const rawStats = await this.prisma.employeeDailyStat.findMany({
-      where,
-      include: {
-        employee: {
-          select: {
-            id: true,
-            name: true,
-            organizationId: true,
-            organization: { select: { id: true, name: true } },
-            workType: { select: { id: true, name: true } },
-            hireDate: true,
-          },
-        },
+      where: {
+        employeeId: { in: employeeIds },
+        date: { gte: startDate },
       },
       orderBy: { date: 'desc' },
     });
 
-    // 직원별 집계
     const empMap = new Map<string, any>();
+    employees.forEach((employee) => {
+      empMap.set(employee.id, {
+        employeeId: employee.id,
+        employeeName: employee.name || '',
+        organizationId: employee.organizationId || '',
+        organizationName: employee.organization?.name || '',
+        workType: employee.workType?.name || '',
+        hireDate: employee.hireDate || null,
+        totalBlocks: 0,
+        totalEvents: 0,
+        allowedEvents: 0,
+        behaviorBlocks: 0,
+        harmfulAppBlocks: 0,
+        zoneViolations: 0,
+        topBlockedApp: null,
+        dailyStats: [],
+      });
+    });
+
     rawStats.forEach((stat) => {
+      const existing = empMap.get(stat.employeeId);
+      if (!existing) return;
+
       const statTotalEvents = (stat as any).totalEvents ?? stat.totalBlocks;
       const statAllowedEvents = (stat as any).allowedEvents ?? 0;
-      const empId = stat.employeeId;
-      const existing = empMap.get(empId);
-      if (!existing) {
-        empMap.set(empId, {
-          employeeId: empId,
-          employeeName: stat.employee?.name || '',
-          organizationId: stat.employee?.organizationId || '',
-          organizationName: stat.employee?.organization?.name || '',
-          workType: stat.employee?.workType?.name || '',
-          hireDate: stat.employee?.hireDate || null,
-          totalBlocks: stat.totalBlocks,
-          totalEvents: statTotalEvents,
-          allowedEvents: statAllowedEvents,
-          behaviorBlocks: stat.behaviorBlocks,
-          harmfulAppBlocks: stat.harmfulAppBlocks,
-          zoneViolations: stat.zoneViolations,
-          topBlockedApp: stat.topBlockedApp,
-          dailyStats: [stat],
-        });
-      } else {
-        existing.totalBlocks += stat.totalBlocks;
-        existing.totalEvents += statTotalEvents;
-        existing.allowedEvents += statAllowedEvents;
-        existing.behaviorBlocks += stat.behaviorBlocks;
-        existing.harmfulAppBlocks += stat.harmfulAppBlocks;
-        existing.zoneViolations += stat.zoneViolations;
-        existing.dailyStats.push(stat);
-        if (!existing.topBlockedApp && stat.topBlockedApp) {
-          existing.topBlockedApp = stat.topBlockedApp;
-        }
+
+      existing.totalBlocks += stat.totalBlocks;
+      existing.totalEvents += statTotalEvents;
+      existing.allowedEvents += statAllowedEvents;
+      existing.behaviorBlocks += stat.behaviorBlocks;
+      existing.harmfulAppBlocks += stat.harmfulAppBlocks;
+      existing.zoneViolations += stat.zoneViolations;
+      existing.dailyStats.push(stat);
+      if (!existing.topBlockedApp && stat.topBlockedApp) {
+        existing.topBlockedApp = stat.topBlockedApp;
       }
     });
 
-    const aggregated = Array.from(empMap.values())
-      .sort((a, b) => b.totalBlocks - a.totalBlocks);
+    const aggregated = Array.from(empMap.values()).sort((a, b) => {
+      if (b.totalBlocks !== a.totalBlocks) {
+        return b.totalBlocks - a.totalBlocks;
+      }
+      return a.employeeName.localeCompare(b.employeeName);
+    });
 
     const total = aggregated.length;
     const paged = aggregated.slice(skip, skip + limit).map((emp) => {
