@@ -191,10 +191,10 @@ export class CreateHarmfulAppPresetDto {
   @IsOptional()
   description?: string;
 
-  @ApiProperty({ description: '플랫폼 (android | ios)', default: 'android' })
+  @ApiProperty({ description: '플랫폼 (android | ios | both)', default: 'both' })
   @IsString()
   @IsNotEmpty()
-  @IsIn(['android', 'ios'])
+  @IsIn(['android', 'ios', 'both'])
   platform: string;
 
   @ApiProperty({ description: '조직 ID' })
@@ -226,7 +226,7 @@ export class HarmfulAppPresetResponseDto {
   @ApiPropertyOptional({ description: '설명' })
   description?: string;
 
-  @ApiProperty({ description: '플랫폼 (android | ios)' })
+  @ApiProperty({ description: '플랫폼 (android | ios | both)' })
   platform: string;
 
   @ApiPropertyOptional({ description: '조직 정보' })
@@ -265,10 +265,10 @@ export class HarmfulAppPresetFilterDto {
   @IsOptional()
   search?: string;
 
-  @ApiPropertyOptional({ description: '플랫폼 필터 (android | ios)', default: 'all' })
+  @ApiPropertyOptional({ description: '플랫폼 필터 (android | ios | both)', default: 'all' })
   @IsString()
   @IsOptional()
-  @IsIn(['all', 'android', 'ios'])
+  @IsIn(['all', 'android', 'ios', 'both'])
   platform?: string;
 
   @ApiPropertyOptional({ description: '조직 ID' })

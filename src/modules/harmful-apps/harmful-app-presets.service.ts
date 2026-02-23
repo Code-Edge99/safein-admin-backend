@@ -12,7 +12,7 @@ import {
 
 @Injectable()
 export class HarmfulAppPresetsService {
-  private readonly validPlatforms = ['android', 'ios'] as const;
+  private readonly validPlatforms = ['android', 'ios', 'both'] as const;
   private platformsNormalized = false;
 
   constructor(private prisma: PrismaService) {}
@@ -37,8 +37,10 @@ export class HarmfulAppPresetsService {
     }
   }
 
-  private normalizePlatform(platform?: string): 'android' | 'ios' {
-    return platform === 'ios' ? 'ios' : 'android';
+  private normalizePlatform(platform?: string): 'android' | 'ios' | 'both' {
+    if (platform === 'ios') return 'ios';
+    if (platform === 'both') return 'both';
+    return 'android';
   }
 
   private async ensureValidPlatformData(): Promise<void> {
@@ -58,7 +60,7 @@ export class HarmfulAppPresetsService {
     this.platformsNormalized = true;
   }
 
-  private async validateAppsPlatform(appIds: string[] | undefined, platform: 'android' | 'ios'): Promise<void> {
+  private async validateAppsPlatform(appIds: string[] | undefined, platform: 'android' | 'ios' | 'both'): Promise<void> {
     if (!appIds || appIds.length === 0) return;
 
     const apps = await this.prisma.harmfulApp.findMany({
@@ -72,13 +74,15 @@ export class HarmfulAppPresetsService {
       throw new NotFoundException(`존재하지 않는 유해 앱이 포함되어 있습니다: ${missingIds.join(', ')}`);
     }
 
-    const invalidApps = apps.filter((app) => this.normalizePlatform(app.platform) !== platform);
-    if (invalidApps.length > 0) {
-      throw new BadRequestException(
-        `프리셋 플랫폼(${platform})과 일치하지 않는 앱이 포함되어 있습니다: ${invalidApps
-          .map((app) => app.name)
-          .join(', ')}`,
-      );
+    if (platform !== 'both') {
+      const invalidApps = apps.filter((app) => this.normalizePlatform(app.platform) !== platform);
+      if (invalidApps.length > 0) {
+        throw new BadRequestException(
+          `프리셋 플랫폼(${platform})과 일치하지 않는 앱이 포함되어 있습니다: ${invalidApps
+            .map((app) => app.name)
+            .join(', ')}`,
+        );
+      }
     }
   }
 
