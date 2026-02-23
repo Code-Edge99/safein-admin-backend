@@ -133,6 +133,51 @@ export class HarmfulAppListResponseDto {
   totalPages: number;
 }
 
+export class RefreshHarmfulAppIconsDto {
+  @ApiPropertyOptional({ description: '플랫폼 필터 (android | ios | all)', default: 'all' })
+  @IsString()
+  @IsOptional()
+  @IsIn(['all', 'android', 'ios'])
+  platform?: string;
+
+  @ApiPropertyOptional({ description: '앱 ID 목록 (미지정 시 전체)' })
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  appIds?: string[];
+}
+
+export class RefreshHarmfulAppIconsResponseDto {
+  @ApiProperty({ description: '대상 앱 수' })
+  total: number;
+
+  @ApiProperty({ description: '아이콘 갱신 처리 성공 수 (변경+유지)' })
+  refreshed: number;
+
+  @ApiProperty({ description: '아이콘 URL 변경 수' })
+  updated: number;
+
+  @ApiProperty({ description: '아이콘 URL 동일 수' })
+  unchanged: number;
+
+  @ApiProperty({ description: '스토어에서 아이콘 미조회 수' })
+  missing: number;
+
+  @ApiProperty({ description: '조회 실패 수' })
+  failed: number;
+
+  @ApiProperty({ description: '처리 결과 상세' })
+  results: Array<{
+    id: string;
+    packageName: string;
+    platform: string;
+    status: 'updated' | 'unchanged' | 'missing' | 'failed';
+    previousIconUrl?: string | null;
+    iconUrl?: string | null;
+    message?: string;
+  }>;
+}
+
 // ============ HarmfulAppPreset DTOs ============
 
 export class CreateHarmfulAppPresetDto {

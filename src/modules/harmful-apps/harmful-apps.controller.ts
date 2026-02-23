@@ -26,6 +26,8 @@ import {
   HarmfulAppResponseDto,
   HarmfulAppFilterDto,
   HarmfulAppListResponseDto,
+  RefreshHarmfulAppIconsDto,
+  RefreshHarmfulAppIconsResponseDto,
 } from './dto';
 
 @ApiTags('유해 앱')
@@ -86,6 +88,15 @@ export class HarmfulAppsController {
   @ApiResponse({ status: 200, type: HarmfulAppResponseDto })
   toggleGlobal(@Param('id') id: string): Promise<HarmfulAppResponseDto> {
     return this.harmfulAppsService.toggleGlobal(id);
+  }
+
+  @Post('refresh-icons')
+  @ApiOperation({ summary: '앱 정보 최신화 (스토어 아이콘 갱신)' })
+  @ApiResponse({ status: 200, type: RefreshHarmfulAppIconsResponseDto })
+  refreshIcons(
+    @Body() dto: RefreshHarmfulAppIconsDto,
+  ): Promise<RefreshHarmfulAppIconsResponseDto> {
+    return this.harmfulAppsService.refreshIcons(dto);
   }
 
   @Delete(':id')

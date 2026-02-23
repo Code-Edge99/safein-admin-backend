@@ -7,12 +7,15 @@ import {
   HarmfulAppResponseDto,
   HarmfulAppFilterDto,
   HarmfulAppListResponseDto,
+  RefreshHarmfulAppIconsDto,
+  RefreshHarmfulAppIconsResponseDto,
 } from './dto';
 
 @Injectable()
 export class HarmfulAppsService {
   private readonly validPlatforms = ['android', 'ios'] as const;
   private platformsNormalized = false;
+  private readonly refreshConcurrency = 5;
 
   constructor(private prisma: PrismaService) {}
 
@@ -201,6 +204,117 @@ export class HarmfulAppsService {
     return this.toResponseDto(app, installedCountMap.get(id) || 0);
   }
 
+  async refreshIcons(dto: RefreshHarmfulAppIconsDto): Promise<RefreshHarmfulAppIconsResponseDto> {
+    await this.ensureValidPlatformData();
+
+    const where: any = {};
+    if (dto.platform && dto.platform !== 'all') {
+      where.platform = dto.platform;
+    }
+    if (dto.appIds && dto.appIds.length > 0) {
+      where.id = { in: dto.appIds };
+    }
+
+    const apps = await this.prisma.harmfulApp.findMany({
+      where,
+      select: {
+        id: true,
+        packageName: true,
+        platform: true,
+        iconUrl: true,
+      },
+      orderBy: { updatedAt: 'asc' },
+    });
+
+    const results: RefreshHarmfulAppIconsResponseDto['results'] = [];
+    let cursor = 0;
+
+    const worker = async () => {
+      while (cursor < apps.length) {
+        const index = cursor++;
+        const app = apps[index];
+        if (!app) continue;
+
+        const normalizedPlatform = this.normalizePlatform(app.platform);
+        const previousIconUrl = app.iconUrl || null;
+
+        try {
+          const fetchedIconUrl = normalizedPlatform === 'ios'
+            ? await this.fetchIosIconUrl(app.packageName)
+            : await this.fetchAndroidIconUrl(app.packageName);
+
+          if (!fetchedIconUrl) {
+            results.push({
+              id: app.id,
+              packageName: app.packageName,
+              platform: normalizedPlatform,
+              previousIconUrl,
+              iconUrl: previousIconUrl,
+              status: 'missing',
+              message: '스토어에서 아이콘을 찾지 못했습니다.',
+            });
+            continue;
+          }
+
+          if (previousIconUrl !== fetchedIconUrl) {
+            await this.prisma.harmfulApp.update({
+              where: { id: app.id },
+              data: { iconUrl: fetchedIconUrl },
+            });
+
+            results.push({
+              id: app.id,
+              packageName: app.packageName,
+              platform: normalizedPlatform,
+              previousIconUrl,
+              iconUrl: fetchedIconUrl,
+              status: 'updated',
+            });
+            continue;
+          }
+
+          results.push({
+            id: app.id,
+            packageName: app.packageName,
+            platform: normalizedPlatform,
+            previousIconUrl,
+            iconUrl: fetchedIconUrl,
+            status: 'unchanged',
+          });
+        } catch (error) {
+          results.push({
+            id: app.id,
+            packageName: app.packageName,
+            platform: normalizedPlatform,
+            previousIconUrl,
+            iconUrl: previousIconUrl,
+            status: 'failed',
+            message: error instanceof Error ? error.message : '알 수 없는 오류',
+          });
+        }
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(this.refreshConcurrency, Math.max(apps.length, 1)) }, () => worker()),
+    );
+
+    const updated = results.filter((r) => r.status === 'updated').length;
+    const unchanged = results.filter((r) => r.status === 'unchanged').length;
+    const missing = results.filter((r) => r.status === 'missing').length;
+    const failed = results.filter((r) => r.status === 'failed').length;
+
+    return {
+      total: apps.length,
+      refreshed: updated + unchanged,
+      updated,
+      unchanged,
+      missing,
+      failed,
+      results,
+    };
+  }
+
   async remove(id: string): Promise<void> {
     await this.ensureValidPlatformData();
 
@@ -269,13 +383,16 @@ export class HarmfulAppsService {
 
     try {
       const results: Array<{ harmfulAppId: string; count: bigint }> = await this.prisma.$queryRaw`
-        SELECT ia."harmfulAppId", COUNT(DISTINCT d."employeeId") as count
-        FROM installed_apps ia
-        JOIN devices d ON d.id = ia."deviceId"
-        WHERE ia."harmfulAppId" IN (${Prisma.join(appIds)})
+        SELECT ha."id" AS "harmfulAppId", COUNT(DISTINCT d."employeeId") AS count
+        FROM harmful_apps ha
+        LEFT JOIN installed_apps ia
+          ON ia."packageName" = ha."packageName"
           AND ia."isInstalled" = true
+        LEFT JOIN devices d
+          ON d."id" = ia."deviceId"
           AND d."employeeId" IS NOT NULL
-        GROUP BY ia."harmfulAppId"
+        WHERE ha."id" IN (${Prisma.join(appIds)})
+        GROUP BY ha."id"
       `;
 
       const map = new Map<string, number>();
@@ -286,6 +403,80 @@ export class HarmfulAppsService {
     } catch (error) {
       console.error('getInstalledCountByApps error:', error);
       return new Map();
+    }
+  }
+
+  private async fetchAndroidIconUrl(packageName: string): Promise<string | null> {
+    const url = `https://play.google.com/store/apps/details?id=${encodeURIComponent(packageName)}&hl=ko&gl=KR`;
+    const html = await this.fetchText(url);
+
+    const ogImageMatch = html.match(/<meta\s+property="og:image"\s+content="([^"]+)"\s*\/?\s*>/i);
+    if (ogImageMatch?.[1]) {
+      return ogImageMatch[1].replace(/&amp;/g, '&');
+    }
+
+    const imgSrcMatch = html.match(/"iconUrl":"(https:[^"]+)"/i);
+    if (imgSrcMatch?.[1]) {
+      return imgSrcMatch[1].replace(/\\u003d/g, '=').replace(/\\u0026/g, '&');
+    }
+
+    return null;
+  }
+
+  private async fetchIosIconUrl(bundleId: string): Promise<string | null> {
+    const url = `https://itunes.apple.com/lookup?bundleId=${encodeURIComponent(bundleId)}`;
+    const json = await this.fetchJson<any>(url);
+    const first = Array.isArray(json?.results) ? json.results[0] : null;
+    return first?.artworkUrl512 || first?.artworkUrl100 || null;
+  }
+
+  private async fetchText(url: string): Promise<string> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        signal: controller.signal,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      return await response.text();
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private async fetchJson<T>(url: string): Promise<T> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        signal: controller.signal,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          Accept: 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      return (await response.json()) as T;
+    } finally {
+      clearTimeout(timeout);
     }
   }
 

@@ -12,6 +12,36 @@ import { Prisma } from '@prisma/client';
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger(AllExceptionsFilter.name);
+  private readonly sensitiveQueryKeys = [
+    'token',
+    'access_token',
+    'refresh_token',
+    'password',
+    'authorization',
+    'apikey',
+    'api_key',
+    'secret',
+  ];
+
+  private sanitizeUrl(rawUrl: string): string {
+    try {
+      const parsed = new URL(rawUrl, 'http://localhost');
+
+      parsed.searchParams.forEach((value, key) => {
+        const lowerKey = key.toLowerCase();
+        if (this.sensitiveQueryKeys.some((sensitiveKey) => lowerKey.includes(sensitiveKey))) {
+          parsed.searchParams.set(key, '***');
+        } else if (value.length > 200) {
+          parsed.searchParams.set(key, `${value.slice(0, 60)}...`);
+        }
+      });
+
+      const query = parsed.searchParams.toString();
+      return query ? `${parsed.pathname}?${query}` : parsed.pathname;
+    } catch {
+      return rawUrl;
+    }
+  }
 
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
@@ -57,9 +87,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
       errorCode = 'VALIDATION_ERROR';
     }
 
+    const safeUrl = this.sanitizeUrl(request.originalUrl || request.url);
+
     // Log the error
     this.logger.error(
-      `${request.method} ${request.url} - ${status} - ${message}`,
+      `${request.method} ${safeUrl} - ${status} - ${message}`,
       exception instanceof Error ? exception.stack : undefined,
     );
 
@@ -68,7 +100,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       message,
       errorCode,
       timestamp: new Date().toISOString(),
-      path: request.url,
+      path: request.path,
     });
   }
 }
