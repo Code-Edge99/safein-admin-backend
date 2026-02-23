@@ -22,6 +22,7 @@ PORT=3000
 JWT_SECRET=your-admin-jwt-secret
 JWT_EXPIRATION=1d
 CORS_ORIGIN=*
+APP_BACKEND_BASE_URL=http://localhost:3100/api/app
 ```
 
 ### 4) 공용 Prisma 준비

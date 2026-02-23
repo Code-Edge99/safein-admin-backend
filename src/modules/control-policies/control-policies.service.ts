@@ -1,4 +1,13 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Logger,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { AuditAction, DeviceOS, EmployeeStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateControlPolicyDto,
@@ -12,7 +21,12 @@ import {
 
 @Injectable()
 export class ControlPoliciesService {
-  constructor(private prisma: PrismaService) {}
+  private readonly logger = new Logger(ControlPoliciesService.name);
+
+  constructor(
+    private prisma: PrismaService,
+    private readonly configService: ConfigService,
+  ) {}
 
   private ensureOrganizationInScope(
     organizationId: string | undefined,
@@ -144,7 +158,16 @@ export class ControlPoliciesService {
       },
     });
 
-    return this.findOneDetail(policy.id, scopeOrganizationIds);
+    const detail = await this.findOneDetail(policy.id, scopeOrganizationIds);
+
+    await this.notifyPolicyChangedForWorkType({
+      policyId: policy.id,
+      organizationId,
+      workTypeId,
+      trigger: 'create',
+    });
+
+    return detail;
   }
 
   async findAll(
@@ -612,7 +635,168 @@ export class ControlPoliciesService {
       },
     });
 
+    if (updated.isActive) {
+      await this.notifyPolicyChangedForWorkType({
+        policyId: updated.id,
+        organizationId: updated.organizationId,
+        workTypeId: updated.workTypeId,
+        trigger: 'activate',
+      });
+    }
+
     return this.toResponseDto(updated);
+  }
+
+  private async notifyPolicyChangedForWorkType(params: {
+    policyId: string;
+    organizationId: string;
+    workTypeId: string;
+    trigger: 'create' | 'activate';
+  }): Promise<void> {
+    try {
+      const appBackendBaseUrl = this.getAppBackendBaseUrl();
+      const endpointUrl = `${appBackendBaseUrl}/internal/push/fcm/send`;
+
+      const totalTargetEmployees = await this.prisma.employee.count({
+        where: {
+          organizationId: params.organizationId,
+          workTypeId: params.workTypeId,
+          status: EmployeeStatus.ACTIVE,
+        },
+      });
+
+      const devices = await this.prisma.$queryRaw<Array<{
+        id: string;
+        employeeId: string | null;
+        os: DeviceOS;
+        pushToken: string | null;
+      }>>`
+        SELECT
+          d.id,
+          d."employeeId",
+          d.os,
+          d."pushToken"
+        FROM devices d
+        JOIN employees e ON e.id = d."employeeId"
+        WHERE d."organizationId" = ${params.organizationId}
+          AND e."workTypeId" = ${params.workTypeId}
+          AND e.status = ${EmployeeStatus.ACTIVE}
+          AND d."pushToken" IS NOT NULL
+          AND (d."pushTokenStatus" IS NULL OR d."pushTokenStatus" <> 'ERROR')
+      `;
+
+      const targetEmployeeIds = new Set<string>();
+      const failedDeviceIds: string[] = [];
+      let successCount = 0;
+      let targetTokenCount = 0;
+
+      for (const device of devices) {
+        const token = device.pushToken?.trim();
+        if (!device.employeeId || !token) {
+          continue;
+        }
+
+        targetEmployeeIds.add(device.employeeId);
+        targetTokenCount += 1;
+
+        try {
+          await this.sendPolicyChangedPush(endpointUrl, {
+            token,
+            os: device.os,
+            policyId: params.policyId,
+          });
+          successCount += 1;
+        } catch {
+          failedDeviceIds.push(device.id);
+        }
+      }
+
+      let markedAsErrorCount = 0;
+      if (failedDeviceIds.length > 0) {
+        const uniqueFailedDeviceIds = Array.from(new Set(failedDeviceIds));
+        markedAsErrorCount = await this.prisma.$executeRaw`
+          UPDATE devices
+          SET "pushTokenStatus" = 'ERROR',
+              "updatedAt" = NOW()
+          WHERE id IN (${Prisma.join(uniqueFailedDeviceIds)})
+        `;
+      }
+
+      const summary = {
+        trigger: params.trigger,
+        policyId: params.policyId,
+        workTypeId: params.workTypeId,
+        organizationId: params.organizationId,
+        targetEmployees: totalTargetEmployees,
+        employeesWithToken: targetEmployeeIds.size,
+        employeesWithoutToken: Math.max(totalTargetEmployees - targetEmployeeIds.size, 0),
+        targetTokens: targetTokenCount,
+        successCount,
+        failedCount: failedDeviceIds.length,
+        markedAsErrorCount,
+      };
+
+      this.logger.log(`[policy_changed] ${JSON.stringify(summary)}`);
+
+      if (failedDeviceIds.length > 0) {
+        this.logger.warn(
+          `[policy_changed] failed device ids: ${failedDeviceIds.slice(0, 20).join(', ')}`
+          + `${failedDeviceIds.length > 20 ? ' ...' : ''}`,
+        );
+      }
+
+      await this.prisma.auditLog.create({
+        data: {
+          action: params.trigger === 'create' ? AuditAction.CREATE : AuditAction.ACTIVATE,
+          resourceType: 'ControlPolicyPush',
+          resourceId: params.policyId,
+          resourceName: 'policy_changed 발송',
+          organizationId: params.organizationId,
+          changesAfter: summary,
+        },
+      });
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `policy_changed 푸시 처리 실패(policyId=${params.policyId}, trigger=${params.trigger}): ${errorMessage}`,
+      );
+    }
+  }
+
+  private async sendPolicyChangedPush(
+    endpointUrl: string,
+    params: { token: string; os: DeviceOS; policyId: string },
+  ): Promise<void> {
+    const os = params.os === DeviceOS.iOS ? 'ios' : 'android';
+
+    const response = await fetch(endpointUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        token: params.token,
+        os,
+        priority: 'high',
+        data: {
+          type: 'policy_changed',
+          message: '통제 정책이 변경되었습니다.',
+          extraData: {
+            policyId: params.policyId,
+          },
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const responseText = await response.text();
+      throw new Error(`status=${response.status}, body=${responseText || 'empty'}`);
+    }
+  }
+
+  private getAppBackendBaseUrl(): string {
+    const baseUrl = this.configService.get<string>('APP_BACKEND_BASE_URL', 'http://localhost:3100/api/app');
+    return baseUrl.trim().replace(/\/$/, '');
   }
 
   async assignZones(
