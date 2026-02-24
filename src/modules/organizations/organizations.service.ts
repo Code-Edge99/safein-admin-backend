@@ -33,7 +33,7 @@ export class OrganizationsService {
     }
   }
 
-  async create(dto: CreateOrganizationDto, scopeOrganizationIds?: string[]): Promise<OrganizationResponseDto> {
+  async create(dto: CreateOrganizationDto, scopeOrganizationIds?: string[], actorUserId?: string): Promise<OrganizationResponseDto> {
     this.ensureOrganizationInScope(dto.parentId || undefined, scopeOrganizationIds);
 
     // 상위 조직 검증
@@ -50,8 +50,32 @@ export class OrganizationsService {
       data: {
         name: dto.name,
         type: dto.type as PrismaOrgType,
+        address: dto.address,
+        detailAddress: dto.detailAddress,
+        description: dto.description,
+        managerName: dto.managerName,
+        managerPhone: dto.managerPhone,
+        emergencyContact: dto.emergencyContact,
+        createdById: actorUserId,
+        updatedById: actorUserId,
         parentId: dto.parentId || null,
         isActive: dto.isActive ?? true,
+      } as any,
+      include: {
+        createdBy: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+          },
+        },
+        updatedBy: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+          },
+        },
       },
     });
 
@@ -61,6 +85,22 @@ export class OrganizationsService {
   async findAll(scopeOrganizationIds?: string[]): Promise<OrganizationResponseDto[]> {
     const organizations = await this.prisma.organization.findMany({
       where: scopeOrganizationIds ? { id: { in: scopeOrganizationIds } } : undefined,
+      include: {
+        createdBy: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+          },
+        },
+        updatedBy: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+          },
+        },
+      },
       orderBy: [{ type: 'asc' }, { name: 'asc' }],
     });
 
@@ -71,6 +111,20 @@ export class OrganizationsService {
     const organizations = await this.prisma.organization.findMany({
       where: scopeOrganizationIds ? { id: { in: scopeOrganizationIds } } : undefined,
       include: {
+        createdBy: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+          },
+        },
+        updatedBy: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+          },
+        },
         _count: {
           select: {
             employees: true,
@@ -116,6 +170,22 @@ export class OrganizationsService {
 
     const organization = await this.prisma.organization.findUnique({
       where: { id },
+      include: {
+        createdBy: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+          },
+        },
+        updatedBy: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+          },
+        },
+      },
     });
 
     if (!organization) {
@@ -167,6 +237,7 @@ export class OrganizationsService {
     id: string,
     dto: UpdateOrganizationDto,
     scopeOrganizationIds?: string[],
+    actorUserId?: string,
   ): Promise<OrganizationResponseDto> {
     await this.findOne(id, scopeOrganizationIds); // 존재 여부 확인
 
@@ -196,8 +267,31 @@ export class OrganizationsService {
       data: {
         name: dto.name,
         type: dto.type as PrismaOrgType | undefined,
+        address: dto.address,
+        detailAddress: dto.detailAddress,
+        description: dto.description,
+        managerName: dto.managerName,
+        managerPhone: dto.managerPhone,
+        emergencyContact: dto.emergencyContact,
+        updatedById: actorUserId,
         parentId: dto.parentId,
         isActive: dto.isActive,
+      } as any,
+      include: {
+        createdBy: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+          },
+        },
+        updatedBy: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+          },
+        },
       },
     });
 
@@ -308,7 +402,17 @@ export class OrganizationsService {
       name: org.name,
       type: org.type,
       parentId: org.parentId,
+      address: org.address,
+      detailAddress: org.detailAddress,
+      description: org.description,
+      managerName: org.managerName,
+      managerPhone: org.managerPhone,
+      emergencyContact: org.emergencyContact,
       isActive: org.isActive,
+      createdById: org.createdById,
+      updatedById: org.updatedById,
+      createdByName: org.createdBy?.name || org.createdBy?.username || '시스템',
+      updatedByName: org.updatedBy?.name || org.updatedBy?.username || '시스템',
       employeeCount: org.employeeCount || 0,
       createdAt: org.createdAt,
       updatedAt: org.updatedAt,

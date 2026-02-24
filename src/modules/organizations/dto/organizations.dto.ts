@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsEnum, IsBoolean } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsEnum, IsBoolean } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 
 export enum OrganizationType {
@@ -21,8 +21,38 @@ export class CreateOrganizationDto {
 
   @ApiPropertyOptional({ description: '상위 조직 ID' })
   @IsOptional()
-  @IsUUID()
+  @IsString()
   parentId?: string;
+
+  @ApiPropertyOptional({ description: '주소' })
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @ApiPropertyOptional({ description: '상세 주소' })
+  @IsOptional()
+  @IsString()
+  detailAddress?: string;
+
+  @ApiPropertyOptional({ description: '설명' })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiPropertyOptional({ description: '현장 담당자명' })
+  @IsOptional()
+  @IsString()
+  managerName?: string;
+
+  @ApiPropertyOptional({ description: '현장 담당자 연락처' })
+  @IsOptional()
+  @IsString()
+  managerPhone?: string;
+
+  @ApiPropertyOptional({ description: '비상 연락처' })
+  @IsOptional()
+  @IsString()
+  emergencyContact?: string;
 
   @ApiPropertyOptional({ description: '활성 상태', default: true })
   @IsOptional()
@@ -45,8 +75,38 @@ export class OrganizationResponseDto {
   @ApiPropertyOptional({ description: '상위 조직 ID' })
   parentId: string | null;
 
+  @ApiPropertyOptional({ description: '주소' })
+  address?: string;
+
+  @ApiPropertyOptional({ description: '상세 주소' })
+  detailAddress?: string;
+
+  @ApiPropertyOptional({ description: '설명' })
+  description?: string;
+
+  @ApiPropertyOptional({ description: '현장 담당자명' })
+  managerName?: string;
+
+  @ApiPropertyOptional({ description: '현장 담당자 연락처' })
+  managerPhone?: string;
+
+  @ApiPropertyOptional({ description: '비상 연락처' })
+  emergencyContact?: string;
+
   @ApiProperty({ description: '활성 상태' })
   isActive: boolean;
+
+  @ApiPropertyOptional({ description: '생성자 계정 ID' })
+  createdById?: string;
+
+  @ApiPropertyOptional({ description: '수정자 계정 ID' })
+  updatedById?: string;
+
+  @ApiPropertyOptional({ description: '생성자 이름' })
+  createdByName?: string;
+
+  @ApiPropertyOptional({ description: '수정자 이름' })
+  updatedByName?: string;
 
   @ApiProperty({ description: '직원 수' })
   employeeCount: number;

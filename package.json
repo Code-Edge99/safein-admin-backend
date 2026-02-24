@@ -19,7 +19,7 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "prisma:generate": "node scripts/prisma-runner.js prisma generate",
+    "prisma:generate": "node scripts/prisma-runner.js prisma generate && node scripts/sync-prisma-client.js",
     "prisma:migrate": "node scripts/prisma-runner.js prisma migrate dev",
     "prisma:migrate:prod": "node scripts/prisma-runner.js prisma migrate deploy",
     "prisma:studio": "node scripts/prisma-runner.js prisma studio",

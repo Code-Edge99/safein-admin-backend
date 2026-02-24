@@ -39,7 +39,11 @@ export class OrganizationsController {
   @ApiOperation({ summary: '조직 생성' })
   @ApiResponse({ status: 201, description: '조직 생성 성공', type: OrganizationResponseDto })
   create(@Req() req: any, @Body() createOrganizationDto: CreateOrganizationDto): Promise<OrganizationResponseDto> {
-    return this.organizationsService.create(createOrganizationDto, req.organizationScopeIds ?? undefined);
+    return this.organizationsService.create(
+      createOrganizationDto,
+      req.organizationScopeIds ?? undefined,
+      req.user?.id,
+    );
   }
 
   @Get()
@@ -98,7 +102,12 @@ export class OrganizationsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() updateOrganizationDto: UpdateOrganizationDto,
   ): Promise<OrganizationResponseDto> {
-    return this.organizationsService.update(id, updateOrganizationDto, req.organizationScopeIds ?? undefined);
+    return this.organizationsService.update(
+      id,
+      updateOrganizationDto,
+      req.organizationScopeIds ?? undefined,
+      req.user?.id,
+    );
   }
 
   @Delete(':id')
