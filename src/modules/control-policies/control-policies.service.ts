@@ -1115,6 +1115,11 @@ export class ControlPoliciesService {
       employeeIds,
     } = relationIds;
 
+    const allowedPolicySourceOrganizationIds = await this.getSelfAndAncestorOrganizationIds(
+      tx,
+      organizationId,
+    );
+
     if (workTypeId) {
       const workType = await tx.workType.findUnique({
         where: { id: workTypeId },
@@ -1141,30 +1146,39 @@ export class ControlPoliciesService {
     const uniqueTimePolicyIds = this.normalizeIds(timePolicyIds);
     if (uniqueTimePolicyIds.length > 0) {
       const timePolicyCount = await tx.timePolicy.count({
-        where: { id: { in: uniqueTimePolicyIds }, organizationId },
+        where: {
+          id: { in: uniqueTimePolicyIds },
+          organizationId: { in: allowedPolicySourceOrganizationIds },
+        },
       });
       if (timePolicyCount !== uniqueTimePolicyIds.length) {
-        throw new BadRequestException('시간 정책 ID가 유효하지 않거나 정책 조직과 일치하지 않습니다.');
+        throw new BadRequestException('시간 정책 ID가 유효하지 않거나 정책 조직/상위 조직과 일치하지 않습니다.');
       }
     }
 
     const uniqueBehaviorConditionIds = this.normalizeIds(behaviorConditionIds);
     if (uniqueBehaviorConditionIds.length > 0) {
       const behaviorConditionCount = await tx.behaviorCondition.count({
-        where: { id: { in: uniqueBehaviorConditionIds }, organizationId },
+        where: {
+          id: { in: uniqueBehaviorConditionIds },
+          organizationId: { in: allowedPolicySourceOrganizationIds },
+        },
       });
       if (behaviorConditionCount !== uniqueBehaviorConditionIds.length) {
-        throw new BadRequestException('행동 조건 ID가 유효하지 않거나 정책 조직과 일치하지 않습니다.');
+        throw new BadRequestException('행동 조건 ID가 유효하지 않거나 정책 조직/상위 조직과 일치하지 않습니다.');
       }
     }
 
     const uniquePresetIds = this.normalizeIds(harmfulAppPresetIds);
     if (uniquePresetIds.length > 0) {
       const presetCount = await tx.harmfulAppPreset.count({
-        where: { id: { in: uniquePresetIds }, organizationId },
+        where: {
+          id: { in: uniquePresetIds },
+          organizationId: { in: allowedPolicySourceOrganizationIds },
+        },
       });
       if (presetCount !== uniquePresetIds.length) {
-        throw new BadRequestException('유해 앱 프리셋 ID가 유효하지 않거나 정책 조직과 일치하지 않습니다.');
+        throw new BadRequestException('유해 앱 프리셋 ID가 유효하지 않거나 정책 조직/상위 조직과 일치하지 않습니다.');
       }
     }
 
@@ -1177,6 +1191,31 @@ export class ControlPoliciesService {
         throw new BadRequestException('직원 ID가 유효하지 않거나 정책 조직과 일치하지 않습니다.');
       }
     }
+  }
+
+  private async getSelfAndAncestorOrganizationIds(tx: any, organizationId: string): Promise<string[]> {
+    const organizations = await tx.organization.findMany({
+      select: { id: true, parentId: true },
+    });
+
+    const organizationMap = new Map<string, { id: string; parentId: string | null }>(
+      organizations.map((organization: { id: string; parentId: string | null }) => [organization.id, organization]),
+    );
+
+    const result: string[] = [];
+    let currentId: string | null = organizationId;
+
+    while (currentId) {
+      const current = organizationMap.get(currentId);
+      if (!current) {
+        break;
+      }
+
+      result.push(current.id);
+      currentId = current.parentId;
+    }
+
+    return result;
   }
 
   private toResponseDto(policy: any): ControlPolicyResponseDto {
