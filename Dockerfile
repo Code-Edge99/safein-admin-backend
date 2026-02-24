@@ -26,4 +26,4 @@ COPY --from=builder /app/scripts ./scripts
 
 EXPOSE 3000
 
-CMD ["sh", "-c", "npx prisma migrate deploy --schema ./prisma/schema.prisma && node dist/src/main"]
+CMD ["sh", "-c", "npx prisma migrate deploy --schema ./prisma/schema.prisma && node dist/main"]
