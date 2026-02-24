@@ -39,17 +39,24 @@ function resolveSeedPath() {
   const seedEnv = process.env.PRISMA_SEED_PATH;
   const candidates = [
     seedEnv,
+    path.resolve(__dirname, '..', 'prisma', 'seed.from-db.ts'),
+    path.resolve(__dirname, '..', 'prisma', 'seed.ts'),
     path.resolve(__dirname, '..', '..', 'smombie-prisma', 'prisma', 'seed.ts'),
+    path.resolve(__dirname, '..', '..', 'smombie-prisma', 'prisma', 'seed.from-db.ts'),
     path.resolve(__dirname, '..', '..', 'smombie-prisma', 'seed.ts'),
+    path.resolve(__dirname, '..', '..', 'smombie-prisma', 'seed.from-db.ts'),
     path.resolve(__dirname, '..', 'smombie-prisma', 'prisma', 'seed.ts'),
+    path.resolve(__dirname, '..', 'smombie-prisma', 'prisma', 'seed.from-db.ts'),
     path.resolve(__dirname, '..', 'smombie-prisma', 'seed.ts'),
+    path.resolve(__dirname, '..', 'smombie-prisma', 'seed.from-db.ts'),
     path.resolve(__dirname, '..', '..', 'prisma', 'seed.ts'),
+    path.resolve(__dirname, '..', '..', 'prisma', 'seed.from-db.ts'),
   ];
 
   const seedPath = resolveExistingPath(candidates);
   if (!seedPath) {
     console.error(
-      'Prisma seed 파일을 찾을 수 없습니다. ../smombie-prisma/prisma/seed.ts 경로를 확인하세요.',
+      'Prisma seed 파일을 찾을 수 없습니다. ../smombie-prisma/prisma/seed.from-db.ts 또는 seed.ts 경로를 확인하세요.',
     );
     process.exit(1);
   }

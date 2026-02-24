@@ -1136,10 +1136,13 @@ export class ControlPoliciesService {
     const uniqueZoneIds = this.normalizeIds(zoneIds);
     if (uniqueZoneIds.length > 0) {
       const zoneCount = await tx.zone.count({
-        where: { id: { in: uniqueZoneIds }, organizationId },
+        where: {
+          id: { in: uniqueZoneIds },
+          organizationId: { in: allowedPolicySourceOrganizationIds },
+        },
       });
       if (zoneCount !== uniqueZoneIds.length) {
-        throw new BadRequestException('구역 ID가 유효하지 않거나 정책 조직과 일치하지 않습니다.');
+        throw new BadRequestException('구역 ID가 유효하지 않거나 정책 조직/상위 조직과 일치하지 않습니다.');
       }
     }
 
