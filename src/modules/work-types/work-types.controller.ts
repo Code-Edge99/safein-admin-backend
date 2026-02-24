@@ -9,7 +9,6 @@ import {
   Query,
   Req,
   UseGuards,
-  ParseUUIDPipe,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -55,7 +54,7 @@ export class WorkTypesController {
   @ApiOperation({ summary: '조직별 근무 유형 조회' })
   @ApiParam({ name: 'orgId', description: '조직 ID' })
   @ApiResponse({ status: 200, description: '근무 유형 목록', type: [WorkTypeResponseDto] })
-  findByOrganization(@Req() req: any, @Param('orgId', ParseUUIDPipe) orgId: string): Promise<WorkTypeResponseDto[]> {
+  findByOrganization(@Req() req: any, @Param('orgId') orgId: string): Promise<WorkTypeResponseDto[]> {
     return this.workTypesService.findAll(orgId, req.organizationScopeIds ?? undefined);
   }
 
@@ -64,7 +63,7 @@ export class WorkTypesController {
   @ApiParam({ name: 'id', description: '근무 유형 ID' })
   @ApiResponse({ status: 200, description: '근무 유형 상세', type: WorkTypeDetailDto })
   @ApiResponse({ status: 404, description: '근무 유형을 찾을 수 없음' })
-  findOne(@Req() req: any, @Param('id', ParseUUIDPipe) id: string): Promise<WorkTypeDetailDto> {
+  findOne(@Req() req: any, @Param('id') id: string): Promise<WorkTypeDetailDto> {
     return this.workTypesService.findOne(id, req.organizationScopeIds ?? undefined);
   }
 
@@ -74,7 +73,7 @@ export class WorkTypesController {
   @ApiResponse({ status: 200, description: '근무 유형 수정 성공', type: WorkTypeResponseDto })
   update(
     @Req() req: any,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() updateWorkTypeDto: UpdateWorkTypeDto,
   ): Promise<WorkTypeResponseDto> {
     return this.workTypesService.update(id, updateWorkTypeDto, req.organizationScopeIds ?? undefined);
@@ -84,7 +83,7 @@ export class WorkTypesController {
   @ApiOperation({ summary: '근무 유형 활성/비활성 토글' })
   @ApiParam({ name: 'id', description: '근무 유형 ID' })
   @ApiResponse({ status: 200, description: '상태 변경 성공', type: WorkTypeResponseDto })
-  toggleActive(@Req() req: any, @Param('id', ParseUUIDPipe) id: string): Promise<WorkTypeResponseDto> {
+  toggleActive(@Req() req: any, @Param('id') id: string): Promise<WorkTypeResponseDto> {
     return this.workTypesService.toggleActive(id, req.organizationScopeIds ?? undefined);
   }
 
@@ -93,7 +92,7 @@ export class WorkTypesController {
   @ApiParam({ name: 'id', description: '근무 유형 ID' })
   @ApiResponse({ status: 200, description: '근무 유형 삭제 성공' })
   @ApiResponse({ status: 400, description: '사용 중인 직원이 있어 삭제 불가' })
-  remove(@Req() req: any, @Param('id', ParseUUIDPipe) id: string): Promise<void> {
+  remove(@Req() req: any, @Param('id') id: string): Promise<void> {
     return this.workTypesService.remove(id, req.organizationScopeIds ?? undefined);
   }
 }

@@ -79,7 +79,7 @@ export class ControlPoliciesService {
       zoneIds,
       timePolicyIds,
       behaviorConditionIds,
-      harmfulAppPresetIds,
+      allowedAppPresetIds,
       employeeIds,
       ...rest
     } = createDto;
@@ -99,21 +99,21 @@ export class ControlPoliciesService {
       zoneIds,
       timePolicyIds,
       behaviorConditionIds,
-      harmfulAppPresetIds,
+      allowedAppPresetIds,
       employeeIds,
     });
 
     this.ensureSingleSelectionConstraints({
       timePolicyIds,
       behaviorConditionIds,
-      harmfulAppPresetIds,
+      allowedAppPresetIds,
     });
 
     this.ensureAtLeastOneControlConditionInput({
       zoneIds,
       timePolicyIds,
       behaviorConditionIds,
-      harmfulAppPresetIds,
+      allowedAppPresetIds,
     });
 
     // Check if policy already exists for this work type (1:1 relationship)
@@ -145,9 +145,9 @@ export class ControlPoliciesService {
               create: behaviorConditionIds.map((behaviorConditionId) => ({ behaviorConditionId })),
             }
           : undefined,
-        harmfulApps: harmfulAppPresetIds?.length
+        allowedApps: allowedAppPresetIds?.length
           ? {
-              create: harmfulAppPresetIds.map((presetId) => ({ presetId })),
+              create: allowedAppPresetIds.map((presetId) => ({ presetId })),
             }
           : undefined,
         targetEmployees: employeeIds?.length
@@ -155,7 +155,7 @@ export class ControlPoliciesService {
               create: employeeIds.map((employeeId) => ({ employeeId })),
             }
           : undefined,
-      },
+      } as any,
     });
 
     const detail = await this.findOneDetail(policy.id, scopeOrganizationIds);
@@ -221,7 +221,7 @@ export class ControlPoliciesService {
               behaviorCondition: { select: { id: true, name: true, type: true } },
             },
           },
-          harmfulApps: {
+          allowedApps: {
             include: {
               preset: { select: { id: true, name: true } },
             },
@@ -231,11 +231,11 @@ export class ControlPoliciesService {
               zones: true,
               timePolicies: true,
               behaviors: true,
-              harmfulApps: true,
+              allowedApps: true,
               targetEmployees: true,
             },
           },
-        },
+        } as any,
       }),
       this.prisma.controlPolicy.count({ where }),
     ]);
@@ -277,7 +277,7 @@ export class ControlPoliciesService {
             behaviorCondition: { select: { id: true, name: true, type: true } },
           },
         },
-        harmfulApps: {
+        allowedApps: {
           include: {
             preset: { select: { id: true, name: true } },
           },
@@ -287,11 +287,11 @@ export class ControlPoliciesService {
             zones: true,
             timePolicies: true,
             behaviors: true,
-            harmfulApps: true,
+            allowedApps: true,
             targetEmployees: true,
           },
         },
-      },
+      } as any,
     });
 
     if (!policy) {
@@ -318,11 +318,11 @@ export class ControlPoliciesService {
             zones: true,
             timePolicies: true,
             behaviors: true,
-            harmfulApps: true,
+            allowedApps: true,
             targetEmployees: true,
           },
         },
-      },
+      } as any,
     });
     return policies.map(p => this.toResponseDto(p));
   }
@@ -355,7 +355,7 @@ export class ControlPoliciesService {
             behaviorCondition: { select: { id: true, name: true, type: true } },
           },
         },
-        harmfulApps: {
+        allowedApps: {
           include: {
             preset: { select: { id: true, name: true } },
           },
@@ -365,7 +365,7 @@ export class ControlPoliciesService {
             employee: { select: { id: true, name: true } },
           },
         },
-      },
+      } as any,
     });
 
     if (!policy) {
@@ -399,7 +399,7 @@ export class ControlPoliciesService {
             behaviorCondition: { select: { id: true, name: true, type: true } },
           },
         },
-        harmfulApps: {
+        allowedApps: {
           include: {
             preset: { select: { id: true, name: true } },
           },
@@ -409,7 +409,7 @@ export class ControlPoliciesService {
             employee: { select: { id: true, name: true } },
           },
         },
-      },
+      } as any,
     });
 
     if (policy && scopeOrganizationIds && !scopeOrganizationIds.includes(policy.organizationId)) {
@@ -433,13 +433,13 @@ export class ControlPoliciesService {
       zoneIds,
       timePolicyIds,
       behaviorConditionIds,
-      harmfulAppPresetIds,
+      allowedAppPresetIds,
       employeeIds,
       ...rest
     } = updateDto;
 
     // Start transaction for updating relations
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx: any) => {
       // Update basic fields
       const updateData: any = { ...rest };
 
@@ -471,14 +471,14 @@ export class ControlPoliciesService {
         zoneIds,
         timePolicyIds,
         behaviorConditionIds,
-        harmfulAppPresetIds,
+        allowedAppPresetIds,
         employeeIds,
       });
 
       this.ensureSingleSelectionConstraints({
         timePolicyIds,
         behaviorConditionIds,
-        harmfulAppPresetIds,
+        allowedAppPresetIds,
       });
 
       // Check if policy already exists for this work type (1:1 relationship)
@@ -508,8 +508,8 @@ export class ControlPoliciesService {
         if (behaviorConditionIds === undefined) {
           await tx.controlPolicyBehavior.deleteMany({ where: { policyId: id } });
         }
-        if (harmfulAppPresetIds === undefined) {
-          await tx.controlPolicyHarmfulApp.deleteMany({ where: { policyId: id } });
+        if (allowedAppPresetIds === undefined) {
+          await tx.controlPolicyAllowedApp.deleteMany({ where: { policyId: id } });
         }
         if (employeeIds === undefined) {
           await tx.controlPolicyEmployee.deleteMany({ where: { policyId: id } });
@@ -550,11 +550,11 @@ export class ControlPoliciesService {
       }
 
       // Update harmful apps
-      if (harmfulAppPresetIds !== undefined) {
-        await tx.controlPolicyHarmfulApp.deleteMany({ where: { policyId: id } });
-        if (harmfulAppPresetIds.length > 0) {
-          await tx.controlPolicyHarmfulApp.createMany({
-            data: harmfulAppPresetIds.map((presetId) => ({ policyId: id, presetId })),
+      if (allowedAppPresetIds !== undefined) {
+        await tx.controlPolicyAllowedApp.deleteMany({ where: { policyId: id } });
+        if (allowedAppPresetIds.length > 0) {
+          await tx.controlPolicyAllowedApp.createMany({
+            data: allowedAppPresetIds.map((presetId) => ({ policyId: id, presetId })),
           });
         }
       }
@@ -599,11 +599,11 @@ export class ControlPoliciesService {
       throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx: any) => {
       await tx.controlPolicyZone.deleteMany({ where: { policyId: id } });
       await tx.controlPolicyTimePolicy.deleteMany({ where: { policyId: id } });
       await tx.controlPolicyBehavior.deleteMany({ where: { policyId: id } });
-      await tx.controlPolicyHarmfulApp.deleteMany({ where: { policyId: id } });
+      await tx.controlPolicyAllowedApp.deleteMany({ where: { policyId: id } });
       await tx.controlPolicyEmployee.deleteMany({ where: { policyId: id } });
       await tx.controlPolicy.delete({ where: { id } });
     });
@@ -628,11 +628,11 @@ export class ControlPoliciesService {
             zones: true,
             timePolicies: true,
             behaviors: true,
-            harmfulApps: true,
+            allowedApps: true,
             targetEmployees: true,
           },
         },
-      },
+      } as any,
     });
 
     if (updated.isActive) {
@@ -816,7 +816,7 @@ export class ControlPoliciesService {
 
     await this.validatePolicyRelations(this.prisma, policy.organizationId, { zoneIds });
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx: any) => {
       await tx.controlPolicyZone.deleteMany({ where: { policyId } });
       if (zoneIds.length > 0) {
         await tx.controlPolicyZone.createMany({
@@ -848,7 +848,7 @@ export class ControlPoliciesService {
     await this.validatePolicyRelations(this.prisma, policy.organizationId, { timePolicyIds });
     this.ensureSingleSelectionConstraints({ timePolicyIds });
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx: any) => {
       await tx.controlPolicyTimePolicy.deleteMany({ where: { policyId } });
       if (timePolicyIds.length > 0) {
         await tx.controlPolicyTimePolicy.createMany({
@@ -880,7 +880,7 @@ export class ControlPoliciesService {
     await this.validatePolicyRelations(this.prisma, policy.organizationId, { behaviorConditionIds });
     this.ensureSingleSelectionConstraints({ behaviorConditionIds });
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx: any) => {
       await tx.controlPolicyBehavior.deleteMany({ where: { policyId } });
       if (behaviorConditionIds.length > 0) {
         await tx.controlPolicyBehavior.createMany({
@@ -897,9 +897,9 @@ export class ControlPoliciesService {
     return this.findOneDetail(policyId, scopeOrganizationIds);
   }
 
-  async assignHarmfulApps(
+  async assignAllowedApps(
     policyId: string,
-    harmfulAppPresetIds: string[],
+    allowedAppPresetIds: string[],
     scopeOrganizationIds?: string[],
   ): Promise<ControlPolicyDetailDto> {
     await this.assertPolicyInScope(policyId, scopeOrganizationIds);
@@ -912,14 +912,14 @@ export class ControlPoliciesService {
       throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
     }
 
-    await this.validatePolicyRelations(this.prisma, policy.organizationId, { harmfulAppPresetIds });
-    this.ensureSingleSelectionConstraints({ harmfulAppPresetIds });
+    await this.validatePolicyRelations(this.prisma, policy.organizationId, { allowedAppPresetIds });
+    this.ensureSingleSelectionConstraints({ allowedAppPresetIds });
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.controlPolicyHarmfulApp.deleteMany({ where: { policyId } });
-      if (harmfulAppPresetIds.length > 0) {
-        await tx.controlPolicyHarmfulApp.createMany({
-          data: harmfulAppPresetIds.map((presetId) => ({ policyId, presetId })),
+    await this.prisma.$transaction(async (tx: any) => {
+      await tx.controlPolicyAllowedApp.deleteMany({ where: { policyId } });
+      if (allowedAppPresetIds.length > 0) {
+        await tx.controlPolicyAllowedApp.createMany({
+          data: allowedAppPresetIds.map((presetId) => ({ policyId, presetId })),
         });
       }
 
@@ -1029,17 +1029,17 @@ export class ControlPoliciesService {
     zoneIds?: string[];
     timePolicyIds?: string[];
     behaviorConditionIds?: string[];
-    harmfulAppPresetIds?: string[];
+    allowedAppPresetIds?: string[];
   }): void {
     const hasAnyCondition =
       this.normalizeIds(params.zoneIds).length > 0 ||
       this.normalizeIds(params.timePolicyIds).length > 0 ||
       this.normalizeIds(params.behaviorConditionIds).length > 0 ||
-      this.normalizeIds(params.harmfulAppPresetIds).length > 0;
+      this.normalizeIds(params.allowedAppPresetIds).length > 0;
 
     if (!hasAnyCondition) {
       throw new BadRequestException(
-        '정책에는 최소 1개 이상의 통제 조건(구역/시간 정책/행동 조건/유해앱 프리셋)이 필요합니다.',
+        '정책에는 최소 1개 이상의 통제 조건(구역/시간 정책/행동 조건/허용앱 프리셋)이 필요합니다.',
       );
     }
   }
@@ -1047,7 +1047,7 @@ export class ControlPoliciesService {
   private ensureSingleSelectionConstraints(params: {
     timePolicyIds?: string[];
     behaviorConditionIds?: string[];
-    harmfulAppPresetIds?: string[];
+    allowedAppPresetIds?: string[];
   }): void {
     if (params.timePolicyIds !== undefined && this.normalizeIds(params.timePolicyIds).length > 1) {
       throw new BadRequestException('시간 조건은 1개만 설정할 수 있습니다.');
@@ -1057,8 +1057,8 @@ export class ControlPoliciesService {
       throw new BadRequestException('행동 조건은 1개만 설정할 수 있습니다.');
     }
 
-    if (params.harmfulAppPresetIds !== undefined && this.normalizeIds(params.harmfulAppPresetIds).length > 1) {
-      throw new BadRequestException('유해앱 프리셋은 1개만 설정할 수 있습니다.');
+    if (params.allowedAppPresetIds !== undefined && this.normalizeIds(params.allowedAppPresetIds).length > 1) {
+      throw new BadRequestException('허용앱 프리셋은 1개만 설정할 수 있습니다.');
     }
   }
 
@@ -1071,7 +1071,7 @@ export class ControlPoliciesService {
             zones: true,
             timePolicies: true,
             behaviors: true,
-            harmfulApps: true,
+            allowedApps: true,
           },
         },
       },
@@ -1085,11 +1085,11 @@ export class ControlPoliciesService {
       policy._count.zones +
       policy._count.timePolicies +
       policy._count.behaviors +
-      policy._count.harmfulApps;
+      policy._count.allowedApps;
 
     if (totalConditions === 0) {
       throw new BadRequestException(
-        '정책에는 최소 1개 이상의 통제 조건(구역/시간 정책/행동 조건/유해앱 프리셋)이 필요합니다.',
+        '정책에는 최소 1개 이상의 통제 조건(구역/시간 정책/행동 조건/허용앱 프리셋)이 필요합니다.',
       );
     }
   }
@@ -1102,7 +1102,7 @@ export class ControlPoliciesService {
       zoneIds?: string[];
       timePolicyIds?: string[];
       behaviorConditionIds?: string[];
-      harmfulAppPresetIds?: string[];
+      allowedAppPresetIds?: string[];
       employeeIds?: string[];
     },
   ): Promise<void> {
@@ -1111,7 +1111,7 @@ export class ControlPoliciesService {
       zoneIds,
       timePolicyIds,
       behaviorConditionIds,
-      harmfulAppPresetIds,
+      allowedAppPresetIds,
       employeeIds,
     } = relationIds;
 
@@ -1172,16 +1172,16 @@ export class ControlPoliciesService {
       }
     }
 
-    const uniquePresetIds = this.normalizeIds(harmfulAppPresetIds);
+    const uniquePresetIds = this.normalizeIds(allowedAppPresetIds);
     if (uniquePresetIds.length > 0) {
-      const presetCount = await tx.harmfulAppPreset.count({
+      const presetCount = await tx.allowedAppPreset.count({
         where: {
           id: { in: uniquePresetIds },
           organizationId: { in: allowedPolicySourceOrganizationIds },
         },
       });
       if (presetCount !== uniquePresetIds.length) {
-        throw new BadRequestException('유해 앱 프리셋 ID가 유효하지 않거나 정책 조직/상위 조직과 일치하지 않습니다.');
+        throw new BadRequestException('허용앱 프리셋 ID가 유효하지 않거나 정책 조직/상위 조직과 일치하지 않습니다.');
       }
     }
 
@@ -1233,11 +1233,11 @@ export class ControlPoliciesService {
       zones: policy.zones?.map((z: any) => z.zone) ?? [],
       timePolicies: policy.timePolicies?.map((t: any) => t.timePolicy) ?? [],
       behaviorConditions: policy.behaviors?.map((b: any) => b.behaviorCondition) ?? [],
-      harmfulAppPresets: policy.harmfulApps?.map((h: any) => h.preset) ?? [],
+      allowedAppPresets: policy.allowedApps?.map((h: any) => h.preset) ?? [],
       zoneCount: policy._count?.zones ?? policy.zones?.length ?? 0,
       timePolicyCount: policy._count?.timePolicies ?? policy.timePolicies?.length ?? 0,
       behaviorConditionCount: policy._count?.behaviors ?? policy.behaviors?.length ?? 0,
-      harmfulAppCount: policy._count?.harmfulApps ?? policy.harmfulApps?.length ?? 0,
+      allowedAppCount: policy._count?.allowedApps ?? policy.allowedApps?.length ?? 0,
       targetEmployeeCount: policy._count?.targetEmployees ?? 0,
       createdAt: policy.createdAt,
       updatedAt: policy.updatedAt,
@@ -1256,12 +1256,12 @@ export class ControlPoliciesService {
       zoneCount: policy.zones?.length ?? 0,
       timePolicyCount: policy.timePolicies?.length ?? 0,
       behaviorConditionCount: policy.behaviors?.length ?? 0,
-      harmfulAppCount: policy.harmfulApps?.length ?? 0,
+      allowedAppCount: policy.allowedApps?.length ?? 0,
       targetEmployeeCount: policy.targetEmployees?.length ?? 0,
       zones: policy.zones?.map((z: any) => z.zone) ?? [],
       timePolicies: policy.timePolicies?.map((t: any) => t.timePolicy) ?? [],
       behaviorConditions: policy.behaviors?.map((b: any) => b.behaviorCondition) ?? [],
-      harmfulAppPresets: policy.harmfulApps?.map((h: any) => h.preset) ?? [],
+      allowedAppPresets: policy.allowedApps?.map((h: any) => h.preset) ?? [],
       targetEmployees: policy.targetEmployees?.map((e: any) => e.employee) ?? [],
       createdAt: policy.createdAt,
       updatedAt: policy.updatedAt,

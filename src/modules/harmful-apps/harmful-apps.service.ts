@@ -27,11 +27,11 @@ export class HarmfulAppsService {
     if (this.platformsNormalized) return;
 
     await Promise.all([
-      this.prisma.harmfulApp.updateMany({
+      this.prisma.allowedApp.updateMany({
         where: { platform: { notIn: [...this.validPlatforms] } },
         data: { platform: 'android' },
       }),
-      this.prisma.harmfulAppPreset.updateMany({
+      this.prisma.allowedAppPreset.updateMany({
         where: { platform: { notIn: [...this.validPlatforms] } },
         data: { platform: 'android' },
       }),
@@ -44,7 +44,7 @@ export class HarmfulAppsService {
     await this.ensureValidPlatformData();
 
     // 패키지 이름 중복 체크
-    const existing = await this.prisma.harmfulApp.findUnique({
+    const existing = await this.prisma.allowedApp.findUnique({
       where: { packageName: dto.packageName },
     });
 
@@ -52,7 +52,7 @@ export class HarmfulAppsService {
       throw new ConflictException(`이미 등록된 패키지입니다: ${dto.packageName}`);
     }
 
-    const app = await this.prisma.harmfulApp.create({
+    const app = await this.prisma.allowedApp.create({
       data: {
         name: dto.name,
         packageName: dto.packageName,
@@ -100,7 +100,7 @@ export class HarmfulAppsService {
     }
 
     const [data, total] = await Promise.all([
-      this.prisma.harmfulApp.findMany({
+      this.prisma.allowedApp.findMany({
         where,
         skip,
         take: limit,
@@ -111,7 +111,7 @@ export class HarmfulAppsService {
         },
         orderBy: { name: 'asc' },
       }),
-      this.prisma.harmfulApp.count({ where }),
+      this.prisma.allowedApp.count({ where }),
     ]);
 
     // 유해앱별 설치 직원 수 집계 (고유 직원 수)
@@ -130,7 +130,7 @@ export class HarmfulAppsService {
   async findOne(id: string): Promise<HarmfulAppResponseDto> {
     await this.ensureValidPlatformData();
 
-    const app = await this.prisma.harmfulApp.findUnique({
+    const app = await this.prisma.allowedApp.findUnique({
       where: { id },
       include: {
         _count: {
@@ -150,7 +150,7 @@ export class HarmfulAppsService {
   async findByPackageName(packageName: string): Promise<HarmfulAppResponseDto> {
     await this.ensureValidPlatformData();
 
-    const app = await this.prisma.harmfulApp.findUnique({
+    const app = await this.prisma.allowedApp.findUnique({
       where: { packageName },
       include: {
         _count: {
@@ -178,7 +178,7 @@ export class HarmfulAppsService {
 
     // 패키지 이름 변경 시 중복 체크
     if (dto.packageName) {
-      const existing = await this.prisma.harmfulApp.findFirst({
+      const existing = await this.prisma.allowedApp.findFirst({
         where: {
           packageName: dto.packageName,
           NOT: { id },
@@ -190,7 +190,7 @@ export class HarmfulAppsService {
       }
     }
 
-    const app = await this.prisma.harmfulApp.update({
+    const app = await this.prisma.allowedApp.update({
       where: { id },
       data: updateData,
       include: {
@@ -215,7 +215,7 @@ export class HarmfulAppsService {
       where.id = { in: dto.appIds };
     }
 
-    const apps = await this.prisma.harmfulApp.findMany({
+    const apps = await this.prisma.allowedApp.findMany({
       where,
       select: {
         id: true,
@@ -257,7 +257,7 @@ export class HarmfulAppsService {
           }
 
           if (previousIconUrl !== fetchedIconUrl) {
-            await this.prisma.harmfulApp.update({
+            await this.prisma.allowedApp.update({
               where: { id: app.id },
               data: { iconUrl: fetchedIconUrl },
             });
@@ -318,7 +318,7 @@ export class HarmfulAppsService {
   async remove(id: string): Promise<void> {
     await this.ensureValidPlatformData();
 
-    const app = await this.prisma.harmfulApp.findUnique({
+    const app = await this.prisma.allowedApp.findUnique({
       where: { id },
       include: {
         _count: {
@@ -337,7 +337,7 @@ export class HarmfulAppsService {
       throw new BadRequestException('프리셋에서 사용 중인 유해 앱은 삭제할 수 없습니다. 프리셋에서 먼저 제거해주세요.');
     }
 
-    await this.prisma.harmfulApp.delete({
+    await this.prisma.allowedApp.delete({
       where: { id },
     });
   }
@@ -345,7 +345,7 @@ export class HarmfulAppsService {
   async getCategories(): Promise<string[]> {
     await this.ensureValidPlatformData();
 
-    const result = await this.prisma.harmfulApp.groupBy({
+    const result = await this.prisma.allowedApp.groupBy({
       by: ['category'],
       where: {
         category: { not: null },
@@ -360,7 +360,7 @@ export class HarmfulAppsService {
 
     const app = await this.findOne(id);
 
-    const updated = await this.prisma.harmfulApp.update({
+    const updated = await this.prisma.allowedApp.update({
       where: { id },
       data: { isGlobal: !app.isGlobal },
       include: {
@@ -382,9 +382,9 @@ export class HarmfulAppsService {
     if (appIds.length === 0) return new Map();
 
     try {
-      const results: Array<{ harmfulAppId: string; count: bigint }> = await this.prisma.$queryRaw`
-        SELECT ha."id" AS "harmfulAppId", COUNT(DISTINCT d."employeeId") AS count
-        FROM harmful_apps ha
+      const results: Array<{ allowedAppId: string; count: bigint }> = await this.prisma.$queryRaw`
+        SELECT ha."id" AS "allowedAppId", COUNT(DISTINCT d."employeeId") AS count
+        FROM allowed_apps ha
         LEFT JOIN installed_apps ia
           ON ia."packageName" = ha."packageName"
           AND ia."isInstalled" = true
@@ -397,7 +397,7 @@ export class HarmfulAppsService {
 
       const map = new Map<string, number>();
       for (const r of results) {
-        map.set(r.harmfulAppId, Number(r.count));
+        map.set(r.allowedAppId, Number(r.count));
       }
       return map;
     } catch (error) {

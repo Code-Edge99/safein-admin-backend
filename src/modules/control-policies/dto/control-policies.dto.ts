@@ -60,12 +60,12 @@ export class CreateControlPolicyDto {
   @IsOptional()
   behaviorConditionIds?: string[];
 
-  @ApiPropertyOptional({ description: '적용 유해앱 프리셋 ID 목록' })
+  @ApiPropertyOptional({ description: '적용 허용앱 프리셋 ID 목록' })
   @IsArray()
   @IsString({ each: true })
   @ArrayMaxSize(1)
   @IsOptional()
-  harmfulAppPresetIds?: string[];
+  allowedAppPresetIds?: string[];
 
   @ApiPropertyOptional({ description: '적용 대상 직원 ID 목록 (빈 배열시 전체 적용)' })
   @IsArray()
@@ -118,8 +118,8 @@ export class ControlPolicyResponseDto {
   @ApiProperty({ description: '적용 행동 조건 수' })
   behaviorConditionCount: number;
 
-  @ApiProperty({ description: '적용 유해앱 프리셋 수' })
-  harmfulAppCount: number;
+  @ApiProperty({ description: '적용 허용앱 프리셋 수' })
+  allowedAppCount: number;
 
   @ApiProperty({ description: '적용 대상 직원 수' })
   targetEmployeeCount: number;
@@ -133,8 +133,8 @@ export class ControlPolicyResponseDto {
   @ApiPropertyOptional({ description: '적용 행동 조건 목록' })
   behaviorConditions?: { id: string; name: string; type?: string }[];
 
-  @ApiPropertyOptional({ description: '적용 유해앱 프리셋 목록' })
-  harmfulAppPresets?: { id: string; name: string }[];
+  @ApiPropertyOptional({ description: '적용 허용앱 프리셋 목록' })
+  allowedAppPresets?: { id: string; name: string }[];
 
   @ApiProperty({ description: '생성일시' })
   createdAt: Date;
@@ -153,8 +153,8 @@ export class ControlPolicyDetailDto extends ControlPolicyResponseDto {
   @ApiProperty({ description: '적용 행동 조건 목록' })
   behaviorConditions: { id: string; name: string; type: string }[];
 
-  @ApiProperty({ description: '적용 유해앱 프리셋 목록' })
-  harmfulAppPresets: { id: string; name: string }[];
+  @ApiProperty({ description: '적용 허용앱 프리셋 목록' })
+  allowedAppPresets: { id: string; name: string }[];
 
   @ApiProperty({ description: '적용 대상 직원 목록' })
   targetEmployees: { id: string; name: string }[];
@@ -233,12 +233,12 @@ export class AssignBehaviorConditionsDto {
   behaviorConditionIds: string[];
 }
 
-export class AssignHarmfulAppsDto {
-  @ApiProperty({ description: '유해앱 프리셋 ID 목록' })
+export class AssignAllowedAppsDto {
+  @ApiProperty({ description: '허용앱 프리셋 ID 목록' })
   @IsArray()
   @IsString({ each: true })
   @ArrayMaxSize(1)
-  harmfulAppPresetIds: string[];
+  allowedAppPresetIds: string[];
 }
 
 export class AssignEmployeesDto {

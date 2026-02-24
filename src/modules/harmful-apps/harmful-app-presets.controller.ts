@@ -17,7 +17,7 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { HarmfulAppPresetsService } from './harmful-app-presets.service';
+import { AllowedAppPresetsService } from './harmful-app-presets.service';
 import {
   CreateHarmfulAppPresetDto,
   UpdateHarmfulAppPresetDto,
@@ -34,8 +34,8 @@ import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard'
 @Controller('harmful-app-presets')
 @UseGuards(JwtAuthGuard, OrganizationScopeGuard)
 @ApiBearerAuth()
-export class HarmfulAppPresetsController {
-  constructor(private readonly presetsService: HarmfulAppPresetsService) {}
+export class AllowedAppPresetsController {
+  constructor(private readonly presetsService: AllowedAppPresetsService) {}
 
   @Post()
   @ApiOperation({ summary: '유해 앱 프리셋 생성' })

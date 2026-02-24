@@ -17,7 +17,7 @@ npm install
 ### 3) 환경변수 설정
 프로젝트 루트에 `.env` 생성:
 ```env
-DATABASE_URL=postgresql://postgres:password@localhost:5432/smombie?schema=public
+DATABASE_URL=postgresql://postgres:password@localhost:5432/safein?schema=public
 PORT=3000
 JWT_SECRET=your-admin-jwt-secret
 JWT_EXPIRATION=1d
@@ -49,11 +49,11 @@ npm run dev
 
 ### 단독 실행
 ```bash
-docker build -t smombie-admin-backend .
+docker build -t safein-admin-backend .
 docker run -p 3000:3000 \
-  -e DATABASE_URL=postgresql://postgres:password@host.docker.internal:5432/smombie \
+  -e DATABASE_URL=postgresql://postgres:password@host.docker.internal:5432/safein \
   -e JWT_SECRET=your-secret \
-  smombie-admin-backend
+  safein-admin-backend
 ```
 
 ### Compose 실행

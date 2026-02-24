@@ -31,7 +31,7 @@ import {
   AssignZonesDto,
   AssignTimePoliciesDto,
   AssignBehaviorConditionsDto,
-  AssignHarmfulAppsDto,
+  AssignAllowedAppsDto,
   AssignEmployeesDto,
 } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -158,18 +158,18 @@ export class ControlPoliciesController {
     );
   }
 
-  @Patch(':id/harmful-apps')
-  @ApiOperation({ summary: '제어 정책 유해앱 프리셋 할당' })
+  @Patch(':id/allowed-apps')
+  @ApiOperation({ summary: '제어 정책 허용앱 프리셋 할당' })
   @ApiParam({ name: 'id', description: '정책 ID' })
-  @ApiResponse({ status: 200, description: '유해앱 프리셋 할당 성공', type: ControlPolicyDetailDto })
-  async assignHarmfulApps(
+  @ApiResponse({ status: 200, description: '허용앱 프리셋 할당 성공', type: ControlPolicyDetailDto })
+  async assignAllowedApps(
     @Req() req: any,
     @Param('id') id: string,
-    @Body() dto: AssignHarmfulAppsDto,
+    @Body() dto: AssignAllowedAppsDto,
   ): Promise<ControlPolicyDetailDto> {
-    return this.controlPoliciesService.assignHarmfulApps(
+    return this.controlPoliciesService.assignAllowedApps(
       id,
-      dto.harmfulAppPresetIds,
+      dto.allowedAppPresetIds,
       req.organizationScopeIds ?? undefined,
     );
   }

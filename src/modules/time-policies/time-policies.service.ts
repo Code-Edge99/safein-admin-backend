@@ -44,7 +44,7 @@ export class TimePoliciesService {
             zones: true,
             timePolicies: true,
             behaviors: true,
-            harmfulApps: true,
+            allowedApps: true,
           },
         },
       },
@@ -53,7 +53,7 @@ export class TimePoliciesService {
     const emptyPolicyIds = policies
       .filter(
         (p: any) =>
-          p._count.zones + p._count.timePolicies + p._count.behaviors + p._count.harmfulApps === 0,
+          p._count.zones + p._count.timePolicies + p._count.behaviors + p._count.allowedApps === 0,
       )
       .map((p: any) => p.id);
 

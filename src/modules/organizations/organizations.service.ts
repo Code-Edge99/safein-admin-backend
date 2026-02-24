@@ -313,7 +313,7 @@ export class OrganizationsService {
             zones: true,
             timePolicies: true,
             behaviorConditions: true,
-            harmfulAppPresets: true,
+            allowedAppPresets: true,
             controlPolicies: true,
           },
         },
@@ -339,7 +339,7 @@ export class OrganizationsService {
       organization._count.zones > 0 ||
       organization._count.timePolicies > 0 ||
       organization._count.behaviorConditions > 0 ||
-      organization._count.harmfulAppPresets > 0 ||
+      organization._count.allowedAppPresets > 0 ||
       organization._count.controlPolicies > 0
     ) {
       throw new BadRequestException('하위 정책/조건 데이터가 남아 있어 조직을 삭제할 수 없습니다. 관련 데이터를 먼저 정리해주세요.');
