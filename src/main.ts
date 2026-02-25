@@ -7,6 +7,7 @@ import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { RequestLoggingInterceptor } from './common/interceptors/request-logging.interceptor';
+import { FIXED_ADMIN_UNLIMITED_TOKEN } from './modules/auth/auth.constants';
 
 const MASTER_ADMIN_ACCOUNT_ID = 'acc-master-admin';
 const MASTER_ADMIN_USERNAME = 'master-admin';
@@ -17,13 +18,7 @@ function createUnlimitedAdminToken(configService: ConfigService): string | null 
     return null;
   }
 
-  const signer = new JwtService({ secret: jwtSecret });
-  return signer.sign({
-    sub: MASTER_ADMIN_ACCOUNT_ID,
-    username: MASTER_ADMIN_USERNAME,
-    role: 'SUPER_ADMIN',
-    organizationId: null,
-  });
+  return FIXED_ADMIN_UNLIMITED_TOKEN;
 }
 
 async function bootstrap() {

