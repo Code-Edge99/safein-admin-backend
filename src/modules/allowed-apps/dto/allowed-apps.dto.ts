@@ -10,9 +10,9 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
-// ============ HarmfulApp DTOs ============
+// ============ AllowedApp DTOs ============
 
-export class CreateHarmfulAppDto {
+export class CreateAllowedAppDto {
   @ApiProperty({ description: '앱 이름' })
   @IsString()
   @IsNotEmpty()
@@ -45,9 +45,9 @@ export class CreateHarmfulAppDto {
   isGlobal?: boolean;
 }
 
-export class UpdateHarmfulAppDto extends PartialType(CreateHarmfulAppDto) {}
+export class UpdateAllowedAppDto extends PartialType(CreateAllowedAppDto) {}
 
-export class HarmfulAppResponseDto {
+export class AllowedAppResponseDto {
   @ApiProperty({ description: '앱 ID' })
   id: string;
 
@@ -72,7 +72,7 @@ export class HarmfulAppResponseDto {
   @ApiProperty({ description: '프리셋 포함 수' })
   presetCount: number;
 
-  @ApiProperty({ description: '설치 직원 수 (유해앱을 설치한 고유 직원 수)' })
+  @ApiProperty({ description: '설치 직원 수 (허용앱을 설치한 고유 직원 수)' })
   installedCount: number;
 
   @ApiProperty({ description: '생성일시' })
@@ -82,7 +82,7 @@ export class HarmfulAppResponseDto {
   updatedAt: Date;
 }
 
-export class HarmfulAppFilterDto {
+export class AllowedAppFilterDto {
   @ApiPropertyOptional({ description: '검색어 (이름/패키지)' })
   @IsString()
   @IsOptional()
@@ -116,9 +116,9 @@ export class HarmfulAppFilterDto {
   limit?: number;
 }
 
-export class HarmfulAppListResponseDto {
-  @ApiProperty({ type: [HarmfulAppResponseDto] })
-  data: HarmfulAppResponseDto[];
+export class AllowedAppListResponseDto {
+  @ApiProperty({ type: [AllowedAppResponseDto] })
+  data: AllowedAppResponseDto[];
 
   @ApiProperty()
   total: number;
@@ -133,7 +133,7 @@ export class HarmfulAppListResponseDto {
   totalPages: number;
 }
 
-export class RefreshHarmfulAppIconsDto {
+export class RefreshAllowedAppIconsDto {
   @ApiPropertyOptional({ description: '플랫폼 필터 (android | ios | all)', default: 'all' })
   @IsString()
   @IsOptional()
@@ -147,7 +147,7 @@ export class RefreshHarmfulAppIconsDto {
   appIds?: string[];
 }
 
-export class RefreshHarmfulAppIconsResponseDto {
+export class RefreshAllowedAppIconsResponseDto {
   @ApiProperty({ description: '대상 앱 수' })
   total: number;
 
@@ -178,9 +178,9 @@ export class RefreshHarmfulAppIconsResponseDto {
   }>;
 }
 
-// ============ HarmfulAppPreset DTOs ============
+// ============ AllowedAppPreset DTOs ============
 
-export class CreateHarmfulAppPresetDto {
+export class CreateAllowedAppPresetDto {
   @ApiProperty({ description: '프리셋 이름' })
   @IsString()
   @IsNotEmpty()
@@ -208,9 +208,9 @@ export class CreateHarmfulAppPresetDto {
   appIds?: string[];
 }
 
-export class UpdateHarmfulAppPresetDto extends PartialType(CreateHarmfulAppPresetDto) {}
+export class UpdateAllowedAppPresetDto extends PartialType(CreateAllowedAppPresetDto) {}
 
-export class HarmfulAppPresetResponseDto {
+export class AllowedAppPresetResponseDto {
   @ApiProperty({ description: '프리셋 ID' })
   id: string;
 
@@ -245,12 +245,12 @@ export class HarmfulAppPresetResponseDto {
   updatedAt: Date;
 }
 
-export class HarmfulAppPresetDetailDto extends HarmfulAppPresetResponseDto {
+export class AllowedAppPresetDetailDto extends AllowedAppPresetResponseDto {
   @ApiProperty({ description: '포함된 앱 목록' })
-  apps: HarmfulAppResponseDto[];
+  apps: AllowedAppResponseDto[];
 }
 
-export class HarmfulAppPresetFilterDto {
+export class AllowedAppPresetFilterDto {
   @ApiPropertyOptional({ description: '검색어 (이름)' })
   @IsString()
   @IsOptional()
@@ -279,9 +279,9 @@ export class HarmfulAppPresetFilterDto {
   limit?: number;
 }
 
-export class HarmfulAppPresetListResponseDto {
-  @ApiProperty({ type: [HarmfulAppPresetResponseDto] })
-  data: HarmfulAppPresetResponseDto[];
+export class AllowedAppPresetListResponseDto {
+  @ApiProperty({ type: [AllowedAppPresetResponseDto] })
+  data: AllowedAppPresetResponseDto[];
 
   @ApiProperty()
   total: number;
@@ -303,7 +303,7 @@ export class AssignAppsToPresetDto {
   appIds: string[];
 }
 
-export class HarmfulAppStatsDto {
+export class AllowedAppStatsDto {
   @ApiProperty({ description: '전체 앱 수' })
   totalApps: number;
 

@@ -11,7 +11,7 @@ import { Type } from 'class-transformer';
 
 export enum ControlLogTypeEnum {
   BEHAVIOR = 'behavior',
-  HARMFUL_APP = 'harmful_app',
+  APP_CONTROL = 'app_control',
 }
 
 export enum ControlLogActionEnum {
@@ -67,12 +67,12 @@ export class CreateControlLogDto {
   @IsOptional()
   reason?: string;
 
-  @ApiPropertyOptional({ description: '앱 이름 (유해앱)' })
+  @ApiPropertyOptional({ description: '앱 이름 (앱 제어 대상)' })
   @IsString()
   @IsOptional()
   appName?: string;
 
-  @ApiPropertyOptional({ description: '패키지 이름 (유해앱)' })
+  @ApiPropertyOptional({ description: '패키지 이름 (앱 제어 대상)' })
   @IsString()
   @IsOptional()
   packageName?: string;

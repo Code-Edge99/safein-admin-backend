@@ -237,11 +237,11 @@ export class DashboardService {
     // 24시간 데이터 구성 (없는 시간대는 0으로)
     const hourlyMap = new Map<number, any>();
     stats.forEach((s) => {
-      const existing = hourlyMap.get(s.hour) || { totalBlocks: 0, behaviorBlocks: 0, harmfulAppBlocks: 0 };
+      const existing = hourlyMap.get(s.hour) || { totalBlocks: 0, behaviorBlocks: 0, allowedAppBlocks: 0 };
       hourlyMap.set(s.hour, {
         totalBlocks: existing.totalBlocks + s.totalBlocks,
         behaviorBlocks: existing.behaviorBlocks + s.behaviorBlocks,
-        harmfulAppBlocks: existing.harmfulAppBlocks + s.harmfulAppBlocks,
+        allowedAppBlocks: existing.allowedAppBlocks + s.appControlBlocks,
       });
     });
 
@@ -276,23 +276,23 @@ export class DashboardService {
 
       logs.forEach((log) => {
         const hour = log.timestamp.getHours();
-        const existing = hourlyMap.get(hour) || { totalBlocks: 0, behaviorBlocks: 0, harmfulAppBlocks: 0 };
+        const existing = hourlyMap.get(hour) || { totalBlocks: 0, behaviorBlocks: 0, allowedAppBlocks: 0 };
         hourlyMap.set(hour, {
           totalBlocks: existing.totalBlocks + 1,
           behaviorBlocks: existing.behaviorBlocks + (log.type === 'behavior' ? 1 : 0),
-          harmfulAppBlocks: existing.harmfulAppBlocks + (log.type === 'harmful_app' ? 1 : 0),
+          allowedAppBlocks: existing.allowedAppBlocks + (log.type === 'app_control' ? 1 : 0),
         });
       });
     }
 
     const result = [];
     for (let h = 0; h < 24; h++) {
-      const data = hourlyMap.get(h) || { totalBlocks: 0, behaviorBlocks: 0, harmfulAppBlocks: 0 };
+      const data = hourlyMap.get(h) || { totalBlocks: 0, behaviorBlocks: 0, allowedAppBlocks: 0 };
       result.push({
         hour: `${String(h).padStart(2, '0')}:00`,
         차단: data.totalBlocks,
         행동감지: data.behaviorBlocks,
-        유해앱: data.harmfulAppBlocks,
+        앱제어: data.allowedAppBlocks,
       });
     }
 
@@ -520,7 +520,7 @@ export class DashboardService {
         totalEvents: 0,
         allowedEvents: 0,
         behaviorBlocks: 0,
-        harmfulAppBlocks: 0,
+        allowedAppBlocks: 0,
         zoneViolations: 0,
         topBlockedApp: null,
         dailyStats: [],
@@ -538,7 +538,7 @@ export class DashboardService {
       existing.totalEvents += statTotalEvents;
       existing.allowedEvents += statAllowedEvents;
       existing.behaviorBlocks += stat.behaviorBlocks;
-      existing.harmfulAppBlocks += stat.harmfulAppBlocks;
+      existing.allowedAppBlocks += stat.appControlBlocks;
       existing.zoneViolations += stat.zoneViolations;
       existing.dailyStats.push(stat);
       if (!existing.topBlockedApp && stat.topBlockedApp) {
@@ -582,7 +582,7 @@ export class DashboardService {
         totalBlocks: emp.totalBlocks,
         last7DaysBlocks: recentTotal,
         trend,
-        blockedAppsCount: emp.harmfulAppBlocks,
+        blockedAppsCount: emp.allowedAppBlocks,
         topBlockedApp: emp.topBlockedApp || '-',
         complianceRate,
         riskLevel,
@@ -690,7 +690,6 @@ export class DashboardService {
     const allowedEvents = dailyStats.reduce((s, d) => s + ((d as any).allowedEvents ?? 0), 0);
     const totalBlocks = dailyStats.reduce((s, d) => s + d.totalBlocks, 0);
     const behaviorBlocks = dailyStats.reduce((s, d) => s + d.behaviorBlocks, 0);
-    const harmfulAppBlocks = dailyStats.reduce((s, d) => s + d.harmfulAppBlocks, 0);
     const zoneViolations = dailyStats.reduce((s, d) => s + d.zoneViolations, 0);
 
     // 최근 7일 vs 이전 7일 비교
@@ -892,22 +891,22 @@ export class DashboardService {
     // ── 추이 데이터 (일별) ──
     const trendData = dailyStats.map((s) => ({
       date: s.date.toISOString().split('T')[0].slice(5), // MM-DD
-      유해앱: s.harmfulAppBlocks,
+      앱제어: s.appControlBlocks,
       행동차단: s.behaviorBlocks,
     }));
 
     // ── 발생 이력 (ControlLog 최근 50건) ──
     const violationHistory = controlLogs.slice(0, 50).map((l) => ({
       id: l.id,
-      type: l.type === 'harmful_app' ? '유해앱 사용' : '행동 감지',
+      type: l.type === 'app_control' ? '앱 제어 위반' : '행동 감지',
       action: l.action === 'blocked' ? '차단' : '허용',
       timestamp: l.timestamp.toISOString(),
       zoneName: l.zone?.name || null,
       appName: l.appName || null,
       description:
         l.reason ||
-        (l.type === 'harmful_app'
-          ? `${l.appName || '유해앱'} 사용 감지`
+        (l.type === 'app_control'
+          ? `${l.appName || '앱'} 사용 감지`
           : '행동 패턴 감지'),
     }));
 
@@ -919,8 +918,8 @@ export class DashboardService {
         category: 'control',
         description:
           log.reason ||
-          (log.type === 'harmful_app'
-            ? `${log.appName || '유해앱'} 사용 감지`
+          (log.type === 'app_control'
+            ? `${log.appName || '앱'} 사용 감지`
             : '행동 패턴 감지'),
       })),
       ...zoneVisitSessions.flatMap((session) => {
@@ -1202,7 +1201,7 @@ export class DashboardService {
 
       const totalViolations = currentStats.reduce((sum, s) => sum + s.totalBlocks, 0);
       const behaviorBlocks = currentStats.reduce((sum, s) => sum + s.behaviorBlocks, 0);
-      const harmfulAppBlocks = currentStats.reduce((sum, s) => sum + s.harmfulAppBlocks, 0);
+      const allowedAppBlocks = currentStats.reduce((sum, s) => sum + s.appControlBlocks, 0);
       const totalEvents = currentStats.reduce(
         (sum, s) => sum + ((s as any).totalEvents ?? s.totalBlocks),
         0,
@@ -1246,24 +1245,24 @@ export class DashboardService {
         }
       });
 
-      const dailyStatMap = new Map<string, { harmful: number; behavior: number }>();
+      const dailyStatMap = new Map<string, { allowed: number; behavior: number }>();
       trendStats.forEach((item) => {
         const key = item.date.toISOString().split('T')[0];
         dailyStatMap.set(key, {
-          harmful: item.harmfulAppBlocks,
+          allowed: item.appControlBlocks,
           behavior: item.behaviorBlocks,
         });
       });
 
       const trendDates: string[] = [];
-      const harmfulAppTrend: number[] = [];
+      const allowedAppTrend: number[] = [];
       const behaviorTrend: number[] = [];
       for (let day = 0; day < 30; day++) {
         const date = new Date(trendStartDate.getTime() + day * 86400000);
         const key = date.toISOString().split('T')[0];
-        const data = dailyStatMap.get(key) || { harmful: 0, behavior: 0 };
+        const data = dailyStatMap.get(key) || { allowed: 0, behavior: 0 };
         trendDates.push(key);
-        harmfulAppTrend.push(data.harmful);
+        allowedAppTrend.push(data.allowed);
         behaviorTrend.push(data.behavior);
       }
 
@@ -1274,7 +1273,7 @@ export class DashboardService {
         parentName: (site as any).parent?.name || null,
         employeeCount: site._count.employees,
         totalViolations,
-        harmfulAppBlocks,
+        allowedAppBlocks,
         behaviorBlocks,
         complianceRate: Math.round(complianceRate * 10) / 10,
         trend: trendValue > 0 ? 'up' : trendValue < 0 ? 'down' : 'stable',
@@ -1283,7 +1282,7 @@ export class DashboardService {
         peakBlocks,
         previousWeek: prevTotal,
         trendDates,
-        harmfulAppTrend,
+        allowedAppTrend,
         behaviorTrend,
       });
     }

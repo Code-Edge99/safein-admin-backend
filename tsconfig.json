@@ -24,5 +24,12 @@
       "@prisma/*": ["src/prisma/*"]
     }
   },
-  "exclude": ["node_modules", "dist", "test", "**/*.spec.ts", "prisma/**/*.ts"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "test",
+    "**/*.spec.ts",
+    "prisma/**/*.ts",
+    "src/modules/harmful-apps/**/*"
+  ]
 }

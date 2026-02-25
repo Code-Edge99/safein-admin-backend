@@ -45,15 +45,19 @@ export class EmployeesService {
   }
 
   async create(dto: CreateEmployeeDto, scopeOrganizationIds?: string[]): Promise<EmployeeResponseDto> {
-    const normalizedEmployeeCode = dto.employeeCode?.trim() || null;
+    const normalizedEmployeeId = dto.employeeCode?.trim();
     const normalizedPhone = this.normalizePhone(dto.phone);
+
+    if (!normalizedEmployeeId) {
+      throw new BadRequestException('직원 ID는 필수 입력값입니다.');
+    }
 
     if (!normalizedPhone) {
       throw new BadRequestException('전화번호는 필수 입력값입니다.');
     }
 
     await this.ensureUniqueEmployeeIdentity({
-      employeeCode: normalizedEmployeeCode,
+      employeeId: normalizedEmployeeId,
       phone: normalizedPhone,
     });
 
@@ -92,7 +96,7 @@ export class EmployeesService {
     try {
       employee = await this.prisma.employee.create({
         data: {
-          employeeId: normalizedEmployeeCode,
+          id: normalizedEmployeeId,
           name: dto.name,
           organizationId: dto.organizationId,
           siteId: dto.siteId,
@@ -141,9 +145,9 @@ export class EmployeesService {
     // 검색어 필터
     if (filter.search) {
       where.OR = [
+        { id: { contains: filter.search, mode: 'insensitive' } },
         { name: { contains: filter.search, mode: 'insensitive' } },
         { email: { contains: filter.search, mode: 'insensitive' } },
-        { employeeId: { contains: filter.search, mode: 'insensitive' } },
       ];
     }
 
@@ -256,15 +260,19 @@ export class EmployeesService {
       throw new BadRequestException('새 비밀번호가 일치하지 않습니다.');
     }
 
-    const normalizedEmployeeCode = dto.employeeCode !== undefined ? dto.employeeCode?.trim() || null : undefined;
+    const normalizedEmployeeCode = dto.employeeCode !== undefined ? dto.employeeCode?.trim() || '' : undefined;
     const normalizedPhone = dto.phone !== undefined ? this.normalizePhone(dto.phone) : undefined;
+
+    if (normalizedEmployeeCode !== undefined && normalizedEmployeeCode !== employeeId) {
+      throw new BadRequestException('직원 ID는 수정할 수 없습니다.');
+    }
 
     if (dto.phone !== undefined && !normalizedPhone) {
       throw new BadRequestException('전화번호는 비워둘 수 없습니다.');
     }
 
     await this.ensureUniqueEmployeeIdentity({
-      employeeCode: normalizedEmployeeCode,
+      employeeId,
       phone: normalizedPhone,
       excludeEmployeeId: employeeId,
     });
@@ -308,7 +316,6 @@ export class EmployeesService {
         const updatedEmployee = await tx.employee.update({
           where: { id: employeeId },
           data: {
-            employeeId: normalizedEmployeeCode,
             name: dto.name,
             organizationId: dto.organizationId,
             siteId: dto.siteId,
@@ -554,7 +561,7 @@ export class EmployeesService {
   private toResponseDto(employee: any): EmployeeResponseDto {
     return {
       employeeId: employee.id,
-      employeeCode: employee.employeeId,
+      employeeCode: employee.id,
       name: employee.name,
       organizationId: employee.organizationId,
       organizationName: employee.organization?.name,
@@ -595,23 +602,20 @@ export class EmployeesService {
   }
 
   private async ensureUniqueEmployeeIdentity(params: {
-    employeeCode?: string | null;
+    employeeId?: string;
     phone?: string;
     excludeEmployeeId?: string;
   }): Promise<void> {
-    const { employeeCode, phone, excludeEmployeeId } = params;
+    const { employeeId, phone, excludeEmployeeId } = params;
 
-    if (employeeCode) {
-      const existingByCode = await this.prisma.employee.findFirst({
-        where: {
-          employeeId: employeeCode,
-          ...(excludeEmployeeId ? { id: { not: excludeEmployeeId } } : {}),
-        },
+    if (employeeId && employeeId !== excludeEmployeeId) {
+      const existingByCode = await this.prisma.employee.findUnique({
+        where: { id: employeeId },
         select: { id: true },
       });
 
       if (existingByCode) {
-        throw new ConflictException('이미 사용 중인 사번/코드입니다.');
+        throw new ConflictException('이미 사용 중인 직원 ID입니다.');
       }
     }
 
@@ -641,8 +645,8 @@ export class EmployeesService {
       throw new ConflictException('이미 사용 중인 연락처입니다.');
     }
 
-    if (target.includes('employeeId')) {
-      throw new ConflictException('이미 사용 중인 사번/코드입니다.');
+    if (target.includes('id')) {
+      throw new ConflictException('이미 사용 중인 직원 ID입니다.');
     }
 
     throw new ConflictException('중복된 값이 있어 저장할 수 없습니다.');

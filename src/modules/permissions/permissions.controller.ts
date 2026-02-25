@@ -15,18 +15,19 @@ import { PermissionsService } from './permissions.service';
 @ApiTags('권한 관리')
 @Controller('permissions')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('SUPER_ADMIN')
 @ApiBearerAuth()
 export class PermissionsController {
   constructor(private readonly permissionsService: PermissionsService) {}
 
   @Get()
+  @Roles('SUPER_ADMIN', 'SITE_ADMIN', 'VIEWER')
   @ApiOperation({ summary: '권한 목록 조회' })
   findAll() {
     return this.permissionsService.findAll();
   }
 
   @Put(':id')
+  @Roles('SUPER_ADMIN')
   @ApiOperation({ summary: '권한 수정' })
   update(
     @Param('id') id: string,
@@ -36,6 +37,7 @@ export class PermissionsController {
   }
 
   @Put()
+  @Roles('SUPER_ADMIN')
   @ApiOperation({ summary: '권한 일괄 수정' })
   bulkUpdate(
     @Body() data: { updates: Array<{ permissionId: string; role: string; enabled: boolean }> },

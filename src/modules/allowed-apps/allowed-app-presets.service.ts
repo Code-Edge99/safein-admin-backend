@@ -1,13 +1,13 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
-  CreateHarmfulAppPresetDto,
-  UpdateHarmfulAppPresetDto,
-  HarmfulAppPresetResponseDto,
-  HarmfulAppPresetDetailDto,
-  HarmfulAppPresetFilterDto,
-  HarmfulAppPresetListResponseDto,
-  HarmfulAppStatsDto,
+  CreateAllowedAppPresetDto,
+  UpdateAllowedAppPresetDto,
+  AllowedAppPresetResponseDto,
+  AllowedAppPresetDetailDto,
+  AllowedAppPresetFilterDto,
+  AllowedAppPresetListResponseDto,
+  AllowedAppStatsDto,
 } from './dto';
 
 @Injectable()
@@ -33,7 +33,7 @@ export class AllowedAppPresetsService {
   ): void {
     if (!scopeOrganizationIds) return;
     if (!scopeOrganizationIds.includes(preset.organizationId)) {
-      throw new NotFoundException('유해 앱 프리셋을 찾을 수 없습니다.');
+      throw new NotFoundException('허용앱 프리셋을 찾을 수 없습니다.');
     }
   }
 
@@ -71,7 +71,7 @@ export class AllowedAppPresetsService {
     const foundIds = new Set(apps.map((app) => app.id));
     const missingIds = appIds.filter((id) => !foundIds.has(id));
     if (missingIds.length > 0) {
-      throw new NotFoundException(`존재하지 않는 유해 앱이 포함되어 있습니다: ${missingIds.join(', ')}`);
+      throw new NotFoundException(`존재하지 않는 허용앱이 포함되어 있습니다: ${missingIds.join(', ')}`);
     }
 
   }
@@ -114,7 +114,7 @@ export class AllowedAppPresetsService {
     });
   }
 
-  async create(dto: CreateHarmfulAppPresetDto, scopeOrganizationIds?: string[]): Promise<HarmfulAppPresetDetailDto> {
+  async create(dto: CreateAllowedAppPresetDto, scopeOrganizationIds?: string[]): Promise<AllowedAppPresetDetailDto> {
     await this.ensureValidPlatformData();
 
     this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
@@ -154,9 +154,9 @@ export class AllowedAppPresetsService {
   }
 
   async findAll(
-    filter: HarmfulAppPresetFilterDto,
+    filter: AllowedAppPresetFilterDto,
     scopeOrganizationIds?: string[],
-  ): Promise<HarmfulAppPresetListResponseDto> {
+  ): Promise<AllowedAppPresetListResponseDto> {
     await this.ensureValidPlatformData();
 
     const page = filter.page || 1;
@@ -211,7 +211,7 @@ export class AllowedAppPresetsService {
     };
   }
 
-  async findOne(id: string, scopeOrganizationIds?: string[]): Promise<HarmfulAppPresetDetailDto> {
+  async findOne(id: string, scopeOrganizationIds?: string[]): Promise<AllowedAppPresetDetailDto> {
     await this.ensureValidPlatformData();
 
     const preset = await this.prisma.allowedAppPreset.findUnique({
@@ -231,7 +231,7 @@ export class AllowedAppPresetsService {
     });
 
     if (!preset) {
-      throw new NotFoundException('유해 앱 프리셋을 찾을 수 없습니다.');
+      throw new NotFoundException('허용앱 프리셋을 찾을 수 없습니다.');
     }
 
     this.assertPresetInScope(preset, scopeOrganizationIds);
@@ -241,9 +241,9 @@ export class AllowedAppPresetsService {
 
   async update(
     id: string,
-    dto: UpdateHarmfulAppPresetDto,
+    dto: UpdateAllowedAppPresetDto,
     scopeOrganizationIds?: string[],
-  ): Promise<HarmfulAppPresetDetailDto> {
+  ): Promise<AllowedAppPresetDetailDto> {
     await this.ensureValidPlatformData();
     await this.findOne(id, scopeOrganizationIds);
 
@@ -310,7 +310,7 @@ export class AllowedAppPresetsService {
     });
 
     if (!preset) {
-      throw new NotFoundException('유해 앱 프리셋을 찾을 수 없습니다.');
+      throw new NotFoundException('허용앱 프리셋을 찾을 수 없습니다.');
     }
 
     this.assertPresetInScope(preset, scopeOrganizationIds);
@@ -335,7 +335,7 @@ export class AllowedAppPresetsService {
     id: string,
     appIds: string[],
     scopeOrganizationIds?: string[],
-  ): Promise<HarmfulAppPresetDetailDto> {
+  ): Promise<AllowedAppPresetDetailDto> {
     await this.ensureValidPlatformData();
     const preset = await this.findOne(id, scopeOrganizationIds);
     await this.validateAppsExist(appIds);
@@ -365,7 +365,7 @@ export class AllowedAppPresetsService {
     id: string,
     appIds: string[],
     scopeOrganizationIds?: string[],
-  ): Promise<HarmfulAppPresetDetailDto> {
+  ): Promise<AllowedAppPresetDetailDto> {
     await this.ensureValidPlatformData();
 
     await this.findOne(id, scopeOrganizationIds);
@@ -383,7 +383,7 @@ export class AllowedAppPresetsService {
   async findByOrganization(
     organizationId: string,
     scopeOrganizationIds?: string[],
-  ): Promise<HarmfulAppPresetResponseDto[]> {
+  ): Promise<AllowedAppPresetResponseDto[]> {
     await this.ensureValidPlatformData();
 
     this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
@@ -408,7 +408,7 @@ export class AllowedAppPresetsService {
     return presets.map((preset) => this.toDetailDto(preset));
   }
 
-  async getStats(scopeOrganizationIds?: string[]): Promise<HarmfulAppStatsDto> {
+  async getStats(scopeOrganizationIds?: string[]): Promise<AllowedAppStatsDto> {
     await this.ensureValidPlatformData();
 
     const [totalApps, globalApps, totalPresets, categoryStats, platformStats] = await Promise.all([
@@ -447,7 +447,7 @@ export class AllowedAppPresetsService {
     };
   }
 
-  private toResponseDto(preset: any): HarmfulAppPresetResponseDto {
+  private toResponseDto(preset: any): AllowedAppPresetResponseDto {
     return {
       id: preset.id,
       name: preset.name,
@@ -461,7 +461,7 @@ export class AllowedAppPresetsService {
     };
   }
 
-  private toDetailDto(preset: any): HarmfulAppPresetDetailDto {
+  private toDetailDto(preset: any): AllowedAppPresetDetailDto {
     return {
       ...this.toResponseDto(preset),
       apps: preset.items?.map((item: any) => ({

@@ -20,10 +20,10 @@ export enum EmployeeStatusEnum {
 }
 
 export class CreateEmployeeDto {
-  @ApiPropertyOptional({ description: '사번/코드' })
-  @IsOptional()
+  @ApiProperty({ description: '직원 ID (로그인 ID)' })
   @IsString()
-  employeeCode?: string;
+  @IsNotEmpty()
+  employeeCode: string;
 
   @ApiProperty({ description: '직원 이름' })
   @IsString()
@@ -100,7 +100,7 @@ export class EmployeeResponseDto {
   @ApiProperty({ description: '직원 ID' })
   employeeId: string;
 
-  @ApiPropertyOptional({ description: '사번/코드' })
+  @ApiPropertyOptional({ description: '직원 ID (호환 필드)' })
   employeeCode?: string;
 
   @ApiProperty({ description: '직원 이름' })

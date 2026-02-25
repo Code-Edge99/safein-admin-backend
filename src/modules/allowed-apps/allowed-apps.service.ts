@@ -2,17 +2,17 @@ import { Injectable, NotFoundException, ConflictException, BadRequestException }
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
-  CreateHarmfulAppDto,
-  UpdateHarmfulAppDto,
-  HarmfulAppResponseDto,
-  HarmfulAppFilterDto,
-  HarmfulAppListResponseDto,
-  RefreshHarmfulAppIconsDto,
-  RefreshHarmfulAppIconsResponseDto,
+  CreateAllowedAppDto,
+  UpdateAllowedAppDto,
+  AllowedAppResponseDto,
+  AllowedAppFilterDto,
+  AllowedAppListResponseDto,
+  RefreshAllowedAppIconsDto,
+  RefreshAllowedAppIconsResponseDto,
 } from './dto';
 
 @Injectable()
-export class HarmfulAppsService {
+export class AllowedAppsService {
   private readonly validPlatforms = ['android', 'ios'] as const;
   private platformsNormalized = false;
   private readonly refreshConcurrency = 5;
@@ -40,7 +40,7 @@ export class HarmfulAppsService {
     this.platformsNormalized = true;
   }
 
-  async create(dto: CreateHarmfulAppDto): Promise<HarmfulAppResponseDto> {
+  async create(dto: CreateAllowedAppDto): Promise<AllowedAppResponseDto> {
     await this.ensureValidPlatformData();
 
     // 패키지 이름 중복 체크
@@ -71,7 +71,7 @@ export class HarmfulAppsService {
     return this.toResponseDto(app);
   }
 
-  async findAll(filter: HarmfulAppFilterDto): Promise<HarmfulAppListResponseDto> {
+  async findAll(filter: AllowedAppFilterDto): Promise<AllowedAppListResponseDto> {
     await this.ensureValidPlatformData();
 
     const page = filter.page || 1;
@@ -114,7 +114,7 @@ export class HarmfulAppsService {
       this.prisma.allowedApp.count({ where }),
     ]);
 
-    // 유해앱별 설치 직원 수 집계 (고유 직원 수)
+    // 허용앱별 설치 직원 수 집계 (고유 직원 수)
     const appIds = data.map((app) => app.id);
     const installedCountMap = await this.getInstalledCountByApps(appIds);
 
@@ -127,7 +127,7 @@ export class HarmfulAppsService {
     };
   }
 
-  async findOne(id: string): Promise<HarmfulAppResponseDto> {
+  async findOne(id: string): Promise<AllowedAppResponseDto> {
     await this.ensureValidPlatformData();
 
     const app = await this.prisma.allowedApp.findUnique({
@@ -140,14 +140,14 @@ export class HarmfulAppsService {
     });
 
     if (!app) {
-      throw new NotFoundException('유해 앱을 찾을 수 없습니다.');
+      throw new NotFoundException('허용앱을 찾을 수 없습니다.');
     }
 
     const installedCountMap = await this.getInstalledCountByApps([id]);
     return this.toResponseDto(app, installedCountMap.get(id) || 0);
   }
 
-  async findByPackageName(packageName: string): Promise<HarmfulAppResponseDto> {
+  async findByPackageName(packageName: string): Promise<AllowedAppResponseDto> {
     await this.ensureValidPlatformData();
 
     const app = await this.prisma.allowedApp.findUnique({
@@ -160,18 +160,18 @@ export class HarmfulAppsService {
     });
 
     if (!app) {
-      throw new NotFoundException('유해 앱을 찾을 수 없습니다.');
+      throw new NotFoundException('허용앱을 찾을 수 없습니다.');
     }
 
     return this.toResponseDto(app);
   }
 
-  async update(id: string, dto: UpdateHarmfulAppDto): Promise<HarmfulAppResponseDto> {
+  async update(id: string, dto: UpdateAllowedAppDto): Promise<AllowedAppResponseDto> {
     await this.ensureValidPlatformData();
 
     await this.findOne(id);
 
-    const updateData: UpdateHarmfulAppDto = { ...dto };
+    const updateData: UpdateAllowedAppDto = { ...dto };
     if (dto.platform !== undefined) {
       updateData.platform = this.normalizePlatform(dto.platform);
     }
@@ -204,7 +204,7 @@ export class HarmfulAppsService {
     return this.toResponseDto(app, installedCountMap.get(id) || 0);
   }
 
-  async refreshIcons(dto: RefreshHarmfulAppIconsDto): Promise<RefreshHarmfulAppIconsResponseDto> {
+  async refreshIcons(dto: RefreshAllowedAppIconsDto): Promise<RefreshAllowedAppIconsResponseDto> {
     await this.ensureValidPlatformData();
 
     const where: any = {};
@@ -226,7 +226,7 @@ export class HarmfulAppsService {
       orderBy: { updatedAt: 'asc' },
     });
 
-    const results: RefreshHarmfulAppIconsResponseDto['results'] = [];
+    const results: RefreshAllowedAppIconsResponseDto['results'] = [];
     let cursor = 0;
 
     const worker = async () => {
@@ -330,11 +330,11 @@ export class HarmfulAppsService {
     });
 
     if (!app) {
-      throw new NotFoundException('유해 앱을 찾을 수 없습니다.');
+      throw new NotFoundException('허용앱을 찾을 수 없습니다.');
     }
 
     if (app._count.presetItems > 0) {
-      throw new BadRequestException('프리셋에서 사용 중인 유해 앱은 삭제할 수 없습니다. 프리셋에서 먼저 제거해주세요.');
+      throw new BadRequestException('프리셋에서 사용 중인 허용앱은 삭제할 수 없습니다. 프리셋에서 먼저 제거해주세요.');
     }
 
     await this.prisma.allowedApp.delete({
@@ -355,7 +355,7 @@ export class HarmfulAppsService {
     return result.map((r) => r.category).filter((c): c is string => c !== null);
   }
 
-  async toggleGlobal(id: string): Promise<HarmfulAppResponseDto> {
+  async toggleGlobal(id: string): Promise<AllowedAppResponseDto> {
     await this.ensureValidPlatformData();
 
     const app = await this.findOne(id);
@@ -375,7 +375,7 @@ export class HarmfulAppsService {
   }
 
   /**
-   * 유해앱 ID 목록에 대해 설치한 고유 직원 수를 집계합니다.
+    * 허용앱 ID 목록에 대해 설치한 고유 직원 수를 집계합니다.
    * InstalledApp → Device → Employee 관계를 통해 distinct employeeId를 카운트합니다.
    */
   private async getInstalledCountByApps(appIds: string[]): Promise<Map<string, number>> {
@@ -480,7 +480,7 @@ export class HarmfulAppsService {
     }
   }
 
-  private toResponseDto(app: any, installedCount: number = 0): HarmfulAppResponseDto {
+  private toResponseDto(app: any, installedCount: number = 0): AllowedAppResponseDto {
     return {
       id: app.id,
       name: app.name,

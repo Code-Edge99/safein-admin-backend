@@ -13,7 +13,7 @@ import { TimePoliciesModule } from './modules/time-policies/time-policies.module
 import { ControlPoliciesModule } from './modules/control-policies/control-policies.module';
 import { ControlLogsModule } from './modules/control-logs/control-logs.module';
 import { BehaviorConditionsModule } from './modules/behavior-conditions/behavior-conditions.module';
-import { HarmfulAppsModule } from './modules/harmful-apps/harmful-apps.module';
+import { AllowedAppsModule } from './modules/allowed-apps/allowed-apps.module';
 import { AccountsModule } from './modules/accounts/accounts.module';
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { LoginHistoryModule } from './modules/login-history/login-history.module';
@@ -42,7 +42,7 @@ import { PermissionsModule } from './modules/permissions/permissions.module';
     ControlPoliciesModule,
     ControlLogsModule,
     BehaviorConditionsModule,
-    HarmfulAppsModule,
+    AllowedAppsModule,
     AccountsModule,
     AuditLogsModule,
     LoginHistoryModule,

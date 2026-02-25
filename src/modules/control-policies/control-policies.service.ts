@@ -549,7 +549,7 @@ export class ControlPoliciesService {
         }
       }
 
-      // Update harmful apps
+      // Update allowed app presets
       if (allowedAppPresetIds !== undefined) {
         await tx.controlPolicyAllowedApp.deleteMany({ where: { policyId: id } });
         if (allowedAppPresetIds.length > 0) {
@@ -767,23 +767,29 @@ export class ControlPoliciesService {
     endpointUrl: string,
     params: { token: string; os: DeviceOS; policyId: string },
   ): Promise<void> {
-    const os = params.os === DeviceOS.iOS ? 'ios' : 'android';
-
     const response = await fetch(endpointUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        token: params.token,
-        os,
-        priority: 'high',
-        data: {
-          type: 'policy_changed',
-          message: '통제 정책이 변경되었습니다.',
-          extraData: {
-            policyId: params.policyId,
+        message: {
+          token: params.token,
+          data: {
+            type: 'policy_changed',
+            policyVersion: params.policyId,
           },
+          ...(params.os === DeviceOS.Android
+            ? {
+              android: {
+                priority: 'HIGH',
+              },
+            }
+            : {
+              android: {
+                priority: 'NORMAL',
+              },
+            }),
         },
       }),
     });
