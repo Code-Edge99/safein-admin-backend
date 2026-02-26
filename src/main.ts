@@ -95,9 +95,6 @@ async function bootstrap() {
 
   console.log(`🚀 Application is running on: http://localhost:${port}/api`);
   console.log(`📚 Swagger docs: http://localhost:${port}/api/docs`);
-  if (unlimitedAdminToken) {
-    console.log(`🔐 Admin unlimited token (${MASTER_ADMIN_USERNAME}): ${unlimitedAdminToken}`);
-  }
 }
 
 bootstrap();
