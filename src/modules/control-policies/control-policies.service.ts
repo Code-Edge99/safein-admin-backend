@@ -218,7 +218,7 @@ export class ControlPoliciesService {
           },
           behaviors: {
             include: {
-              behaviorCondition: { select: { id: true, name: true, type: true } },
+              behaviorCondition: { select: { id: true, name: true } },
             },
           },
           allowedApps: {
@@ -274,7 +274,7 @@ export class ControlPoliciesService {
         },
         behaviors: {
           include: {
-            behaviorCondition: { select: { id: true, name: true, type: true } },
+            behaviorCondition: { select: { id: true, name: true } },
           },
         },
         allowedApps: {
@@ -352,7 +352,7 @@ export class ControlPoliciesService {
         },
         behaviors: {
           include: {
-            behaviorCondition: { select: { id: true, name: true, type: true } },
+            behaviorCondition: { select: { id: true, name: true } },
           },
         },
         allowedApps: {
@@ -396,7 +396,7 @@ export class ControlPoliciesService {
         },
         behaviors: {
           include: {
-            behaviorCondition: { select: { id: true, name: true, type: true } },
+            behaviorCondition: { select: { id: true, name: true } },
           },
         },
         allowedApps: {
