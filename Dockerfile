@@ -5,7 +5,9 @@ WORKDIR /app
 RUN apk add --no-cache openssl
 
 COPY smombie-admin-backend/package*.json ./
-RUN npm ci --ignore-scripts
+COPY smombie-admin-backend/scripts ./scripts
+COPY smombie-prisma /smombie-prisma
+RUN npm ci
 
 COPY smombie-prisma/prisma ./prisma
 COPY smombie-admin-backend/ ./
