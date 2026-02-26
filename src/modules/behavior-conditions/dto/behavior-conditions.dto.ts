@@ -3,20 +3,11 @@ import {
   IsString,
   IsNotEmpty,
   IsOptional,
-  IsEnum,
   IsNumber,
   IsBoolean,
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-
-export enum BehaviorConditionTypeEnum {
-  DISTANCE = 'distance',
-  WALKING = 'walking',
-  WALKING_SPEED = 'walkingSpeed',
-  VEHICLE_SPEED = 'vehicleSpeed',
-  COMPOSITE = 'composite',
-}
 
 export class CreateBehaviorConditionDto {
   @ApiProperty({ description: '조건명' })
@@ -24,9 +15,20 @@ export class CreateBehaviorConditionDto {
   @IsNotEmpty()
   name: string;
 
-  @ApiProperty({ description: '조건 유형', enum: BehaviorConditionTypeEnum })
-  @IsEnum(BehaviorConditionTypeEnum)
-  type: BehaviorConditionTypeEnum;
+  @ApiPropertyOptional({ description: '이동거리 조건 활성화 여부' })
+  @IsBoolean()
+  @IsOptional()
+  enableDistanceCondition?: boolean;
+
+  @ApiPropertyOptional({ description: '걸음 조건 활성화 여부' })
+  @IsBoolean()
+  @IsOptional()
+  enableStepsCondition?: boolean;
+
+  @ApiPropertyOptional({ description: '속도 조건 활성화 여부' })
+  @IsBoolean()
+  @IsOptional()
+  enableSpeedCondition?: boolean;
 
   @ApiPropertyOptional({ description: '이동 거리 임계값 (미터)' })
   @IsNumber()
@@ -76,8 +78,14 @@ export class BehaviorConditionResponseDto {
   @ApiProperty({ description: '조건명' })
   name: string;
 
-  @ApiProperty({ description: '조건 유형' })
-  type: string;
+  @ApiProperty({ description: '이동거리 조건 활성화 여부' })
+  enableDistanceCondition: boolean;
+
+  @ApiProperty({ description: '걸음 조건 활성화 여부' })
+  enableStepsCondition: boolean;
+
+  @ApiProperty({ description: '속도 조건 활성화 여부' })
+  enableSpeedCondition: boolean;
 
   @ApiPropertyOptional({ description: '이동 거리 임계값' })
   distanceThreshold?: number;
@@ -122,10 +130,23 @@ export class BehaviorConditionFilterDto {
   @IsOptional()
   search?: string;
 
-  @ApiPropertyOptional({ description: '조건 유형', enum: BehaviorConditionTypeEnum })
-  @IsEnum(BehaviorConditionTypeEnum)
+  @ApiPropertyOptional({ description: '이동거리 조건 활성화 여부' })
+  @IsBoolean()
   @IsOptional()
-  type?: BehaviorConditionTypeEnum;
+  @Type(() => Boolean)
+  enableDistanceCondition?: boolean;
+
+  @ApiPropertyOptional({ description: '걸음 조건 활성화 여부' })
+  @IsBoolean()
+  @IsOptional()
+  @Type(() => Boolean)
+  enableStepsCondition?: boolean;
+
+  @ApiPropertyOptional({ description: '속도 조건 활성화 여부' })
+  @IsBoolean()
+  @IsOptional()
+  @Type(() => Boolean)
+  enableSpeedCondition?: boolean;
 
   @ApiPropertyOptional({ description: '조직 ID' })
   @IsString()

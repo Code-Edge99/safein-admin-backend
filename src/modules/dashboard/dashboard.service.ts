@@ -1090,7 +1090,7 @@ export class DashboardService {
               behaviors: {
                 include: {
                   behaviorCondition: {
-                    select: { id: true, name: true, description: true, type: true },
+                    select: { id: true, name: true, description: true },
                   },
                 },
               },
@@ -1121,7 +1121,7 @@ export class DashboardService {
               behaviors: {
                 include: {
                   behaviorCondition: {
-                    select: { id: true, name: true, description: true, type: true },
+                    select: { id: true, name: true, description: true },
                   },
                 },
               },

@@ -75,7 +75,14 @@ export class BehaviorConditionsService {
     createDto: CreateBehaviorConditionDto,
     scopeOrganizationIds?: string[],
   ): Promise<BehaviorConditionResponseDto> {
-    const { organizationId, workTypeId, type, ...rest } = createDto;
+    const {
+      organizationId,
+      workTypeId,
+      enableDistanceCondition: _enableDistanceCondition,
+      enableStepsCondition: _enableStepsCondition,
+      enableSpeedCondition: _enableSpeedCondition,
+      ...rest
+    } = createDto;
 
     this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
 
@@ -97,10 +104,12 @@ export class BehaviorConditionsService {
       }
     }
 
+    const thresholdData = this.resolveThresholds(createDto);
+
     const condition = await this.prisma.behaviorCondition.create({
       data: {
         ...rest,
-        type: type as any,
+        ...thresholdData,
         organizationId,
         workTypeId,
       },
@@ -118,7 +127,17 @@ export class BehaviorConditionsService {
     filter: BehaviorConditionFilterDto,
     scopeOrganizationIds?: string[],
   ): Promise<BehaviorConditionListResponseDto> {
-    const { search, type, organizationId, workTypeId, isActive, page = 1, limit = 20 } = filter;
+    const {
+      search,
+      organizationId,
+      workTypeId,
+      isActive,
+      enableDistanceCondition,
+      enableStepsCondition,
+      enableSpeedCondition,
+      page = 1,
+      limit = 20,
+    } = filter;
     const skip = (page - 1) * limit;
 
     const where: any = {};
@@ -127,8 +146,16 @@ export class BehaviorConditionsService {
       where.name = { contains: search, mode: 'insensitive' };
     }
 
-    if (type) {
-      where.type = type;
+    if (enableDistanceCondition !== undefined) {
+      where.distanceThreshold = enableDistanceCondition ? { not: null } : null;
+    }
+
+    if (enableStepsCondition !== undefined) {
+      where.stepsThreshold = enableStepsCondition ? { not: null } : null;
+    }
+
+    if (enableSpeedCondition !== undefined) {
+      where.speedThreshold = enableSpeedCondition ? { not: null } : null;
     }
 
     if (organizationId) {
@@ -216,11 +243,38 @@ export class BehaviorConditionsService {
     updateDto: UpdateBehaviorConditionDto,
     scopeOrganizationIds?: string[],
   ): Promise<BehaviorConditionResponseDto> {
-    await this.findOne(id, scopeOrganizationIds);
+    const current = await this.prisma.behaviorCondition.findUnique({
+      where: { id },
+      include: {
+        organization: { select: { id: true, name: true } },
+        workType: { select: { id: true, name: true } },
+        _count: { select: { policyBehaviors: true } },
+      },
+    });
 
-    const { organizationId, workTypeId, type, ...rest } = updateDto;
+    if (!current) {
+      throw new NotFoundException('행동 조건을 찾을 수 없습니다.');
+    }
 
-    const updateData: any = { ...rest };
+    this.assertConditionInScope(current, scopeOrganizationIds);
+
+    const {
+      organizationId,
+      workTypeId,
+      enableDistanceCondition: _enableDistanceCondition,
+      enableStepsCondition: _enableStepsCondition,
+      enableSpeedCondition: _enableSpeedCondition,
+      ...rest
+    } = updateDto;
+
+    const updateData: any = {
+      ...rest,
+      ...this.resolveThresholds(updateDto, {
+        distanceThreshold: current.distanceThreshold,
+        stepsThreshold: current.stepsThreshold,
+        speedThreshold: current.speedThreshold,
+      }),
+    };
 
     if (organizationId) {
       this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
@@ -243,10 +297,6 @@ export class BehaviorConditionsService {
         }
       }
       updateData.workTypeId = workTypeId || null;
-    }
-
-    if (type) {
-      updateData.type = type;
     }
 
     const condition = await this.prisma.behaviorCondition.update({
@@ -304,7 +354,7 @@ export class BehaviorConditionsService {
   }
 
   async getStats(scopeOrganizationIds?: string[]): Promise<BehaviorConditionStatsDto> {
-    const [totalConditions, activeConditions, byTypeResult] = await Promise.all([
+    const [totalConditions, activeConditions, thresholdStats] = await Promise.all([
       this.prisma.behaviorCondition.count({
         where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
       }),
@@ -314,17 +364,20 @@ export class BehaviorConditionsService {
           ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
         },
       }),
-      this.prisma.behaviorCondition.groupBy({
-        by: ['type'],
+      this.prisma.behaviorCondition.findMany({
         where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
-        _count: { type: true },
+        select: {
+          distanceThreshold: true,
+          stepsThreshold: true,
+          speedThreshold: true,
+        },
       }),
     ]);
 
     const byType: Record<string, number> = {};
-    byTypeResult.forEach((item) => {
-      byType[item.type] = item._count.type;
-    });
+    byType.distance = thresholdStats.filter((item) => item.distanceThreshold !== null).length;
+    byType.steps = thresholdStats.filter((item) => item.stepsThreshold !== null).length;
+    byType.speed = thresholdStats.filter((item) => item.speedThreshold !== null).length;
 
     return {
       totalConditions,
@@ -337,7 +390,9 @@ export class BehaviorConditionsService {
     return {
       id: condition.id,
       name: condition.name,
-      type: condition.type,
+      enableDistanceCondition: condition.distanceThreshold !== null,
+      enableStepsCondition: condition.stepsThreshold !== null,
+      enableSpeedCondition: condition.speedThreshold !== null,
       distanceThreshold: condition.distanceThreshold,
       stepsThreshold: condition.stepsThreshold,
       speedThreshold: condition.speedThreshold,
@@ -349,5 +404,74 @@ export class BehaviorConditionsService {
       createdAt: condition.createdAt,
       updatedAt: condition.updatedAt,
     };
+  }
+
+  private resolveThresholds(
+    dto: Partial<CreateBehaviorConditionDto>,
+    current?: {
+      distanceThreshold: number | null;
+      stepsThreshold: number | null;
+      speedThreshold: number | null;
+    },
+  ) {
+    const hasDistanceInput = dto.distanceThreshold !== undefined;
+    const hasStepsInput = dto.stepsThreshold !== undefined;
+    const hasSpeedInput = dto.speedThreshold !== undefined;
+
+    const currentDistanceEnabled = (current?.distanceThreshold ?? null) !== null;
+    const currentStepsEnabled = (current?.stepsThreshold ?? null) !== null;
+    const currentSpeedEnabled = (current?.speedThreshold ?? null) !== null;
+
+    const enableDistance =
+      dto.enableDistanceCondition ?? (hasDistanceInput ? true : current ? currentDistanceEnabled : false);
+    const enableSteps = dto.enableStepsCondition ?? (hasStepsInput ? true : current ? currentStepsEnabled : false);
+    const enableSpeed = dto.enableSpeedCondition ?? (hasSpeedInput ? true : current ? currentSpeedEnabled : false);
+
+    const distanceThreshold = this.resolveMetricThreshold(
+      enableDistance,
+      dto.distanceThreshold,
+      current?.distanceThreshold ?? null,
+      '이동거리',
+    );
+    const stepsThreshold = this.resolveMetricThreshold(
+      enableSteps,
+      dto.stepsThreshold,
+      current?.stepsThreshold ?? null,
+      '걸음',
+    );
+    const speedThreshold = this.resolveMetricThreshold(
+      enableSpeed,
+      dto.speedThreshold,
+      current?.speedThreshold ?? null,
+      '속도',
+    );
+
+    if (distanceThreshold === null && stepsThreshold === null && speedThreshold === null) {
+      throw new BadRequestException('행동 조건은 최소 1개 이상 활성화되어야 합니다.');
+    }
+
+    return {
+      distanceThreshold,
+      stepsThreshold,
+      speedThreshold,
+    };
+  }
+
+  private resolveMetricThreshold(
+    enabled: boolean,
+    inputValue: number | undefined,
+    currentValue: number | null,
+    metricName: string,
+  ): number | null {
+    if (!enabled) {
+      return null;
+    }
+
+    const value = inputValue ?? currentValue;
+    if (value === null || value === undefined) {
+      throw new BadRequestException(`${metricName} 조건이 활성화되어 있으면 기준값이 필요합니다.`);
+    }
+
+    return value;
   }
 }

@@ -367,7 +367,7 @@ export class ZonesService {
   ): Promise<boolean> {
     const zone = await this.findOne(zoneId, scopeOrganizationIds);
     const pointLat = point.latitude ?? (point as any).lat ?? 0;
-    const pointLng = point.longitude ?? (point as any).lng ?? 0;
+    const pointLng = (point as any).lng ?? point.longitude ?? 0;
 
     if (zone.shape === 'circle' && zone.radius) {
       // 원형 구역: 첫 번째 좌표를 중심점으로 사용
@@ -542,9 +542,9 @@ export class ZonesService {
       bboxMinLat: zone.bboxMinLat ?? undefined,
       bboxMinLng: zone.bboxMinLon ?? undefined,
       bboxMaxLat: zone.bboxMaxLat ?? undefined,
-      bboxMaxLon: zone.bboxMaxLon ?? undefined,
+      bboxMaxLng: zone.bboxMaxLon ?? undefined,
       centerLat: zone.centerLat ?? undefined,
-      centerLon: zone.centerLon ?? undefined,
+      centerLng: zone.centerLon ?? undefined,
       groupId: zone.groupId,
       isActive: zone.isActive,
       organization: zone.organization,

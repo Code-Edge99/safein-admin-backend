@@ -29,7 +29,12 @@ export class CoordinateDto {
   @IsOptional()
   latitude?: number;
 
-  @ApiProperty({ description: '경도' })
+  @ApiPropertyOptional({ description: '경도 (lng)' })
+  @IsNumber()
+  @IsOptional()
+  lng?: number;
+
+  @ApiPropertyOptional({ description: '경도 (legacy longitude)' })
   @IsNumber()
   @IsOptional()
   longitude?: number;
@@ -39,11 +44,8 @@ export class CoordinateDto {
   @IsOptional()
   lat?: number;
 
-  @ApiPropertyOptional({ description: '경도 (lng)' })
-  @IsNumber()
-  @IsOptional()
-  lng?: number;
 }
+
 
 export class CreateZoneDto {
   @ApiProperty({ description: '구역명' })
@@ -130,13 +132,13 @@ export class ZoneResponseDto {
   bboxMaxLat?: number;
 
   @ApiPropertyOptional({ description: '최대 경도(BBox)' })
-  bboxMaxLon?: number;
+  bboxMaxLng?: number;
 
   @ApiPropertyOptional({ description: '중심 위도(원형 구역)' })
   centerLat?: number;
 
   @ApiPropertyOptional({ description: '중심 경도(원형 구역)' })
-  centerLon?: number;
+  centerLng?: number;
 
   @ApiPropertyOptional({ description: '그룹 ID' })
   groupId?: string;
@@ -223,9 +225,15 @@ export class CheckPointInZoneDto {
   @IsNumber()
   latitude: number;
 
-  @ApiProperty({ description: '경도' })
+  @ApiPropertyOptional({ description: '경도 (lng)' })
   @IsNumber()
-  longitude: number;
+  @IsOptional()
+  lng?: number;
+
+  @ApiPropertyOptional({ description: '경도 (legacy longitude)' })
+  @IsNumber()
+  @IsOptional()
+  longitude?: number;
 }
 
 export class ZoneStatsDto {

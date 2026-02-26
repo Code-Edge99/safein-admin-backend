@@ -2,20 +2,29 @@
 
 세이프인 관리자 API 서버 (NestJS + Prisma + PostgreSQL)
 
-## 빠른 시작 (로컬 실행)
+## 현재 구조 기준 핵심 규칙
+- Prisma 스키마/마이그레이션/시드는 `smombie-prisma`에서만 관리
+- 이 서버의 `npm install`은 Prisma Client 동기화만 수행
+- `npm run prisma:*` 명령은 여기서 실행하지 않음(안내 후 종료)
 
-### 1) 사전 준비
-- Node.js 20+ (권장: 24.x)
-- PostgreSQL 16
-- npm
+## 로컬 셋업 순서
 
-### 2) 의존성 설치
-```bash
-npm install
+### 1) 폴더 배치
+아래 3개 폴더가 같은 레벨에 있어야 합니다.
+```text
+smombie/
+  smombie-prisma/
+  smombie-admin-backend/
+  smombie-app-backend/
 ```
 
+### 2) 사전 준비
+- Node.js 20+
+- PostgreSQL 16+
+- npm
+
 ### 3) 환경변수 설정
-프로젝트 루트에 `.env` 생성:
+`smombie-admin-backend/.env`
 ```env
 DATABASE_URL=postgresql://postgres:password@localhost:5432/safein?schema=public
 PORT=3000
@@ -25,19 +34,17 @@ CORS_ORIGIN=*
 APP_BACKEND_BASE_URL=http://localhost:3100/api/app
 ```
 
-### 4) 공용 Prisma 준비
-`smombie-admin-backend`와 같은 레벨에 `smombie-prisma`가 있어야 합니다.
+### 4) 공용 Prisma 준비(최초 1회)
 ```bash
-cd ..
-git clone <SMOMBIE_PRISMA_REPO_URL> smombie-prisma
-cd smombie-admin-backend
+cd ../smombie-prisma
+npm install
+npm run prisma:migrate
 ```
 
-### 5) DB 반영 + 실행
+### 5) Admin Backend 설치/실행
 ```bash
-npm run prisma:generate
-npm run prisma:migrate
-npm run prisma:seed
+cd ../smombie-admin-backend
+npm install
 npm run dev
 ```
 
@@ -45,29 +52,11 @@ npm run dev
 - API: http://localhost:3000/api
 - Swagger: http://localhost:3000/api/docs
 
-## Docker 실행
-
-### 단독 실행
-```bash
-docker build -t safein-admin-backend .
-docker run -p 3000:3000 \
-  -e DATABASE_URL=postgresql://postgres:password@host.docker.internal:5432/safein \
-  -e JWT_SECRET=your-secret \
-  safein-admin-backend
-```
-
-### Compose 실행
-```bash
-docker compose up -d
-```
-
-## 데모 계정
-| 역할 | 아이디 | 비밀번호 |
-|------|--------|----------|
-| 슈퍼 관리자 | admin | admin123 |
-| 현장 관리자 | site1 | site123 |
-| 현장 관리자 | site2 | site123 |
-| 조회자 | viewer1 | viewer123 |
+## 운영 배포 규칙
+- 같은 DB를 공유하면 `prisma migrate deploy`는 한 서버/한 파이프라인에서 1회만 실행
+- 운영에서 `smombie-prisma` 설치 시 seed를 막으려면:
+  - `NODE_ENV=production` 사용 또는
+  - `PRISMA_SEED_ON_INSTALL=false npm install`
 
 ## 자주 쓰는 명령어
 | 명령어 | 설명 |
@@ -75,12 +64,7 @@ docker compose up -d
 | `npm run dev` | 개발 서버 실행 |
 | `npm run build` | 빌드 |
 | `npm run start:prod` | 프로덕션 실행 |
-| `npm run prisma:generate` | Prisma Client 생성 |
-| `npm run prisma:migrate` | 개발 마이그레이션 적용 |
-| `npm run prisma:migrate:prod` | 운영 마이그레이션 적용 |
-| `npm run prisma:seed` | 시드 데이터 반영 |
-| `npm run prisma:studio` | Prisma Studio 실행 |
-| `npm run db:reset` | DB 초기화/재생성 |
+| `npm run prisma:*` | 사용 금지(공용 Prisma 저장소에서 실행) |
 
 ## 모듈 개요
 주요 경로: `/api/auth`, `/api/accounts`, `/api/employees`, `/api/devices`, `/api/control-policies`, `/api/dashboard`
