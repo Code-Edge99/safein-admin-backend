@@ -10,6 +10,7 @@ export class DashboardService {
     zoneViolation: 1.5,
     behavior: 1.2,
   } as const;
+  private static readonly COMPLIANCE_DAILY_PENALTY = 3;
 
   private isPackageNameLike(value?: string | null): boolean {
     if (!value) return false;
@@ -17,27 +18,31 @@ export class DashboardService {
   }
 
   private calculateWeightedComplianceRate(params: {
-    totalEvents: number;
+    activeDays: number;
     appControlBlocks: number;
     zoneViolations: number;
     behaviorBlocks: number;
     rounded?: boolean;
   }): number {
     const {
-      totalEvents,
+      activeDays,
       appControlBlocks,
       zoneViolations,
       behaviorBlocks,
       rounded = true,
     } = params;
 
-    const denominator = Math.max(totalEvents, 1);
+    const denominator = Math.max(activeDays, 1);
     const weightedViolationScore =
       appControlBlocks * DashboardService.COMPLIANCE_WEIGHTS.appControl
       + zoneViolations * DashboardService.COMPLIANCE_WEIGHTS.zoneViolation
       + behaviorBlocks * DashboardService.COMPLIANCE_WEIGHTS.behavior;
 
-    const rawRate = Math.max(0, 1 - weightedViolationScore / denominator) * 100;
+    const dailyWeightedViolation = weightedViolationScore / denominator;
+    const rawRate = Math.max(
+      0,
+      100 - dailyWeightedViolation * DashboardService.COMPLIANCE_DAILY_PENALTY,
+    );
 
     if (!rounded) {
       return Math.round(rawRate * 10) / 10;
@@ -626,8 +631,19 @@ export class DashboardService {
       if (recentTotal > olderTotal * 1.2) trend = 'up';
       else if (recentTotal < olderTotal * 0.8) trend = 'down';
 
+      const activeDays = emp.dailyStats.filter((stat: any) => {
+        const statTotalEvents = (stat as any).totalEvents ?? stat.totalBlocks;
+        return (
+          statTotalEvents > 0
+          || stat.totalBlocks > 0
+          || stat.behaviorBlocks > 0
+          || stat.appControlBlocks > 0
+          || stat.zoneViolations > 0
+        );
+      }).length;
+
       const complianceRate = this.calculateWeightedComplianceRate({
-        totalEvents: emp.totalEvents,
+        activeDays,
         appControlBlocks: emp.allowedAppBlocks,
         zoneViolations: emp.zoneViolations,
         behaviorBlocks: emp.behaviorBlocks,
@@ -756,6 +772,16 @@ export class DashboardService {
     const behaviorBlocks = dailyStats.reduce((s, d) => s + d.behaviorBlocks, 0);
     const appControlBlocks = dailyStats.reduce((s, d) => s + d.appControlBlocks, 0);
     const zoneViolations = dailyStats.reduce((s, d) => s + d.zoneViolations, 0);
+    const activeDays = dailyStats.filter((stat) => {
+      const statTotalEvents = (stat as any).totalEvents ?? stat.totalBlocks;
+      return (
+        statTotalEvents > 0
+        || stat.totalBlocks > 0
+        || stat.behaviorBlocks > 0
+        || stat.appControlBlocks > 0
+        || stat.zoneViolations > 0
+      );
+    }).length;
 
     // 최근 7일 vs 이전 7일 비교
     const day7Ago = new Date();
@@ -773,7 +799,7 @@ export class DashboardService {
     else if (recentTotal < olderTotal * 0.8) trend = 'down';
 
     const complianceRate = this.calculateWeightedComplianceRate({
-      totalEvents,
+      activeDays,
       appControlBlocks,
       zoneViolations,
       behaviorBlocks,
@@ -1272,12 +1298,17 @@ export class DashboardService {
       const totalViolations = currentStats.reduce((sum, s) => sum + s.totalBlocks, 0);
       const behaviorBlocks = currentStats.reduce((sum, s) => sum + s.behaviorBlocks, 0);
       const allowedAppBlocks = currentStats.reduce((sum, s) => sum + s.appControlBlocks, 0);
-      const totalEvents = currentStats.reduce(
-        (sum, s) => sum + ((s as any).totalEvents ?? s.totalBlocks),
-        0,
-      );
+      const activeDays = currentStats.filter((stat) => {
+        const statTotalEvents = (stat as any).totalEvents ?? stat.totalBlocks;
+        return (
+          statTotalEvents > 0
+          || stat.totalBlocks > 0
+          || stat.behaviorBlocks > 0
+          || stat.appControlBlocks > 0
+        );
+      }).length;
       const complianceRate = this.calculateWeightedComplianceRate({
-        totalEvents,
+        activeDays,
         appControlBlocks: allowedAppBlocks,
         zoneViolations: 0,
         behaviorBlocks,
