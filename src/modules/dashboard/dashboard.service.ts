@@ -5,6 +5,47 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class DashboardService {
   constructor(private prisma: PrismaService) {}
 
+  private static readonly COMPLIANCE_WEIGHTS = {
+    appControl: 1.0,
+    zoneViolation: 1.5,
+    behavior: 1.2,
+  } as const;
+
+  private isPackageNameLike(value?: string | null): boolean {
+    if (!value) return false;
+    return /^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)+$/.test(value);
+  }
+
+  private calculateWeightedComplianceRate(params: {
+    totalEvents: number;
+    appControlBlocks: number;
+    zoneViolations: number;
+    behaviorBlocks: number;
+    rounded?: boolean;
+  }): number {
+    const {
+      totalEvents,
+      appControlBlocks,
+      zoneViolations,
+      behaviorBlocks,
+      rounded = true,
+    } = params;
+
+    const denominator = Math.max(totalEvents, 1);
+    const weightedViolationScore =
+      appControlBlocks * DashboardService.COMPLIANCE_WEIGHTS.appControl
+      + zoneViolations * DashboardService.COMPLIANCE_WEIGHTS.zoneViolation
+      + behaviorBlocks * DashboardService.COMPLIANCE_WEIGHTS.behavior;
+
+    const rawRate = Math.max(0, 1 - weightedViolationScore / denominator) * 100;
+
+    if (!rounded) {
+      return Math.round(rawRate * 10) / 10;
+    }
+
+    return Math.round(rawRate);
+  }
+
   private ensureOrganizationInScope(
     organizationId: string | undefined,
     scopeOrganizationIds?: string[],
@@ -507,6 +548,27 @@ export class DashboardService {
       orderBy: { date: 'desc' },
     });
 
+    const topBlockedPackageNames = Array.from(
+      new Set(
+        rawStats
+          .map((stat) => stat.topBlockedApp)
+          .filter((name): name is string => this.isPackageNameLike(name)),
+      ),
+    );
+
+    const allowedApps = topBlockedPackageNames.length > 0
+      ? await this.prisma.allowedApp.findMany({
+          where: { packageName: { in: topBlockedPackageNames } },
+          select: { packageName: true, name: true },
+        })
+      : [];
+
+    const packageNameToAppName = new Map(
+      allowedApps
+        .filter((app) => !!app.name)
+        .map((app) => [app.packageName, app.name]),
+    );
+
     const empMap = new Map<string, any>();
     employees.forEach((employee) => {
       empMap.set(employee.id, {
@@ -564,9 +626,12 @@ export class DashboardService {
       if (recentTotal > olderTotal * 1.2) trend = 'up';
       else if (recentTotal < olderTotal * 0.8) trend = 'down';
 
-      const complianceRate = emp.totalEvents > 0
-        ? Math.round((emp.allowedEvents / emp.totalEvents) * 100)
-        : 100;
+      const complianceRate = this.calculateWeightedComplianceRate({
+        totalEvents: emp.totalEvents,
+        appControlBlocks: emp.allowedAppBlocks,
+        zoneViolations: emp.zoneViolations,
+        behaviorBlocks: emp.behaviorBlocks,
+      });
 
       let riskLevel = '낮음';
       if (emp.totalBlocks > 20 || emp.zoneViolations > 5 || complianceRate < 60) riskLevel = '높음';
@@ -583,7 +648,7 @@ export class DashboardService {
         last7DaysBlocks: recentTotal,
         trend,
         blockedAppsCount: emp.allowedAppBlocks,
-        topBlockedApp: emp.topBlockedApp || '-',
+        topBlockedApp: packageNameToAppName.get(emp.topBlockedApp || '') || emp.topBlockedApp || '-',
         complianceRate,
         riskLevel,
         lastViolation: emp.dailyStats[0]?.date || null,
@@ -687,9 +752,9 @@ export class DashboardService {
 
     // ── 집계: 통계 ──
     const totalEvents = dailyStats.reduce((s, d) => s + ((d as any).totalEvents ?? d.totalBlocks), 0);
-    const allowedEvents = dailyStats.reduce((s, d) => s + ((d as any).allowedEvents ?? 0), 0);
     const totalBlocks = dailyStats.reduce((s, d) => s + d.totalBlocks, 0);
     const behaviorBlocks = dailyStats.reduce((s, d) => s + d.behaviorBlocks, 0);
+    const appControlBlocks = dailyStats.reduce((s, d) => s + d.appControlBlocks, 0);
     const zoneViolations = dailyStats.reduce((s, d) => s + d.zoneViolations, 0);
 
     // 최근 7일 vs 이전 7일 비교
@@ -707,7 +772,12 @@ export class DashboardService {
     if (recentTotal > olderTotal * 1.2) trend = 'up';
     else if (recentTotal < olderTotal * 0.8) trend = 'down';
 
-    const complianceRate = totalEvents > 0 ? Math.round((allowedEvents / totalEvents) * 100) : 100;
+    const complianceRate = this.calculateWeightedComplianceRate({
+      totalEvents,
+      appControlBlocks,
+      zoneViolations,
+      behaviorBlocks,
+    });
 
     let riskLevel = '낮음';
     if (totalBlocks > 20 || zoneViolations > 5 || complianceRate < 60) riskLevel = '높음';
@@ -1206,11 +1276,13 @@ export class DashboardService {
         (sum, s) => sum + ((s as any).totalEvents ?? s.totalBlocks),
         0,
       );
-      const allowedEvents = currentStats.reduce(
-        (sum, s) => sum + ((s as any).allowedEvents ?? 0),
-        0,
-      );
-      const complianceRate = totalEvents > 0 ? (allowedEvents / totalEvents) * 100 : 100;
+      const complianceRate = this.calculateWeightedComplianceRate({
+        totalEvents,
+        appControlBlocks: allowedAppBlocks,
+        zoneViolations: 0,
+        behaviorBlocks,
+        rounded: false,
+      });
 
       // 이전 주 데이터
       const prevStats = await this.prisma.organizationDailyStat.findMany({
