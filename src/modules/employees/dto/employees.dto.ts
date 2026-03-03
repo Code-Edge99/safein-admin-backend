@@ -55,6 +55,11 @@ export class CreateEmployeeDto {
   @IsEmail()
   email?: string;
 
+  @ApiPropertyOptional({ description: '메모' })
+  @IsOptional()
+  @IsString()
+  memo?: string;
+
   @ApiProperty({ description: '전화번호 (중복 불가, 필수)' })
   @IsString()
   @IsNotEmpty()
@@ -138,6 +143,9 @@ export class EmployeeResponseDto {
 
   @ApiPropertyOptional({ description: '입사일' })
   hireDate?: Date;
+
+  @ApiPropertyOptional({ description: '메모' })
+  memo?: string;
 
   @ApiProperty({ description: '생성일시' })
   createdAt: Date;

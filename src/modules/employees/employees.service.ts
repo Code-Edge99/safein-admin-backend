@@ -110,10 +110,11 @@ export class EmployeesService {
           role: dto.role,
           email: dto.email,
           phone: normalizedPhone,
+          memo: dto.memo?.trim() || null,
           workTypeId: dto.workTypeId,
           status: (dto.status as EmployeeStatus) || EmployeeStatus.ACTIVE,
           hireDate: dto.hireDate ? new Date(dto.hireDate) : undefined,
-        },
+        } as any,
         include: {
           organization: true,
           site: true,
@@ -329,10 +330,11 @@ export class EmployeesService {
             role: dto.role,
             email: dto.email,
             phone: normalizedPhone,
+            memo: dto.memo !== undefined ? (dto.memo.trim() || null) : undefined,
             workTypeId: dto.workTypeId,
             status: dto.status as EmployeeStatus | undefined,
             hireDate: dto.hireDate ? new Date(dto.hireDate) : undefined,
-          },
+          } as any,
           include: {
             organization: true,
             site: true,
@@ -625,6 +627,7 @@ export class EmployeesService {
       workTypeName: employee.workType?.name,
       status: employee.status,
       hireDate: employee.hireDate,
+      memo: employee.memo,
       createdAt: employee.createdAt,
       updatedAt: employee.updatedAt,
     };
