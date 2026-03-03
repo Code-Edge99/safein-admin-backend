@@ -23,7 +23,7 @@ export class CreateEmployeeDto {
   @ApiProperty({ description: '직원 ID (로그인 ID)' })
   @IsString()
   @IsNotEmpty()
-  employeeCode: string;
+  employeeId: string;
 
   @ApiProperty({ description: '직원 이름' })
   @IsString()
@@ -99,9 +99,6 @@ export class UpdateEmployeeDto extends PartialType(CreateEmployeeDto) {
 export class EmployeeResponseDto {
   @ApiProperty({ description: '직원 ID' })
   employeeId: string;
-
-  @ApiPropertyOptional({ description: '직원 ID (호환 필드)' })
-  employeeCode?: string;
 
   @ApiProperty({ description: '직원 이름' })
   name: string;
@@ -228,4 +225,16 @@ export class BulkMoveOrganizationDto extends BulkEmployeeActionDto {
   @ApiProperty({ description: '대상 조직 ID' })
   @IsUUID()
   targetOrganizationId: string;
+}
+
+export class EmployeeMdmManualUnblockDto {
+  @ApiProperty({ description: '공개 디바이스 ID (예: IOS-ABCDEF01)' })
+  @IsString()
+  @IsNotEmpty()
+  deviceId: string;
+
+  @ApiPropertyOptional({ description: '수동 해제 사유' })
+  @IsOptional()
+  @IsString()
+  reason?: string;
 }

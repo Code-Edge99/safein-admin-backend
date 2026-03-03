@@ -123,7 +123,11 @@ export class AuthService {
       id: account.id,
       username: account.username,
       name: account.name,
+      email: account.email,
       role: account.role,
+      organization: account.organization
+        ? { id: account.organization.id, name: account.organization.name }
+        : undefined,
       organizationId: account.organizationId || '',
       organizationType: account.organization?.type,
     };

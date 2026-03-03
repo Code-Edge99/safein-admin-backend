@@ -2,11 +2,13 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  BadGatewayException,
   ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
 import { Prisma, EmployeeStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResponse } from '../../common/dto';
 import {
@@ -15,6 +17,7 @@ import {
   EmployeeResponseDto,
   EmployeeDetailDto,
   EmployeeFilterDto,
+  EmployeeMdmManualUnblockDto,
   BulkAssignWorkTypeDto,
   BulkMoveOrganizationDto,
   EmployeeStatusEnum,
@@ -22,7 +25,10 @@ import {
 
 @Injectable()
 export class EmployeesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
+  ) {}
 
   private ensureOrganizationInScope(
     organizationId: string | undefined,
@@ -45,7 +51,7 @@ export class EmployeesService {
   }
 
   async create(dto: CreateEmployeeDto, scopeOrganizationIds?: string[]): Promise<EmployeeResponseDto> {
-    const normalizedEmployeeId = dto.employeeCode?.trim();
+    const normalizedEmployeeId = dto.employeeId?.trim();
     const normalizedPhone = this.normalizePhone(dto.phone);
 
     if (!normalizedEmployeeId) {
@@ -260,10 +266,10 @@ export class EmployeesService {
       throw new BadRequestException('새 비밀번호가 일치하지 않습니다.');
     }
 
-    const normalizedEmployeeCode = dto.employeeCode !== undefined ? dto.employeeCode?.trim() || '' : undefined;
+    const normalizedEmployeeId = dto.employeeId !== undefined ? dto.employeeId?.trim() || '' : undefined;
     const normalizedPhone = dto.phone !== undefined ? this.normalizePhone(dto.phone) : undefined;
 
-    if (normalizedEmployeeCode !== undefined && normalizedEmployeeCode !== employeeId) {
+    if (normalizedEmployeeId !== undefined && normalizedEmployeeId !== employeeId) {
       throw new BadRequestException('직원 ID는 수정할 수 없습니다.');
     }
 
@@ -558,10 +564,54 @@ export class EmployeesService {
     return this.toResponseDto(updated);
   }
 
+  async setMdmManualUnblock(
+    employeeId: string,
+    dto: EmployeeMdmManualUnblockDto,
+    scopeOrganizationIds?: string[],
+  ) {
+    const employee = await this.prisma.employee.findUnique({ where: { id: employeeId } });
+    if (!employee) {
+      throw new NotFoundException('직원을 찾을 수 없습니다.');
+    }
+    this.assertOrganizationInScope(employee.organizationId, scopeOrganizationIds);
+
+    const normalizedDeviceId = dto.deviceId?.trim();
+    if (!normalizedDeviceId) {
+      throw new BadRequestException('deviceId는 필수입니다.');
+    }
+
+    const device = await this.prisma.device.findFirst({
+      where: {
+        deviceId: normalizedDeviceId,
+        employeeId,
+      },
+      select: {
+        id: true,
+        deviceId: true,
+        employeeId: true,
+      },
+    });
+
+    if (!device) {
+      throw new BadRequestException('해당 직원에게 할당된 디바이스를 찾을 수 없습니다.');
+    }
+
+    const appBackendResponse = await this.callAppBackendMdmManualUnblock({
+      deviceId: device.deviceId,
+      reason: dto.reason,
+    });
+
+    return {
+      ok: true,
+      employeeId,
+      deviceId: device.deviceId,
+      appBackendResponse,
+    };
+  }
+
   private toResponseDto(employee: any): EmployeeResponseDto {
     return {
       employeeId: employee.id,
-      employeeCode: employee.id,
       name: employee.name,
       organizationId: employee.organizationId,
       organizationName: employee.organization?.name,
@@ -650,5 +700,46 @@ export class EmployeesService {
     }
 
     throw new ConflictException('중복된 값이 있어 저장할 수 없습니다.');
+  }
+
+  private getAppBackendBaseUrl(): string {
+    const baseUrl = this.configService.get<string>('APP_BACKEND_BASE_URL', 'http://localhost:3100/api/app');
+    return baseUrl.trim().replace(/\/$/, '');
+  }
+
+  private getAppBackendMdmAdminSecret(): string | undefined {
+    return this.configService.get<string>('APP_BACKEND_MDM_ADMIN_SECRET')?.trim()
+      || this.configService.get<string>('MDM_ADMIN_INTERNAL_SECRET')?.trim();
+  }
+
+  private async callAppBackendMdmManualUnblock(payload: { deviceId: string; reason?: string }) {
+    const endpointUrl = `${this.getAppBackendBaseUrl()}/mdm/admin/manual-unblock`;
+    const secret = this.getAppBackendMdmAdminSecret();
+
+    const response = await fetch(endpointUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(secret ? { 'x-admin-internal-secret': secret } : {}),
+      },
+      body: JSON.stringify({
+        deviceId: payload.deviceId,
+        ...(payload.reason?.trim() ? { reason: payload.reason.trim() } : {}),
+      }),
+    });
+
+    if (!response.ok) {
+      const responseText = await response.text();
+      throw new BadGatewayException(
+        `app-backend 수동 해제 호출 실패(status=${response.status}): ${responseText || 'empty response'}`,
+      );
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      return response.json();
+    }
+
+    return { ok: true };
   }
 }

@@ -84,8 +84,18 @@ export class AuthUserDto {
   @ApiProperty({ description: '사용자 이름' })
   name: string;
 
+  @ApiProperty({ description: '이메일', required: false })
+  email?: string;
+
   @ApiProperty({ description: '역할' })
   role: string;
+
+  @ApiProperty({
+    description: '소속 조직',
+    required: false,
+    type: TokenResponseUserOrganizationDto,
+  })
+  organization?: TokenResponseUserOrganizationDto;
 
   @ApiProperty({ description: '조직 ID' })
   organizationId: string;

@@ -24,6 +24,7 @@ import {
   EmployeeResponseDto,
   EmployeeDetailDto,
   EmployeeFilterDto,
+  EmployeeMdmManualUnblockDto,
   BulkAssignWorkTypeDto,
   BulkMoveOrganizationDto,
   BulkEmployeeActionDto,
@@ -100,6 +101,18 @@ export class EmployeesController {
   @ApiResponse({ status: 200, description: '장치 할당 해제 성공', type: EmployeeResponseDto })
   unassignDevice(@Req() req: any, @Param('employeeId') employeeId: string): Promise<EmployeeResponseDto> {
     return this.employeesService.unassignDevice(employeeId, req.organizationScopeIds ?? undefined);
+  }
+
+  @Post(':employeeId/mdm/manual-unblock')
+  @ApiOperation({ summary: '직원 디바이스 수동 해제 설정 (다음 로그인 전까지)' })
+  @ApiParam({ name: 'employeeId', description: '직원 ID' })
+  @ApiResponse({ status: 200, description: '수동 해제 설정 성공' })
+  setMdmManualUnblock(
+    @Req() req: any,
+    @Param('employeeId') employeeId: string,
+    @Body() dto: EmployeeMdmManualUnblockDto,
+  ) {
+    return this.employeesService.setMdmManualUnblock(employeeId, dto, req.organizationScopeIds ?? undefined);
   }
 
   @Delete(':employeeId')

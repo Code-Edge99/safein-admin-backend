@@ -583,6 +583,24 @@ export class ControlPoliciesService {
 
       await this.ensurePolicyHasControlConditions(tx, id);
     });
+    const updatedPolicy = await this.prisma.controlPolicy.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        organizationId: true,
+        workTypeId: true,
+        isActive: true,
+      },
+    });
+
+    if (updatedPolicy) {
+      await this.notifyPolicyChangedForWorkType({
+        policyId: updatedPolicy.id,
+        organizationId: updatedPolicy.organizationId,
+        workTypeId: updatedPolicy.workTypeId,
+        trigger: updatedPolicy.isActive ? 'update' : 'deactivate',
+      });
+    }
 
     return this.findOneDetail(id, scopeOrganizationIds);
   }
@@ -635,14 +653,12 @@ export class ControlPoliciesService {
       } as any,
     });
 
-    if (updated.isActive) {
-      await this.notifyPolicyChangedForWorkType({
-        policyId: updated.id,
-        organizationId: updated.organizationId,
-        workTypeId: updated.workTypeId,
-        trigger: 'activate',
-      });
-    }
+    await this.notifyPolicyChangedForWorkType({
+      policyId: updated.id,
+      organizationId: updated.organizationId,
+      workTypeId: updated.workTypeId,
+      trigger: updated.isActive ? 'activate' : 'deactivate',
+    });
 
     return this.toResponseDto(updated);
   }
@@ -651,7 +667,7 @@ export class ControlPoliciesService {
     policyId: string;
     organizationId: string;
     workTypeId: string;
-    trigger: 'create' | 'activate';
+    trigger: 'create' | 'activate' | 'update' | 'deactivate';
   }): Promise<void> {
     try {
       const appBackendBaseUrl = this.getAppBackendBaseUrl();
@@ -704,6 +720,7 @@ export class ControlPoliciesService {
             token,
             os: device.os,
             policyId: params.policyId,
+            trigger: params.trigger,
           });
           successCount += 1;
         } catch {
@@ -747,7 +764,7 @@ export class ControlPoliciesService {
 
       await this.prisma.auditLog.create({
         data: {
-          action: params.trigger === 'create' ? AuditAction.CREATE : AuditAction.ACTIVATE,
+          action: this.resolveAuditActionByTrigger(params.trigger),
           resourceType: 'ControlPolicyPush',
           resourceId: params.policyId,
           resourceName: 'policy_changed 발송',
@@ -765,8 +782,15 @@ export class ControlPoliciesService {
 
   private async sendPolicyChangedPush(
     endpointUrl: string,
-    params: { token: string; os: DeviceOS; policyId: string },
+    params: {
+      token: string;
+      os: DeviceOS;
+      policyId: string;
+      trigger: 'create' | 'activate' | 'update' | 'deactivate';
+    },
   ): Promise<void> {
+    const policyApplied = params.trigger === 'deactivate' ? 'false' : 'true';
+
     const response = await fetch(endpointUrl, {
       method: 'POST',
       headers: {
@@ -778,6 +802,10 @@ export class ControlPoliciesService {
           data: {
             type: 'policy_changed',
             policyVersion: params.policyId,
+            extraData: {
+              trigger: params.trigger,
+              policyApplied,
+            },
           },
           ...(params.os === DeviceOS.Android
             ? {
@@ -803,6 +831,22 @@ export class ControlPoliciesService {
   private getAppBackendBaseUrl(): string {
     const baseUrl = this.configService.get<string>('APP_BACKEND_BASE_URL', 'http://localhost:3100/api/app');
     return baseUrl.trim().replace(/\/$/, '');
+  }
+
+  private resolveAuditActionByTrigger(
+    trigger: 'create' | 'activate' | 'update' | 'deactivate',
+  ): AuditAction {
+    switch (trigger) {
+      case 'create':
+        return AuditAction.CREATE;
+      case 'activate':
+        return AuditAction.ACTIVATE;
+      case 'deactivate':
+        return AuditAction.DEACTIVATE;
+      case 'update':
+      default:
+        return AuditAction.UPDATE;
+    }
   }
 
   async assignZones(
