@@ -8,7 +8,6 @@ import {
   Delete,
   Req,
   UseGuards,
-  ParseUUIDPipe,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -65,7 +64,7 @@ export class OrganizationsController {
   @ApiParam({ name: 'id', description: '조직 ID' })
   @ApiResponse({ status: 200, description: '조직 상세', type: OrganizationResponseDto })
   @ApiResponse({ status: 404, description: '조직을 찾을 수 없음' })
-  findOne(@Req() req: any, @Param('id', ParseUUIDPipe) id: string): Promise<OrganizationResponseDto> {
+  findOne(@Req() req: any, @Param('id') id: string): Promise<OrganizationResponseDto> {
     return this.organizationsService.findOne(id, req.organizationScopeIds ?? undefined);
   }
 
@@ -73,7 +72,7 @@ export class OrganizationsController {
   @ApiOperation({ summary: '조직 통계 조회' })
   @ApiParam({ name: 'id', description: '조직 ID' })
   @ApiResponse({ status: 200, description: '조직 통계', type: OrganizationStatsDto })
-  findOneWithStats(@Req() req: any, @Param('id', ParseUUIDPipe) id: string): Promise<OrganizationStatsDto> {
+  findOneWithStats(@Req() req: any, @Param('id') id: string): Promise<OrganizationStatsDto> {
     return this.organizationsService.findOneWithStats(id, req.organizationScopeIds ?? undefined);
   }
 
@@ -81,7 +80,7 @@ export class OrganizationsController {
   @ApiOperation({ summary: '상위 조직 목록 조회' })
   @ApiParam({ name: 'id', description: '조직 ID' })
   @ApiResponse({ status: 200, description: '상위 조직 목록', type: [OrganizationResponseDto] })
-  getAncestors(@Req() req: any, @Param('id', ParseUUIDPipe) id: string): Promise<OrganizationResponseDto[]> {
+  getAncestors(@Req() req: any, @Param('id') id: string): Promise<OrganizationResponseDto[]> {
     return this.organizationsService.getAncestors(id, req.organizationScopeIds ?? undefined);
   }
 
@@ -89,7 +88,7 @@ export class OrganizationsController {
   @ApiOperation({ summary: '하위 조직 목록 조회' })
   @ApiParam({ name: 'id', description: '조직 ID' })
   @ApiResponse({ status: 200, description: '하위 조직 목록', type: [OrganizationResponseDto] })
-  getDescendants(@Req() req: any, @Param('id', ParseUUIDPipe) id: string): Promise<OrganizationResponseDto[]> {
+  getDescendants(@Req() req: any, @Param('id') id: string): Promise<OrganizationResponseDto[]> {
     return this.organizationsService.getDescendants(id, req.organizationScopeIds ?? undefined);
   }
 
@@ -99,7 +98,7 @@ export class OrganizationsController {
   @ApiResponse({ status: 200, description: '조직 수정 성공', type: OrganizationResponseDto })
   update(
     @Req() req: any,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() updateOrganizationDto: UpdateOrganizationDto,
   ): Promise<OrganizationResponseDto> {
     return this.organizationsService.update(
@@ -115,7 +114,7 @@ export class OrganizationsController {
   @ApiParam({ name: 'id', description: '조직 ID' })
   @ApiResponse({ status: 200, description: '조직 삭제 성공' })
   @ApiResponse({ status: 400, description: '삭제 불가 (하위 조직 또는 직원 존재)' })
-  remove(@Req() req: any, @Param('id', ParseUUIDPipe) id: string): Promise<void> {
+  remove(@Req() req: any, @Param('id') id: string): Promise<void> {
     return this.organizationsService.remove(id, req.organizationScopeIds ?? undefined);
   }
 }
