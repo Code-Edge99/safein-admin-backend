@@ -62,6 +62,11 @@ export class CreateAccountDto {
 export class UpdateAccountDto extends PartialType(
   OmitType(CreateAccountDto, ['password', 'username'] as const),
 ) {
+  @ApiPropertyOptional({ description: '사용자명 (로그인 ID)' })
+  @IsString()
+  @IsOptional()
+  username?: string;
+
   @ApiPropertyOptional({ description: '상태', enum: AccountStatusEnum })
   @IsEnum(AccountStatusEnum)
   @IsOptional()

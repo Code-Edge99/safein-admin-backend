@@ -134,11 +134,23 @@ export class AccountsService {
   }
 
   async update(id: string, dto: UpdateAccountDto): Promise<AccountResponseDto> {
-    await this.findOne(id);
+    const existingAccount = await this.findOne(id);
+
+    if (dto.username && dto.username !== existingAccount.username) {
+      const existingUsername = await this.prisma.account.findUnique({
+        where: { username: dto.username },
+        select: { id: true },
+      });
+
+      if (existingUsername) {
+        throw new ConflictException(`이미 사용 중인 사용자명입니다: ${dto.username}`);
+      }
+    }
 
     const account = await this.prisma.account.update({
       where: { id },
       data: {
+        username: dto.username,
         name: dto.name,
         email: dto.email,
         phone: dto.phone,
