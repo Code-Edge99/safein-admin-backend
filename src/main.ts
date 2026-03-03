@@ -54,7 +54,7 @@ async function bootstrap() {
 
   // Global filters / interceptors
   app.useGlobalFilters(new AllExceptionsFilter());
-  app.useGlobalInterceptors(new RequestLoggingInterceptor(), new TransformInterceptor());
+  app.useGlobalInterceptors(app.get(RequestLoggingInterceptor), new TransformInterceptor());
 
   // Validation
   app.useGlobalPipes(

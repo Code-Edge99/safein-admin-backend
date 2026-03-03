@@ -19,6 +19,7 @@ import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { LoginHistoryModule } from './modules/login-history/login-history.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { PermissionsModule } from './modules/permissions/permissions.module';
+import { RequestLoggingInterceptor } from './common/interceptors/request-logging.interceptor';
 
 @Module({
   imports: [
@@ -50,6 +51,6 @@ import { PermissionsModule } from './modules/permissions/permissions.module';
     PermissionsModule,
   ],
   controllers: [],
-  providers: [],
+  providers: [RequestLoggingInterceptor],
 })
 export class AppModule {}
