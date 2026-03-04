@@ -19,6 +19,16 @@ import {
   ControlPolicyStatsDto,
 } from './dto';
 
+class PolicyPushSendError extends Error {
+  constructor(
+    message: string,
+    readonly shouldMarkTokenAsError: boolean,
+  ) {
+    super(message);
+    this.name = 'PolicyPushSendError';
+  }
+}
+
 @Injectable()
 export class ControlPoliciesService {
   private readonly logger = new Logger(ControlPoliciesService.name);
@@ -768,7 +778,8 @@ export class ControlPoliciesService {
       `;
 
       const targetEmployeeIds = new Set<string>();
-      const failedDeviceIds: string[] = [];
+      const failedDispatchDeviceIds: string[] = [];
+      const tokenErrorDeviceIds: string[] = [];
       let successCount = 0;
       let targetTokenCount = 0;
 
@@ -789,14 +800,18 @@ export class ControlPoliciesService {
             trigger: params.trigger,
           });
           successCount += 1;
-        } catch {
-          failedDeviceIds.push(device.id);
+        } catch (error) {
+          failedDispatchDeviceIds.push(device.id);
+
+          if (error instanceof PolicyPushSendError && error.shouldMarkTokenAsError) {
+            tokenErrorDeviceIds.push(device.id);
+          }
         }
       }
 
       let markedAsErrorCount = 0;
-      if (failedDeviceIds.length > 0) {
-        const uniqueFailedDeviceIds = Array.from(new Set(failedDeviceIds));
+      if (tokenErrorDeviceIds.length > 0) {
+        const uniqueFailedDeviceIds = Array.from(new Set(tokenErrorDeviceIds));
         markedAsErrorCount = await this.prisma.$executeRaw`
           UPDATE devices
           SET "pushTokenStatus" = 'ERROR',
@@ -815,16 +830,16 @@ export class ControlPoliciesService {
         employeesWithoutToken: Math.max(totalTargetEmployees - targetEmployeeIds.size, 0),
         targetTokens: targetTokenCount,
         successCount,
-        failedCount: failedDeviceIds.length,
+        failedCount: failedDispatchDeviceIds.length,
         markedAsErrorCount,
       };
 
       this.logger.log(`[policy_changed] ${JSON.stringify(summary)}`);
 
-      if (failedDeviceIds.length > 0) {
+      if (failedDispatchDeviceIds.length > 0) {
         this.logger.warn(
-          `[policy_changed] failed device ids: ${failedDeviceIds.slice(0, 20).join(', ')}`
-          + `${failedDeviceIds.length > 20 ? ' ...' : ''}`,
+          `[policy_changed] failed device ids: ${failedDispatchDeviceIds.slice(0, 20).join(', ')}`
+          + `${failedDispatchDeviceIds.length > 20 ? ' ...' : ''}`,
         );
       }
 
@@ -890,7 +905,10 @@ export class ControlPoliciesService {
 
     if (!response.ok) {
       const responseText = await response.text();
-      throw new Error(`status=${response.status}, body=${responseText || 'empty'}`);
+      throw new PolicyPushSendError(
+        `status=${response.status}, body=${responseText || 'empty'}`,
+        response.status === 502,
+      );
     }
   }
 

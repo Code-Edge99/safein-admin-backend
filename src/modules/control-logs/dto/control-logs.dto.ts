@@ -144,6 +144,12 @@ export class ControlLogResponseDto {
     deviceId: string;
   };
 
+  @ApiPropertyOptional({ description: '스냅샷 조직 ID' })
+  organizationId?: string;
+
+  @ApiPropertyOptional({ description: '스냅샷 조직명' })
+  organizationName?: string;
+
   @ApiPropertyOptional({ description: '정책 정보' })
   policy?: {
     id: string;

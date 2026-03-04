@@ -13,6 +13,42 @@ import {
 export class ControlLogsService {
   constructor(private prisma: PrismaService) {}
 
+  private buildScopeCondition(scopeOrganizationIds: string[]) {
+    return {
+      OR: [
+        { organizationId: { in: scopeOrganizationIds } },
+        {
+          AND: [
+            { organizationId: null },
+            { device: { organizationId: { in: scopeOrganizationIds } } },
+          ],
+        },
+      ],
+    };
+  }
+
+  private buildOrganizationCondition(organizationId: string) {
+    return {
+      OR: [
+        { organizationId },
+        {
+          AND: [
+            { organizationId: null },
+            { device: { organizationId } },
+          ],
+        },
+      ],
+    };
+  }
+
+  private appendWhereCondition(where: any, condition: any): void {
+    if (!where.AND) {
+      where.AND = [];
+    }
+
+    where.AND.push(condition);
+  }
+
   private ensureOrganizationInScope(
     organizationId: string | undefined,
     scopeOrganizationIds?: string[],
@@ -31,10 +67,7 @@ export class ControlLogsService {
       return;
     }
 
-    where.employee = {
-      ...(where.employee || {}),
-      organizationId: { in: scopeOrganizationIds },
-    };
+    this.appendWhereCondition(where, this.buildScopeCondition(scopeOrganizationIds));
   }
 
   private async resolveDeviceInternalId(rawDeviceId: string): Promise<string> {
@@ -48,11 +81,32 @@ export class ControlLogsService {
     return matchedDevice?.id ?? rawDeviceId;
   }
 
+  private async resolveDeviceContext(rawDeviceId: string): Promise<{ id: string; organizationId: string | null } | null> {
+    const matchedDevice = await this.prisma.device.findFirst({
+      where: {
+        OR: [{ id: rawDeviceId }, { deviceId: rawDeviceId }],
+      },
+      select: { id: true, organizationId: true },
+    });
+
+    if (!matchedDevice) {
+      return null;
+    }
+
+    return {
+      id: matchedDevice.id,
+      organizationId: matchedDevice.organizationId,
+    };
+  }
+
   async create(createDto: CreateControlLogDto): Promise<ControlLogResponseDto> {
+    const resolvedDevice = await this.resolveDeviceContext(createDto.deviceId);
+
     const log = await this.prisma.controlLog.create({
       data: {
         employeeId: createDto.employeeId,
-        deviceId: createDto.deviceId,
+        deviceId: resolvedDevice?.id ?? createDto.deviceId,
+        organizationId: resolvedDevice?.organizationId ?? null,
         policyId: createDto.policyId,
         zoneId: createDto.zoneId,
         type: createDto.type as any,
@@ -68,8 +122,23 @@ export class ControlLogsService {
         behaviorSpeed: createDto.behaviorSpeed,
       },
       include: {
-        employee: { select: { id: true, name: true } },
-        device: { select: { id: true, deviceId: true } },
+        employee: {
+          select: {
+            id: true,
+            name: true,
+            organizationId: true,
+            organization: { select: { id: true, name: true } },
+          },
+        },
+        device: {
+          select: {
+            id: true,
+            deviceId: true,
+            organizationId: true,
+            organization: { select: { id: true, name: true } },
+          },
+        },
+        organization: { select: { id: true, name: true } },
         policy: { select: { id: true, name: true } },
         zone: { select: { id: true, name: true } },
       },
@@ -136,10 +205,7 @@ export class ControlLogsService {
 
     if (organizationId) {
       this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
-      where.employee = {
-        ...(where.employee || {}),
-        organizationId,
-      };
+      this.appendWhereCondition(where, this.buildOrganizationCondition(organizationId));
     }
 
     if (search) {
@@ -170,7 +236,15 @@ export class ControlLogsService {
               organization: { select: { id: true, name: true } },
             },
           },
-          device: { select: { id: true, deviceId: true } },
+          device: {
+            select: {
+              id: true,
+              deviceId: true,
+              organizationId: true,
+              organization: { select: { id: true, name: true } },
+            },
+          },
+          organization: { select: { id: true, name: true } },
           policy: { select: { id: true, name: true } },
           zone: { select: { id: true, name: true } },
         },
@@ -199,7 +273,15 @@ export class ControlLogsService {
             organization: { select: { id: true, name: true } },
           },
         },
-        device: { select: { id: true, deviceId: true } },
+        device: {
+          select: {
+            id: true,
+            deviceId: true,
+            organizationId: true,
+            organization: { select: { id: true, name: true } },
+          },
+        },
+        organization: { select: { id: true, name: true } },
         policy: { select: { id: true, name: true } },
         zone: { select: { id: true, name: true } },
       },
@@ -209,7 +291,8 @@ export class ControlLogsService {
       throw new NotFoundException('제어 로그를 찾을 수 없습니다.');
     }
 
-    if (scopeOrganizationIds && !scopeOrganizationIds.includes(log.employee.organizationId)) {
+    const logOrganizationId = (log as any).organizationId ?? log.device?.organizationId;
+    if (scopeOrganizationIds && (!logOrganizationId || !scopeOrganizationIds.includes(logOrganizationId))) {
       throw new NotFoundException('제어 로그를 찾을 수 없습니다.');
     }
 
@@ -274,13 +357,7 @@ export class ControlLogsService {
     const dailyLogs = await this.prisma.controlLog.findMany({
       where: {
         timestamp: { gte: sevenDaysAgo },
-        ...(scopeOrganizationIds
-          ? {
-              employee: {
-                organizationId: { in: scopeOrganizationIds },
-              },
-            }
-          : {}),
+        ...(scopeOrganizationIds ? { AND: [this.buildScopeCondition(scopeOrganizationIds)] } : {}),
       },
       select: { timestamp: true },
     });
@@ -320,11 +397,9 @@ export class ControlLogsService {
 
     if (organizationId) {
       this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
-      where.employee = { organizationId };
+      this.appendWhereCondition(where, this.buildOrganizationCondition(organizationId));
     } else if (scopeOrganizationIds) {
-      where.employee = {
-        organizationId: { in: scopeOrganizationIds },
-      };
+      this.appendWhereCondition(where, this.buildScopeCondition(scopeOrganizationIds));
     }
 
     // Get employees with most logs
@@ -355,25 +430,13 @@ export class ControlLogsService {
           where: {
             employeeId: empLog.employeeId,
             action: 'blocked',
-            ...(scopeOrganizationIds
-              ? {
-                  employee: {
-                    organizationId: { in: scopeOrganizationIds },
-                  },
-                }
-              : {}),
+            ...(scopeOrganizationIds ? { AND: [this.buildScopeCondition(scopeOrganizationIds)] } : {}),
           },
         }),
         this.prisma.controlLog.findFirst({
           where: {
             employeeId: empLog.employeeId,
-            ...(scopeOrganizationIds
-              ? {
-                  employee: {
-                    organizationId: { in: scopeOrganizationIds },
-                  },
-                }
-              : {}),
+            ...(scopeOrganizationIds ? { AND: [this.buildScopeCondition(scopeOrganizationIds)] } : {}),
           },
           orderBy: { timestamp: 'desc' },
           select: { timestamp: true },
@@ -400,15 +463,19 @@ export class ControlLogsService {
       take: limit,
       orderBy: { timestamp: 'desc' },
       where: scopeOrganizationIds
-        ? {
-            employee: {
-              organizationId: { in: scopeOrganizationIds },
-            },
-          }
+        ? { AND: [this.buildScopeCondition(scopeOrganizationIds)] }
         : undefined,
       include: {
         employee: { select: { id: true, name: true } },
-        device: { select: { id: true, deviceId: true } },
+        device: {
+          select: {
+            id: true,
+            deviceId: true,
+            organizationId: true,
+            organization: { select: { id: true, name: true } },
+          },
+        },
+        organization: { select: { id: true, name: true } },
         policy: { select: { id: true, name: true } },
         zone: { select: { id: true, name: true } },
       },
@@ -439,6 +506,8 @@ export class ControlLogsService {
             organizationName: log.employee.organization?.name || undefined,
           }
         : undefined,
+      organizationId: log.organizationId || log.device?.organizationId || undefined,
+      organizationName: log.organization?.name || log.device?.organization?.name || undefined,
       device: log.device,
       policy: log.policy,
       zone: log.zone,
