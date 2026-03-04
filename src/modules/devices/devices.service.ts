@@ -40,13 +40,17 @@ export class DevicesService {
   }
 
   async create(dto: CreateDeviceDto, scopeOrganizationIds?: string[]): Promise<DeviceResponseDto> {
-    // 장치 ID 중복 체크
-    const existing = await this.prisma.device.findUnique({
-      where: { deviceId: dto.deviceId },
+    // 동일 deviceId는 허용하되, 같은 소유 문맥(직원 또는 미할당) 내 중복은 방지
+    const existing = await this.prisma.device.findFirst({
+      where: {
+        deviceId: dto.deviceId,
+        employeeId: dto.employeeId ?? null,
+      },
+      select: { id: true },
     });
 
     if (existing) {
-      throw new ConflictException('이미 등록된 장치입니다.');
+      throw new ConflictException('동일 소유 문맥에 이미 등록된 장치입니다.');
     }
 
     // 직원 존재 여부 확인
@@ -192,8 +196,16 @@ export class DevicesService {
   }
 
   async findByDeviceId(deviceId: string, scopeOrganizationIds?: string[]): Promise<DeviceResponseDto> {
-    const device = await this.prisma.device.findUnique({
-      where: { deviceId },
+    const device = await this.prisma.device.findFirst({
+      where: {
+        deviceId,
+        ...(scopeOrganizationIds
+          ? {
+              organizationId: { in: scopeOrganizationIds },
+            }
+          : {}),
+      },
+      orderBy: { updatedAt: 'desc' },
       include: {
         employee: true,
         organization: true,
@@ -203,9 +215,6 @@ export class DevicesService {
     if (!device) {
       throw new NotFoundException('장치를 찾을 수 없습니다.');
     }
-
-    this.assertDeviceInScope(device, scopeOrganizationIds);
-
     return this.toResponseDto(device);
   }
 

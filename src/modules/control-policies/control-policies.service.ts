@@ -106,7 +106,6 @@ export class ControlPoliciesService {
     this.ensureSingleSelectionConstraints({
       timePolicyIds,
       behaviorConditionIds,
-      allowedAppPresetIds,
     });
 
     this.ensureAtLeastOneControlConditionInput({
@@ -223,7 +222,24 @@ export class ControlPoliciesService {
           },
           allowedApps: {
             include: {
-              preset: { select: { id: true, name: true } },
+                preset: {
+                  select: {
+                    id: true,
+                    name: true,
+                    items: {
+                      include: {
+                        allowedApp: {
+                          select: {
+                            id: true,
+                            name: true,
+                            packageName: true,
+                            iconUrl: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
             },
           },
           _count: {
@@ -279,7 +295,24 @@ export class ControlPoliciesService {
         },
         allowedApps: {
           include: {
-            preset: { select: { id: true, name: true } },
+            preset: {
+              select: {
+                id: true,
+                name: true,
+                items: {
+                  include: {
+                    allowedApp: {
+                      select: {
+                        id: true,
+                        name: true,
+                        packageName: true,
+                        iconUrl: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
           },
         },
         _count: {
@@ -357,7 +390,24 @@ export class ControlPoliciesService {
         },
         allowedApps: {
           include: {
-            preset: { select: { id: true, name: true } },
+            preset: {
+              select: {
+                id: true,
+                name: true,
+                items: {
+                  include: {
+                    allowedApp: {
+                      select: {
+                        id: true,
+                        name: true,
+                        packageName: true,
+                        iconUrl: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
           },
         },
         targetEmployees: {
@@ -401,7 +451,24 @@ export class ControlPoliciesService {
         },
         allowedApps: {
           include: {
-            preset: { select: { id: true, name: true } },
+            preset: {
+              select: {
+                id: true,
+                name: true,
+                items: {
+                  include: {
+                    allowedApp: {
+                      select: {
+                        id: true,
+                        name: true,
+                        packageName: true,
+                        iconUrl: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
           },
         },
         targetEmployees: {
@@ -478,7 +545,6 @@ export class ControlPoliciesService {
       this.ensureSingleSelectionConstraints({
         timePolicyIds,
         behaviorConditionIds,
-        allowedAppPresetIds,
       });
 
       // Check if policy already exists for this work type (1:1 relationship)
@@ -963,7 +1029,6 @@ export class ControlPoliciesService {
     }
 
     await this.validatePolicyRelations(this.prisma, policy.organizationId, { allowedAppPresetIds });
-    this.ensureSingleSelectionConstraints({ allowedAppPresetIds });
 
     await this.prisma.$transaction(async (tx: any) => {
       await tx.controlPolicyAllowedApp.deleteMany({ where: { policyId } });
@@ -1097,7 +1162,6 @@ export class ControlPoliciesService {
   private ensureSingleSelectionConstraints(params: {
     timePolicyIds?: string[];
     behaviorConditionIds?: string[];
-    allowedAppPresetIds?: string[];
   }): void {
     if (params.timePolicyIds !== undefined && this.normalizeIds(params.timePolicyIds).length > 1) {
       throw new BadRequestException('시간 조건은 1개만 설정할 수 있습니다.');
@@ -1105,10 +1169,6 @@ export class ControlPoliciesService {
 
     if (params.behaviorConditionIds !== undefined && this.normalizeIds(params.behaviorConditionIds).length > 1) {
       throw new BadRequestException('행동 조건은 1개만 설정할 수 있습니다.');
-    }
-
-    if (params.allowedAppPresetIds !== undefined && this.normalizeIds(params.allowedAppPresetIds).length > 1) {
-      throw new BadRequestException('허용앱 프리셋은 1개만 설정할 수 있습니다.');
     }
   }
 
@@ -1283,7 +1343,7 @@ export class ControlPoliciesService {
       zones: policy.zones?.map((z: any) => z.zone) ?? [],
       timePolicies: policy.timePolicies?.map((t: any) => t.timePolicy) ?? [],
       behaviorConditions: policy.behaviors?.map((b: any) => b.behaviorCondition) ?? [],
-      allowedAppPresets: policy.allowedApps?.map((h: any) => h.preset) ?? [],
+      allowedAppPresets: this.mapAllowedAppPresets(policy.allowedApps),
       zoneCount: policy._count?.zones ?? policy.zones?.length ?? 0,
       timePolicyCount: policy._count?.timePolicies ?? policy.timePolicies?.length ?? 0,
       behaviorConditionCount: policy._count?.behaviors ?? policy.behaviors?.length ?? 0,
@@ -1311,10 +1371,34 @@ export class ControlPoliciesService {
       zones: policy.zones?.map((z: any) => z.zone) ?? [],
       timePolicies: policy.timePolicies?.map((t: any) => t.timePolicy) ?? [],
       behaviorConditions: policy.behaviors?.map((b: any) => b.behaviorCondition) ?? [],
-      allowedAppPresets: policy.allowedApps?.map((h: any) => h.preset) ?? [],
+      allowedAppPresets: this.mapAllowedAppPresets(policy.allowedApps),
       targetEmployees: policy.targetEmployees?.map((e: any) => e.employee) ?? [],
       createdAt: policy.createdAt,
       updatedAt: policy.updatedAt,
     };
+  }
+  private mapAllowedAppPresets(allowedApps: any[] | undefined) {
+    if (!Array.isArray(allowedApps)) {
+      return [];
+    }
+
+    return allowedApps
+      .map((item: any) => item?.preset)
+      .filter((preset: any) => !!preset?.id)
+      .map((preset: any) => ({
+        id: preset.id,
+        name: preset.name,
+        apps: Array.isArray(preset.items)
+          ? preset.items
+            .map((presetItem: any) => presetItem?.allowedApp)
+            .filter((app: any) => !!app?.id)
+            .map((app: any) => ({
+              id: app.id,
+              name: app.name,
+              packageName: app.packageName,
+              iconUrl: app.iconUrl ?? undefined,
+            }))
+          : [],
+      }));
   }
 }

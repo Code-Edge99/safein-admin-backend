@@ -63,7 +63,6 @@ export class CreateControlPolicyDto {
   @ApiPropertyOptional({ description: '적용 허용앱 프리셋 ID 목록' })
   @IsArray()
   @IsString({ each: true })
-  @ArrayMaxSize(1)
   @IsOptional()
   allowedAppPresetIds?: string[];
 
@@ -134,7 +133,16 @@ export class ControlPolicyResponseDto {
   behaviorConditions?: { id: string; name: string; type?: string }[];
 
   @ApiPropertyOptional({ description: '적용 허용앱 프리셋 목록' })
-  allowedAppPresets?: { id: string; name: string }[];
+  allowedAppPresets?: {
+    id: string;
+    name: string;
+    apps?: {
+      id: string;
+      name: string;
+      packageName: string;
+      iconUrl?: string;
+    }[];
+  }[];
 
   @ApiProperty({ description: '생성일시' })
   createdAt: Date;
@@ -154,7 +162,16 @@ export class ControlPolicyDetailDto extends ControlPolicyResponseDto {
   behaviorConditions: { id: string; name: string; type: string }[];
 
   @ApiProperty({ description: '적용 허용앱 프리셋 목록' })
-  allowedAppPresets: { id: string; name: string }[];
+  allowedAppPresets: {
+    id: string;
+    name: string;
+    apps?: {
+      id: string;
+      name: string;
+      packageName: string;
+      iconUrl?: string;
+    }[];
+  }[];
 
   @ApiProperty({ description: '적용 대상 직원 목록' })
   targetEmployees: { id: string; name: string }[];
@@ -237,7 +254,6 @@ export class AssignAllowedAppsDto {
   @ApiProperty({ description: '허용앱 프리셋 ID 목록' })
   @IsArray()
   @IsString({ each: true })
-  @ArrayMaxSize(1)
   allowedAppPresetIds: string[];
 }
 
