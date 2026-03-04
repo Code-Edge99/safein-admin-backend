@@ -121,7 +121,7 @@ export class DashboardService {
       totalDevices,
       activeDevices,
       activePolicies,
-      dangerZones,
+      activeZones,
       todayLogs,
       yesterdayLogs,
       onlineEmployees,
@@ -171,7 +171,6 @@ export class DashboardService {
       }),
       this.prisma.zone.count({
         where: {
-          type: 'danger',
           isActive: true,
           ...(scopeOrganizationIds
             ? {
@@ -249,7 +248,7 @@ export class DashboardService {
       totalDevices,
       activeDevices,
       activePolicies,
-      criticalZones: dangerZones,
+      criticalZones: activeZones,
       todayViolations: todayLogs,
       yesterdayViolations: yesterdayLogs,
       violationChangeRate,
@@ -354,7 +353,126 @@ export class DashboardService {
   }
 
   async getZoneViolationData(startDate?: string, endDate?: string, scopeOrganizationIds?: string[]) {
-    return [];
+    const end = endDate ? new Date(endDate) : new Date();
+    const start = startDate ? new Date(startDate) : new Date(end.getTime() - 7 * 86400000);
+
+    const stats = await this.prisma.zoneViolationStat.findMany({
+      where: {
+        date: { gte: start, lte: end },
+        ...(scopeOrganizationIds
+          ? {
+              zone: {
+                organizationId: { in: scopeOrganizationIds },
+              },
+            }
+          : {}),
+      },
+      include: {
+        zone: { select: { id: true, name: true, type: true } },
+      },
+    });
+
+    const uniqueByZoneEmployee = await this.prisma.controlLog.groupBy({
+      by: ['zoneId', 'employeeId'],
+      where: {
+        action: 'blocked',
+        zoneId: { not: null },
+        timestamp: { gte: start, lte: end },
+        ...(scopeOrganizationIds
+          ? {
+              employee: {
+                organizationId: { in: scopeOrganizationIds },
+              },
+            }
+          : {}),
+      },
+    });
+
+    const uniqueEmployeeCountByZone = new Map<string, number>();
+    uniqueByZoneEmployee.forEach((item) => {
+      if (!item.zoneId) return;
+      uniqueEmployeeCountByZone.set(
+        item.zoneId,
+        (uniqueEmployeeCountByZone.get(item.zoneId) || 0) + 1,
+      );
+    });
+
+    const zoneMap = new Map<string, { name: string; type: string; count: number; employees: number }>();
+    stats.forEach((s) => {
+      const key = s.zoneId;
+      const existing = zoneMap.get(key) || {
+        name: s.zone?.name || '',
+        type: s.zone?.type || '',
+        count: 0,
+        employees: 0,
+      };
+      zoneMap.set(key, {
+        name: existing.name,
+        type: existing.type,
+        count: existing.count + s.violationCount,
+        employees: uniqueEmployeeCountByZone.get(key) || 0,
+      });
+    });
+
+    if (zoneMap.size === 0) {
+      const logs = await this.prisma.controlLog.findMany({
+        where: {
+          action: 'blocked',
+          zoneId: { not: null },
+          timestamp: { gte: start, lte: end },
+          ...(scopeOrganizationIds
+            ? {
+                employee: {
+                  organizationId: { in: scopeOrganizationIds },
+                },
+              }
+            : {}),
+        },
+        include: {
+          zone: { select: { id: true, name: true, type: true } },
+        },
+      });
+
+      logs.forEach((log) => {
+        if (!log.zoneId || !log.zone) return;
+        const key = log.zoneId;
+        const existing = zoneMap.get(key) || {
+          name: log.zone.name,
+          type: log.zone.type,
+          count: 0,
+          employees: 0,
+        };
+
+        zoneMap.set(key, {
+          name: existing.name,
+          type: existing.type,
+          count: existing.count + 1,
+          employees: uniqueEmployeeCountByZone.get(key) || 0,
+        });
+      });
+    }
+
+    const severityMap: Record<string, string> = {
+      danger: '위험',
+      normal: '일반',
+      work: '작업',
+      safe: '안전',
+    };
+
+    const colorMap: Record<string, string> = {
+      danger: '#ef4444',
+      normal: '#3b82f6',
+      work: '#f59e0b',
+      safe: '#22c55e',
+    };
+
+    return Array.from(zoneMap.entries()).map(([, data]) => ({
+      name: data.name,
+      value: data.count,
+      color: colorMap[data.type] || '#6b7280',
+      severity: severityMap[data.type] || '일반',
+      uniqueEmployees: data.employees,
+    }));
   }
 
   async getOrganizationDailyStats(
@@ -494,6 +612,7 @@ export class DashboardService {
       existing.allowedEvents += statAllowedEvents;
       existing.behaviorBlocks += stat.behaviorBlocks;
       existing.allowedAppBlocks += stat.appControlBlocks;
+      existing.zoneViolations += stat.zoneViolations;
       existing.dailyStats.push(stat);
       if (!existing.topBlockedApp && stat.topBlockedApp) {
         existing.topBlockedApp = stat.topBlockedApp;
@@ -525,6 +644,7 @@ export class DashboardService {
           || stat.totalBlocks > 0
           || stat.behaviorBlocks > 0
           || stat.appControlBlocks > 0
+          || stat.zoneViolations > 0
         );
       }).length;
 
@@ -535,8 +655,8 @@ export class DashboardService {
       });
 
       let riskLevel = '낮음';
-      if (emp.totalBlocks > 20 || complianceRate < 60) riskLevel = '높음';
-      else if (emp.totalBlocks > 10 || complianceRate < 80) riskLevel = '보통';
+      if (emp.totalBlocks > 20 || emp.zoneViolations > 5 || complianceRate < 60) riskLevel = '높음';
+      else if (emp.totalBlocks > 10 || emp.zoneViolations > 2 || complianceRate < 80) riskLevel = '보통';
 
       return {
         id: emp.employeeId,
@@ -656,7 +776,7 @@ export class DashboardService {
     const totalBlocks = dailyStats.reduce((s, d) => s + d.totalBlocks, 0);
     const behaviorBlocks = dailyStats.reduce((s, d) => s + d.behaviorBlocks, 0);
     const appControlBlocks = dailyStats.reduce((s, d) => s + d.appControlBlocks, 0);
-    const zoneViolations = 0;
+    const zoneViolations = dailyStats.reduce((s, d) => s + d.zoneViolations, 0);
     const activeDays = dailyStats.filter((stat) => {
       const statTotalEvents = (stat as any).totalEvents ?? stat.totalBlocks;
       return (
@@ -664,6 +784,7 @@ export class DashboardService {
         || stat.totalBlocks > 0
         || stat.behaviorBlocks > 0
         || stat.appControlBlocks > 0
+        || stat.zoneViolations > 0
       );
     }).length;
 
@@ -689,8 +810,8 @@ export class DashboardService {
     });
 
     let riskLevel = '낮음';
-    if (totalBlocks > 20 || complianceRate < 60) riskLevel = '높음';
-    else if (totalBlocks > 10 || complianceRate < 80) riskLevel = '보통';
+    if (totalBlocks > 20 || zoneViolations > 5 || complianceRate < 60) riskLevel = '높음';
+    else if (totalBlocks > 10 || zoneViolations > 2 || complianceRate < 80) riskLevel = '보통';
 
     const weeklyIncreaseRate = olderTotal > 0
       ? Math.round(((recentTotal - olderTotal) / olderTotal) * 100)
@@ -709,8 +830,18 @@ export class DashboardService {
     const uniqueAppCount = appCounts.size;
     const topBlockedApp = topViolationApps.length > 0 ? topViolationApps[0].name : '-';
 
-    // 구역 유형은 분류 키로만 사용하고, 통계에는 반영하지 않음
-    const topRestrictedZones: Array<{ name: string; count: number }> = [];
+    const zoneCounts = new Map<string, { name: string; count: number }>();
+    zoneVisitSessions.forEach((session) => {
+      if (!session.zone) return;
+      const existing = zoneCounts.get(session.zone.id) || { name: session.zone.name, count: 0 };
+      zoneCounts.set(session.zone.id, {
+        name: existing.name,
+        count: existing.count + 1,
+      });
+    });
+    const topRestrictedZones = Array.from(zoneCounts.values())
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 3);
 
     // ── 인사이트: 시간대별 패턴 (ControlLog 기반) ──
     const hourCounts = new Map<number, number>();
@@ -762,18 +893,32 @@ export class DashboardService {
       }
     }
 
-    const closedRestrictedZoneSessions: Array<{ durationSeconds: number | null }> = [];
+    const closedRestrictedZoneSessions = zoneVisitSessions.filter((session) => !!session.exitedAt);
     const avgStayTime =
       closedRestrictedZoneSessions.length > 0
         ? Math.round(
             closedRestrictedZoneSessions.reduce(
-              (sum, session) => sum + Math.max(0, (session.durationSeconds || 0) / 60),
+              (sum, session) => {
+                const durationSeconds = session.durationSeconds
+                  ?? Math.max(
+                    0,
+                    Math.floor((session.exitedAt!.getTime() - session.enteredAt.getTime()) / 1000),
+                  );
+                return sum + Math.max(0, durationSeconds / 60);
+              },
               0,
             ) / closedRestrictedZoneSessions.length,
           )
         : 0;
     const longStayInRestrictedZone = closedRestrictedZoneSessions.filter(
-      (s) => (s.durationSeconds || 0) >= 30 * 60,
+      (session) => {
+        const durationSeconds = session.durationSeconds
+          ?? Math.max(
+            0,
+            Math.floor((session.exitedAt!.getTime() - session.enteredAt.getTime()) / 1000),
+          );
+        return durationSeconds >= 30 * 60;
+      },
     ).length;
 
     const locationLogs = await this.prisma.deviceLocation.findMany({
@@ -993,7 +1138,7 @@ export class DashboardService {
 
       insights: {
         topViolationApps,
-        restrictedZoneEntries: 0,
+        restrictedZoneEntries: zoneVisitSessions.length,
         avgStayTime,
         topRestrictedZones,
         peakBlockTime:
