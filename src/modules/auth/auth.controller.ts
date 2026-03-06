@@ -16,7 +16,13 @@ import {
 } from '@nestjs/swagger';
 import { Request as ExpressRequest } from 'express';
 import { AuthService } from './auth.service';
-import { LoginDto, ChangePasswordDto, TokenResponseDto, AuthUserDto } from './dto';
+import {
+  LoginDto,
+  ChangePasswordDto,
+  TokenResponseDto,
+  AuthUserDto,
+  RefreshTokenDto,
+} from './dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 interface AuthenticatedRequest extends ExpressRequest {
@@ -44,6 +50,15 @@ export class AuthController {
     const userAgent = req.headers['user-agent'] || '';
 
     return this.authService.login(loginDto, ipAddress, userAgent);
+  }
+
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '토큰 재발급' })
+  @ApiResponse({ status: 200, description: '토큰 재발급 성공', type: TokenResponseDto })
+  @ApiResponse({ status: 401, description: '유효하지 않은 리프레시 토큰' })
+  async refresh(@Body() dto: RefreshTokenDto): Promise<TokenResponseDto> {
+    return this.authService.refresh(dto.refreshToken);
   }
 
   @Get('profile')

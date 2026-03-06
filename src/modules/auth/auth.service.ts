@@ -1,17 +1,163 @@
 import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto, ChangePasswordDto, TokenResponseDto, AuthUserDto } from './dto';
 import { AccountStatus, AdminRole, LoginStatus } from '@prisma/client';
 import { FIXED_ADMIN_UNLIMITED_TOKEN, FIXED_ADMIN_UNLIMITED_USER } from './auth.constants';
 
+interface SessionPayload {
+  sub: string;
+  username: string;
+  role: AdminRole;
+  organizationId: string | null;
+}
+
+interface RefreshPayload extends SessionPayload {
+  type: 'refresh';
+  sessionStartedAt: number;
+  lastActivityAt: number;
+}
+
 @Injectable()
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly configService: ConfigService,
   ) {}
+
+  private parseDurationToSeconds(rawValue: string | number | undefined, fallbackSeconds: number): number {
+    if (typeof rawValue === 'number' && Number.isFinite(rawValue) && rawValue > 0) {
+      return Math.floor(rawValue);
+    }
+
+    if (typeof rawValue !== 'string' || rawValue.trim().length === 0) {
+      return fallbackSeconds;
+    }
+
+    const value = rawValue.trim();
+    if (/^\d+$/.test(value)) {
+      return Number(value);
+    }
+
+    const match = value.match(/^(\d+)([smhd])$/i);
+    if (!match) {
+      return fallbackSeconds;
+    }
+
+    const amount = Number(match[1]);
+    const unit = match[2].toLowerCase();
+
+    const multiplier: Record<string, number> = {
+      s: 1,
+      m: 60,
+      h: 3600,
+      d: 86400,
+    };
+
+    return amount * (multiplier[unit] || 1);
+  }
+
+  private getAccessTokenExpiresIn(): string {
+    return this.configService.get<string>('JWT_EXPIRATION', '15m');
+  }
+
+  private getRefreshTokenExpiresIn(): string {
+    return this.configService.get<string>('JWT_REFRESH_EXPIRATION', '30d');
+  }
+
+  private getRefreshSecret(): string {
+    return this.configService.get<string>('JWT_REFRESH_SECRET')
+      || this.configService.get<string>('JWT_SECRET')
+      || '';
+  }
+
+  private buildUserResponse(account: any): TokenResponseDto['user'] {
+    return {
+      id: account.id,
+      username: account.username,
+      name: account.name,
+      email: account.email,
+      role: account.role,
+      organization: account.organization
+        ? { id: account.organization.id, name: account.organization.name }
+        : undefined,
+    };
+  }
+
+  private issueTokens(payload: SessionPayload, user: TokenResponseDto['user']): TokenResponseDto {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const accessExpiresIn = this.getAccessTokenExpiresIn();
+    const refreshExpiresIn = this.getRefreshTokenExpiresIn();
+    const refreshSecret = this.getRefreshSecret();
+
+    const accessToken = this.jwtService.sign(payload, {
+      expiresIn: accessExpiresIn,
+    });
+
+    const refreshTokenPayload: RefreshPayload = {
+      ...payload,
+      type: 'refresh',
+      sessionStartedAt: nowSeconds,
+      lastActivityAt: nowSeconds,
+    };
+
+    const refreshToken = this.jwtService.sign(refreshTokenPayload, {
+      secret: refreshSecret,
+      expiresIn: refreshExpiresIn,
+    });
+
+    return {
+      accessToken,
+      refreshToken,
+      tokenType: 'Bearer',
+      expiresIn: this.parseDurationToSeconds(accessExpiresIn, 900),
+      refreshExpiresIn: this.parseDurationToSeconds(refreshExpiresIn, 2592000),
+      user,
+    };
+  }
+
+  private issueTokensFromRefresh(payload: RefreshPayload, user: TokenResponseDto['user']): TokenResponseDto {
+    const accessExpiresIn = this.getAccessTokenExpiresIn();
+    const refreshExpiresIn = this.getRefreshTokenExpiresIn();
+    const refreshSecret = this.getRefreshSecret();
+    const nowSeconds = Math.floor(Date.now() / 1000);
+
+    const basePayload: SessionPayload = {
+      sub: payload.sub,
+      username: payload.username,
+      role: payload.role,
+      organizationId: payload.organizationId,
+    };
+
+    const accessToken = this.jwtService.sign(basePayload, {
+      expiresIn: accessExpiresIn,
+    });
+
+    const refreshToken = this.jwtService.sign(
+      {
+        ...basePayload,
+        type: 'refresh',
+        sessionStartedAt: payload.sessionStartedAt,
+        lastActivityAt: nowSeconds,
+      },
+      {
+        secret: refreshSecret,
+        expiresIn: refreshExpiresIn,
+      },
+    );
+
+    return {
+      accessToken,
+      refreshToken,
+      tokenType: 'Bearer',
+      expiresIn: this.parseDurationToSeconds(accessExpiresIn, 900),
+      refreshExpiresIn: this.parseDurationToSeconds(refreshExpiresIn, 2592000),
+      user,
+    };
+  }
 
   private isFixedMasterAdminAccount(account: { id: string; username: string }): boolean {
     return (
@@ -87,43 +233,70 @@ export class AuthService {
         accessToken: FIXED_ADMIN_UNLIMITED_TOKEN,
         tokenType: 'Bearer',
         expiresIn: 2147483647,
-        user: {
-          id: account.id,
-          username: account.username,
-          name: account.name,
-          email: account.email,
-          role: account.role,
-          organization: account.organization
-            ? { id: account.organization.id, name: account.organization.name }
-            : undefined,
-        },
+        user: this.buildUserResponse(account),
       };
     }
 
-    const payload = {
+    const payload: SessionPayload = {
       sub: account.id,
       username: account.username,
       role: account.role,
-      organizationId: account.organizationId,
+      organizationId: account.organizationId || null,
     };
 
-    const accessToken = this.jwtService.sign(payload);
+    return this.issueTokens(payload, this.buildUserResponse(account));
+  }
 
-    return {
-      accessToken,
-      tokenType: 'Bearer',
-      expiresIn: 86400, // 1 day in seconds
-      user: {
-        id: account.id,
-        username: account.username,
-        name: account.name,
-        email: account.email,
-        role: account.role,
-        organization: account.organization
-          ? { id: account.organization.id, name: account.organization.name }
-          : undefined,
-      },
-    };
+  async refresh(refreshToken: string): Promise<TokenResponseDto> {
+    const refreshSecret = this.getRefreshSecret();
+    if (!refreshSecret) {
+      throw new UnauthorizedException('리프레시 토큰 설정이 유효하지 않습니다.');
+    }
+
+    let payload: RefreshPayload;
+    try {
+      payload = this.jwtService.verify<RefreshPayload>(refreshToken, {
+        secret: refreshSecret,
+      });
+    } catch {
+      throw new UnauthorizedException('리프레시 토큰이 유효하지 않습니다.');
+    }
+
+    if (payload.type !== 'refresh') {
+      throw new UnauthorizedException('리프레시 토큰 형식이 올바르지 않습니다.');
+    }
+
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const inactivityLimitSeconds = this.parseDurationToSeconds(
+      this.configService.get<string>('JWT_REFRESH_INACTIVITY', '7d'),
+      604800,
+    );
+    const absoluteLimitSeconds = this.parseDurationToSeconds(
+      this.configService.get<string>('JWT_REFRESH_ABSOLUTE_EXPIRATION', '30d'),
+      2592000,
+    );
+
+    if (payload.lastActivityAt && nowSeconds - payload.lastActivityAt > inactivityLimitSeconds) {
+      throw new UnauthorizedException('장시간 미사용으로 세션이 만료되었습니다. 다시 로그인해주세요.');
+    }
+
+    if (payload.sessionStartedAt && nowSeconds - payload.sessionStartedAt > absoluteLimitSeconds) {
+      throw new UnauthorizedException('보안 정책에 따라 세션이 만료되었습니다. 다시 로그인해주세요.');
+    }
+
+    const user = await this.validateUser(payload.sub);
+    if (!user) {
+      throw new UnauthorizedException('유효하지 않은 사용자입니다.');
+    }
+
+    return this.issueTokensFromRefresh(payload, {
+      id: user.id,
+      username: user.username,
+      name: user.name,
+      email: user.email || '',
+      role: user.role,
+      organization: user.organization,
+    });
   }
 
   async validateUser(userId: string): Promise<AuthUserDto | null> {

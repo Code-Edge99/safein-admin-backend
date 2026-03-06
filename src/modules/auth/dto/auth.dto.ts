@@ -64,14 +64,27 @@ export class TokenResponseDto {
   @ApiProperty({ description: 'JWT 액세스 토큰' })
   accessToken: string;
 
+  @ApiProperty({ description: 'JWT 리프레시 토큰', required: false })
+  refreshToken?: string;
+
   @ApiProperty({ description: '토큰 타입' })
   tokenType: string;
 
-  @ApiProperty({ description: '만료 시간 (초)' })
+  @ApiProperty({ description: '액세스 토큰 만료 시간 (초)' })
   expiresIn: number;
+
+  @ApiProperty({ description: '리프레시 토큰 만료 시간 (초)', required: false })
+  refreshExpiresIn?: number;
 
   @ApiProperty({ description: '사용자 정보', type: TokenResponseUserDto })
   user: TokenResponseUserDto;
+}
+
+export class RefreshTokenDto {
+  @ApiProperty({ description: '리프레시 토큰' })
+  @IsString()
+  @IsNotEmpty()
+  refreshToken: string;
 }
 
 export class AuthUserDto {
