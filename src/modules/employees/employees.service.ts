@@ -480,9 +480,10 @@ export class EmployeesService {
 
   async getStats(scopeOrganizationIds?: string[]): Promise<{
     total: number; active: number; resigned: number; exception: number; leave: number;
+    deviceAssigned: number;
     byOrganization: Record<string, number>;
   }> {
-    const [total, byStatus, byOrg] = await Promise.all([
+    const [total, byStatus, byOrg, deviceAssigned] = await Promise.all([
       this.prisma.employee.count({
         where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
       }),
@@ -495,6 +496,12 @@ export class EmployeesService {
         by: ['organizationId'],
         where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
         _count: true,
+      }),
+      this.prisma.device.count({
+        where: {
+          employeeId: { not: null },
+          ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+        },
       }),
     ]);
 
@@ -518,6 +525,7 @@ export class EmployeesService {
       resigned: statusMap['RESIGNED'] || 0,
       exception: statusMap['EXCEPTION'] || 0,
       leave: statusMap['LEAVE'] || 0,
+      deviceAssigned,
       byOrganization,
     };
   }

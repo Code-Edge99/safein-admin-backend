@@ -1262,10 +1262,41 @@ export class DashboardService {
       isActive: !!selectedPolicy.isActive,
       priority: selectedPolicy.priority,
       source: assignedPolicyIds.has(selectedPolicy.id) ? 'EMPLOYEE' : 'WORK_TYPE',
-      timePolicies: (selectedPolicy.timePolicies || []).map((item: any) => item.timePolicy),
+      timePolicies: (selectedPolicy.timePolicies || []).map((item: any) => ({
+        ...item.timePolicy,
+        startTime: this.formatPolicyTime(item.timePolicy?.startTime),
+        endTime: this.formatPolicyTime(item.timePolicy?.endTime),
+      })),
       zones: (selectedPolicy.zones || []).map((item: any) => item.zone),
       behaviorConditions: (selectedPolicy.behaviors || []).map((item: any) => item.behaviorCondition),
     };
+  }
+
+  private formatPolicyTime(value: Date | string | null | undefined): string {
+    if (!value) {
+      return '';
+    }
+
+    if (typeof value === 'string') {
+      const timeOnlyMatch = value.match(/^(\d{2}:\d{2})(?::\d{2})?$/);
+      if (timeOnlyMatch) {
+        return timeOnlyMatch[1];
+      }
+
+      const isoMatch = value.match(/[T\s](\d{2}:\d{2})(?::\d{2})?/);
+      if (isoMatch) {
+        return isoMatch[1];
+      }
+    }
+
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return String(value);
+    }
+
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${hours}:${minutes}`;
   }
 
   async getSiteReports(scopeOrganizationIds?: string[]) {
