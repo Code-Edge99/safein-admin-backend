@@ -150,6 +150,33 @@ export class DeviceResponseDto {
   @ApiPropertyOptional({ description: '푸시 토큰 원문' })
   pushToken?: string;
 
+  @ApiPropertyOptional({ description: '푸시 토큰 마지막 확인/갱신 시각' })
+  pushTokenCheckedAt?: Date;
+
+  @ApiPropertyOptional({ description: '푸시 토큰 상태' })
+  pushTokenStatus?: string;
+
+  @ApiPropertyOptional({ description: 'MDM 등록 상태' })
+  mdmEnrollmentStatus?: string;
+
+  @ApiPropertyOptional({ description: 'MDM 검증 시각' })
+  mdmVerifiedAt?: Date;
+
+  @ApiPropertyOptional({ description: '마지막 MDM 체크인 시각' })
+  lastMdmCheckinAt?: Date;
+
+  @ApiPropertyOptional({ description: '마지막 설치앱 동기화 시각' })
+  lastInstalledAppsSyncAt?: Date;
+
+  @ApiPropertyOptional({ description: '수동 해제 설정 여부' })
+  mdmManualUnblockUntilLogin?: boolean;
+
+  @ApiPropertyOptional({ description: '수동 해제 설정 사유' })
+  mdmManualUnblockReason?: string;
+
+  @ApiPropertyOptional({ description: '수동 해제 설정 시각' })
+  mdmManualUnblockSetAt?: Date;
+
   @ApiProperty({ description: '생성일시' })
   createdAt: Date;
 

@@ -461,6 +461,18 @@ export class DevicesService {
           }
         : undefined,
       pushToken: device.pushToken,
+      pushTokenCheckedAt:
+        device.pushToken || (device.pushTokenStatus && device.pushTokenStatus !== 'NONE')
+          ? device.updatedAt
+          : undefined,
+      pushTokenStatus: device.pushTokenStatus,
+      mdmEnrollmentStatus: device.mdmEnrollmentStatus,
+      mdmVerifiedAt: device.mdmVerifiedAt,
+      lastMdmCheckinAt: device.lastMdmCheckinAt,
+      lastInstalledAppsSyncAt: device.lastInstalledAppsSyncAt,
+      mdmManualUnblockUntilLogin: device.mdmManualUnblockUntilLogin,
+      mdmManualUnblockReason: device.mdmManualUnblockReason,
+      mdmManualUnblockSetAt: device.mdmManualUnblockSetAt,
       createdAt: device.createdAt,
       updatedAt: device.updatedAt,
     };
