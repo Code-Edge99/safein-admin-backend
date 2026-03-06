@@ -1,3 +1,19 @@
+## NCP Maps REST Geocoding 설정
+
+관리자 프론트의 지도 주소 검색은 기본적으로 JS SDK geocoder를 사용하며,
+SDK geocoder 실패 시 admin-backend의 `/api/maps/geocode` 프록시로 자동 fallback 됩니다.
+
+아래 환경변수 중 하나를 설정하세요:
+
+- 권장
+  - `NCP_MAPS_API_KEY_ID=<NCP Client ID>`
+  - `NCP_MAPS_API_KEY=<NCP Client Secret>`
+- 호환(기존 변수명)
+  - `NAVER_MAP_CLIENT_ID=<NCP Client ID>`
+  - `NAVER_MAP_CLIENT_SECRET=<NCP Client Secret>`
+
+프록시는 NCP Maps Geocoding REST API(`https://maps.apigw.ntruss.com/map-geocode/v2/geocode`)를 호출하며,
+요청 헤더에 `x-ncp-apigw-api-key-id`, `x-ncp-apigw-api-key`를 사용합니다.
 # Safein Admin Backend
 
 세이프인 관리자 API 서버 (NestJS + Prisma + PostgreSQL)
