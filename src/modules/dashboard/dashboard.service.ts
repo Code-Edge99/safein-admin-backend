@@ -1007,7 +1007,13 @@ export class DashboardService {
       type: l.type === 'app_control' ? '앱 제어 위반' : '행동 감지',
       action: l.action === 'blocked' ? '차단' : '허용',
       timestamp: l.timestamp.toISOString(),
+      zoneId: l.zone?.id || l.zoneId || null,
       zoneName: l.zone?.name || null,
+      location:
+        l.zone?.name
+        || (l.zone?.id || l.zoneId ? `구역 ID: ${l.zone?.id || l.zoneId}` : null),
+      latitude: l.latitude ? Number(l.latitude) : null,
+      longitude: l.longitude ? Number(l.longitude) : null,
       appName: l.appName || null,
       description:
         l.reason ||
@@ -1022,6 +1028,8 @@ export class DashboardService {
         timestamp: log.timestamp.toISOString(),
         actionLabel: log.action === 'blocked' ? '위반 차단' : '정책 허용',
         category: 'control',
+        zoneId: log.zone?.id || log.zoneId || null,
+        zoneName: log.zone?.name || null,
         description:
           log.reason ||
           (log.type === 'app_control'

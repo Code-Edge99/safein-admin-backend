@@ -511,6 +511,8 @@ export class ControlLogsService {
       device: log.device,
       policy: log.policy,
       zone: log.zone,
+      zoneId: log.zone?.id || log.zoneId || undefined,
+      zoneName: log.zone?.name || undefined,
       createdAt: log.createdAt,
     };
   }

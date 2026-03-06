@@ -162,6 +162,12 @@ export class ControlLogResponseDto {
     name: string;
   };
 
+  @ApiPropertyOptional({ description: '구역 ID(평면 필드)' })
+  zoneId?: string;
+
+  @ApiPropertyOptional({ description: '구역명(평면 필드)' })
+  zoneName?: string;
+
   @ApiProperty({ description: '생성일시' })
   createdAt: Date;
 }
