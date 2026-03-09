@@ -20,6 +20,10 @@ export class AllowedAppsService {
 
   constructor(private prisma: PrismaService) {}
 
+  private normalizePackageName(packageName: string): string {
+    return packageName.trim().toLowerCase();
+  }
+
   private normalizePlatform(platform?: string): 'android' | 'ios' {
     return platform === 'ios' ? 'ios' : 'android';
   }
@@ -44,19 +48,21 @@ export class AllowedAppsService {
   async create(dto: CreateAllowedAppDto): Promise<AllowedAppResponseDto> {
     await this.ensureValidPlatformData();
 
+    const normalizedPackageName = this.normalizePackageName(dto.packageName);
+
     // 패키지 이름 중복 체크
     const existing = await this.prisma.allowedApp.findUnique({
-      where: { packageName: dto.packageName },
+      where: { packageName: normalizedPackageName },
     });
 
     if (existing) {
-      throw new ConflictException(`이미 등록된 패키지입니다: ${dto.packageName}`);
+      throw new ConflictException(`이미 등록된 패키지입니다: ${normalizedPackageName}`);
     }
 
     const app = await this.prisma.allowedApp.create({
       data: {
         name: dto.name,
-        packageName: dto.packageName,
+        packageName: normalizedPackageName,
         category: dto.category,
         platform: this.normalizePlatform(dto.platform),
         iconUrl: dto.iconUrl,
@@ -151,8 +157,10 @@ export class AllowedAppsService {
   async findByPackageName(packageName: string): Promise<AllowedAppResponseDto> {
     await this.ensureValidPlatformData();
 
+    const normalizedPackageName = this.normalizePackageName(packageName);
+
     const app = await this.prisma.allowedApp.findUnique({
-      where: { packageName },
+      where: { packageName: normalizedPackageName },
       include: {
         _count: {
           select: { presetItems: true },
@@ -177,17 +185,22 @@ export class AllowedAppsService {
       updateData.platform = this.normalizePlatform(dto.platform);
     }
 
+    const normalizedPackageName = dto.packageName ? this.normalizePackageName(dto.packageName) : undefined;
+    if (normalizedPackageName) {
+      updateData.packageName = normalizedPackageName;
+    }
+
     // 패키지 이름 변경 시 중복 체크
-    if (dto.packageName) {
+    if (normalizedPackageName) {
       const existing = await this.prisma.allowedApp.findFirst({
         where: {
-          packageName: dto.packageName,
+          packageName: normalizedPackageName,
           NOT: { id },
         },
       });
 
       if (existing) {
-        throw new ConflictException(`이미 등록된 패키지입니다: ${dto.packageName}`);
+        throw new ConflictException(`이미 등록된 패키지입니다: ${normalizedPackageName}`);
       }
     }
 
@@ -387,7 +400,7 @@ export class AllowedAppsService {
         SELECT ha."id" AS "allowedAppId", COUNT(DISTINCT d."employeeId") AS count
         FROM allowed_apps ha
         LEFT JOIN installed_apps ia
-          ON ia."packageName" = ha."packageName"
+          ON LOWER(ia."packageName") = LOWER(ha."packageName")
           AND ia."isInstalled" = true
         LEFT JOIN devices d
           ON d."id" = ia."deviceId"
