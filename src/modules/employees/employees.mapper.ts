@@ -11,7 +11,6 @@ export function toEmployeeResponseDto(employee: any): EmployeeResponseDto {
     position: employee.position,
     role: employee.role,
     email: employee.email,
-    phone: employee.phone,
     workTypeId: employee.workTypeId,
     workTypeName: employee.workType?.name,
     status: employee.status,

@@ -17,6 +17,7 @@ export enum EmployeeStatusEnum {
   RESIGNED = 'RESIGNED',
   EXCEPTION = 'EXCEPTION',
   LEAVE = 'LEAVE',
+  PHONE_INFO_REVIEW = 'PHONE_INFO_REVIEW',
 }
 
 export class CreateEmployeeDto {
@@ -60,14 +61,6 @@ export class CreateEmployeeDto {
   @IsString()
   memo?: string;
 
-  @ApiProperty({ description: '전화번호 (중복 불가, 필수)' })
-  @IsString()
-  @IsNotEmpty()
-  @Matches(/^01[0-9]-?\d{3,4}-?\d{4}$/, {
-    message: '전화번호 형식이 올바르지 않습니다. (예: 010-1234-5678)',
-  })
-  phone: string;
-
   @ApiPropertyOptional({ description: '근무 유형 ID' })
   @IsOptional()
   @IsString()
@@ -85,6 +78,13 @@ export class CreateEmployeeDto {
 }
 
 export class UpdateEmployeeDto extends PartialType(CreateEmployeeDto) {
+  @ApiPropertyOptional({
+    description: '아이디 변경 충돌 시 기존 아이디 사용자 처리에 동의했는지 여부',
+    default: false,
+  })
+  @IsOptional()
+  confirmIdReassignment?: boolean;
+
   @ApiPropertyOptional({ description: '새 비밀번호 (수정 시 선택)', minLength: 8 })
   @IsOptional()
   @IsString()
@@ -128,9 +128,6 @@ export class EmployeeResponseDto {
 
   @ApiPropertyOptional({ description: '이메일' })
   email?: string;
-
-  @ApiPropertyOptional({ description: '전화번호' })
-  phone?: string;
 
   @ApiPropertyOptional({ description: '근무 유형 ID' })
   workTypeId?: string;
@@ -219,7 +216,7 @@ export class EmployeeFilterDto extends BaseFilterDto {
 export class BulkEmployeeActionDto {
   @ApiProperty({ description: '직원 ID 목록' })
   @IsArray()
-  @IsUUID('4', { each: true })
+  @IsString({ each: true })
   employeeIds: string[];
 }
 

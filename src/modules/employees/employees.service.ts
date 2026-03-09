@@ -56,19 +56,13 @@ export class EmployeesService {
 
   async create(dto: CreateEmployeeDto, scopeOrganizationIds?: string[]): Promise<EmployeeResponseDto> {
     const normalizedEmployeeId = dto.employeeId?.trim();
-    const normalizedPhone = this.normalizePhone(dto.phone);
 
     if (!normalizedEmployeeId) {
       throw new BadRequestException('직원 ID는 필수 입력값입니다.');
     }
 
-    if (!normalizedPhone) {
-      throw new BadRequestException('전화번호는 필수 입력값입니다.');
-    }
-
     await this.ensureUniqueEmployeeIdentity({
       employeeId: normalizedEmployeeId,
-      phone: normalizedPhone,
     });
 
     this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
@@ -113,7 +107,6 @@ export class EmployeesService {
           position: dto.position,
           role: dto.role,
           email: dto.email,
-          phone: normalizedPhone,
           memo: dto.memo?.trim() || null,
           workTypeId: dto.workTypeId,
           status: (dto.status as EmployeeStatus) || EmployeeStatus.ACTIVE,
@@ -275,22 +268,11 @@ export class EmployeesService {
       throw new BadRequestException('새 비밀번호가 일치하지 않습니다.');
     }
 
-    const normalizedEmployeeId = dto.employeeId !== undefined ? dto.employeeId?.trim() || '' : undefined;
-    const normalizedPhone = dto.phone !== undefined ? this.normalizePhone(dto.phone) : undefined;
+    const requestedEmployeeId = dto.employeeId !== undefined ? dto.employeeId?.trim() || '' : undefined;
 
-    if (normalizedEmployeeId !== undefined && normalizedEmployeeId !== employeeId) {
-      throw new BadRequestException('직원 ID는 수정할 수 없습니다.');
+    if (requestedEmployeeId !== undefined && !requestedEmployeeId) {
+      throw new BadRequestException('직원 ID는 비워둘 수 없습니다.');
     }
-
-    if (dto.phone !== undefined && !normalizedPhone) {
-      throw new BadRequestException('전화번호는 비워둘 수 없습니다.');
-    }
-
-    await this.ensureUniqueEmployeeIdentity({
-      employeeId,
-      phone: normalizedPhone,
-      excludeEmployeeId: employeeId,
-    });
 
     this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
     this.ensureOrganizationInScope(dto.siteId, scopeOrganizationIds);
@@ -328,8 +310,19 @@ export class EmployeesService {
     let employee;
     try {
       employee = await this.prisma.$transaction(async (tx) => {
+        let workingEmployeeId = employeeId;
+
+        if (requestedEmployeeId && requestedEmployeeId !== employeeId) {
+          workingEmployeeId = await this.reassignEmployeeId(
+            tx,
+            employeeId,
+            requestedEmployeeId,
+            Boolean(dto.confirmIdReassignment),
+          );
+        }
+
         const updatedEmployee = await tx.employee.update({
-          where: { id: employeeId },
+          where: { id: workingEmployeeId },
           data: {
             name: dto.name,
             organizationId: dto.organizationId,
@@ -337,7 +330,6 @@ export class EmployeesService {
             position: dto.position,
             role: dto.role,
             email: dto.email,
-            phone: normalizedPhone,
             memo: dto.memo !== undefined ? (dto.memo.trim() || null) : undefined,
             workTypeId: dto.workTypeId,
             status: dto.status as EmployeeStatus | undefined,
@@ -353,10 +345,10 @@ export class EmployeesService {
         if (dto.newPassword) {
           const passwordHash = await bcrypt.hash(dto.newPassword, 10);
           await tx.employeeAccount.upsert({
-            where: { employeeId },
+            where: { employeeId: workingEmployeeId },
             update: { passwordHash, isActive: true },
             create: {
-              employeeId,
+              employeeId: workingEmployeeId,
               passwordHash,
               isActive: true,
             },
@@ -733,33 +725,11 @@ export class EmployeesService {
     return toEmployeeResponseDto(employee);
   }
 
-  private normalizePhone(phone?: string): string | undefined {
-    if (phone === undefined || phone === null) {
-      return undefined;
-    }
-
-    const digits = phone.replace(/\D/g, '');
-    if (!digits) {
-      return '';
-    }
-
-    if (digits.length === 11) {
-      return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
-    }
-
-    if (digits.length === 10) {
-      return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
-    }
-
-    return phone.trim();
-  }
-
   private async ensureUniqueEmployeeIdentity(params: {
     employeeId?: string;
-    phone?: string;
     excludeEmployeeId?: string;
   }): Promise<void> {
-    const { employeeId, phone, excludeEmployeeId } = params;
+    const { employeeId, excludeEmployeeId } = params;
 
     if (employeeId && employeeId !== excludeEmployeeId) {
       const existingByCode = await this.prisma.employee.findUnique({
@@ -771,20 +741,90 @@ export class EmployeesService {
         throw new ConflictException('이미 사용 중인 직원 ID입니다.');
       }
     }
+  }
 
-    if (phone) {
-      const existingByPhone = await this.prisma.employee.findFirst({
-        where: {
-          phone,
-          ...(excludeEmployeeId ? { id: { not: excludeEmployeeId } } : {}),
-        },
-        select: { id: true },
-      });
+  private async reassignEmployeeId(
+    tx: Prisma.TransactionClient,
+    currentEmployeeId: string,
+    requestedEmployeeId: string,
+    confirmed: boolean,
+  ): Promise<string> {
+    const existingTarget = await tx.employee.findUnique({
+      where: { id: requestedEmployeeId },
+      select: { id: true },
+    });
 
-      if (existingByPhone) {
-        throw new ConflictException('이미 사용 중인 연락처입니다.');
+    if (existingTarget) {
+      if (!confirmed) {
+        throw new ConflictException(
+          '입력한 아이디를 이미 사용하는 직원이 있습니다. 기존 사용자를 "휴대폰 정보 확인" 상태로 전환하고 아이디를 재할당하려면 confirmIdReassignment=true로 다시 요청하세요.',
+        );
       }
+
+      await this.moveEmployeeToPhoneInfoReview(
+        tx,
+        requestedEmployeeId,
+        `관리자 아이디 변경으로 기존 아이디 재할당됨(신규 대상: ${currentEmployeeId})`,
+      );
     }
+
+    await tx.employee.create({
+      data: {
+        id: requestedEmployeeId,
+        name: '임시',
+        organizationId: (await tx.employee.findUniqueOrThrow({ where: { id: currentEmployeeId }, select: { organizationId: true } })).organizationId,
+      },
+    });
+
+    await this.repointEmployeeReferences(tx, currentEmployeeId, requestedEmployeeId);
+    await tx.employee.delete({ where: { id: currentEmployeeId } });
+
+    return requestedEmployeeId;
+  }
+
+  private async moveEmployeeToPhoneInfoReview(
+    tx: Prisma.TransactionClient,
+    employeeId: string,
+    reason: string,
+  ): Promise<void> {
+    const reviewEmployeeId = this.buildPhoneReviewEmployeeId(employeeId);
+
+    await tx.employee.create({
+      data: {
+        id: reviewEmployeeId,
+        name: '아이디 재검증 필요 사용자',
+        organizationId: (await tx.employee.findUniqueOrThrow({ where: { id: employeeId }, select: { organizationId: true } })).organizationId,
+        status: 'PHONE_INFO_REVIEW' as EmployeeStatus,
+        memo: reason,
+      },
+    });
+
+    await this.repointEmployeeReferences(tx, employeeId, reviewEmployeeId);
+    await tx.employee.delete({ where: { id: employeeId } });
+  }
+
+  private async repointEmployeeReferences(
+    tx: Prisma.TransactionClient,
+    fromEmployeeId: string,
+    toEmployeeId: string,
+  ): Promise<void> {
+    await tx.controlPolicyEmployee.updateMany({ where: { employeeId: fromEmployeeId }, data: { employeeId: toEmployeeId } });
+    await tx.employeeExclusion.updateMany({ where: { employeeId: fromEmployeeId }, data: { employeeId: toEmployeeId } });
+    await tx.controlLog.updateMany({ where: { employeeId: fromEmployeeId }, data: { employeeId: toEmployeeId } });
+    await tx.employeeDailyStat.updateMany({ where: { employeeId: fromEmployeeId }, data: { employeeId: toEmployeeId } });
+    await tx.zoneVisitSession.updateMany({ where: { employeeId: fromEmployeeId }, data: { employeeId: toEmployeeId } });
+    await tx.appUsageSession.updateMany({ where: { employeeId: fromEmployeeId }, data: { employeeId: toEmployeeId } });
+    await tx.workSession.updateMany({ where: { employeeId: fromEmployeeId }, data: { employeeId: toEmployeeId } });
+    await tx.device.updateMany({ where: { employeeId: fromEmployeeId }, data: { employeeId: toEmployeeId } });
+
+    const account = await tx.employeeAccount.findUnique({ where: { employeeId: fromEmployeeId }, select: { id: true } });
+    if (account) {
+      await tx.employeeAccount.update({ where: { employeeId: fromEmployeeId }, data: { employeeId: toEmployeeId } });
+    }
+  }
+
+  private buildPhoneReviewEmployeeId(previousEmployeeId: string): string {
+    return `phone-review:${previousEmployeeId}:${randomUUID()}`;
   }
 
   private handleUniqueConstraintError(error: unknown): void {
@@ -793,10 +833,6 @@ export class EmployeesService {
     }
 
     const target = Array.isArray(error.meta?.target) ? error.meta?.target : [];
-
-    if (target.includes('phone')) {
-      throw new ConflictException('이미 사용 중인 연락처입니다.');
-    }
 
     if (target.includes('id')) {
       throw new ConflictException('이미 사용 중인 직원 ID입니다.');
