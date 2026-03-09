@@ -19,13 +19,18 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 
 RUN apk add --no-cache openssl tzdata
+ENV TZ=Asia/Seoul
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/secure-entrypoint.sh /usr/local/bin/secure-entrypoint.sh
+
+RUN chmod +x /usr/local/bin/secure-entrypoint.sh
 
 EXPOSE 3000
 
+ENTRYPOINT ["/usr/local/bin/secure-entrypoint.sh"]
 CMD ["node", "dist/main"]
