@@ -1,5 +1,8 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
+import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { toBehaviorConditionResponseDto } from './behavior-conditions.mapper';
 import {
   CreateBehaviorConditionDto,
   UpdateBehaviorConditionDto,
@@ -17,58 +20,14 @@ export class BehaviorConditionsService {
     organizationId: string | undefined,
     scopeOrganizationIds?: string[],
   ): void {
-    if (!organizationId || !scopeOrganizationIds) return;
-    if (!scopeOrganizationIds.includes(organizationId)) {
-      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
-    }
+    ensureOrganizationInScope(organizationId, scopeOrganizationIds);
   }
 
   private assertConditionInScope(
     condition: { organizationId: string },
     scopeOrganizationIds?: string[],
   ): void {
-    if (!scopeOrganizationIds) return;
-    if (!scopeOrganizationIds.includes(condition.organizationId)) {
-      throw new NotFoundException('행동 조건을 찾을 수 없습니다.');
-    }
-  }
-
-  private async deactivatePoliciesWithoutConditions(tx: any, policyIds: string[]): Promise<void> {
-    const uniquePolicyIds = Array.from(new Set(policyIds.filter(Boolean)));
-    if (uniquePolicyIds.length === 0) return;
-
-    const policies = await tx.controlPolicy.findMany({
-      where: { id: { in: uniquePolicyIds } },
-      select: {
-        id: true,
-        _count: {
-          select: {
-            zones: true,
-            timePolicies: true,
-            behaviors: true,
-            allowedApps: true,
-          },
-        },
-      },
-    });
-
-    const emptyPolicyIds = policies
-      .filter(
-        (p: any) =>
-          p._count.zones + p._count.timePolicies + p._count.behaviors + p._count.allowedApps === 0,
-      )
-      .map((p: any) => p.id);
-
-    if (emptyPolicyIds.length === 0) return;
-
-    await tx.controlPolicy.updateMany({
-      where: { id: { in: emptyPolicyIds } },
-      data: { isActive: false },
-    });
-
-    await tx.controlPolicyEmployee.deleteMany({
-      where: { policyId: { in: emptyPolicyIds } },
-    });
+    assertOrganizationInScopeOrThrow(condition.organizationId, scopeOrganizationIds, '행동 조건을 찾을 수 없습니다.');
   }
 
   async create(
@@ -324,7 +283,7 @@ export class BehaviorConditionsService {
       await tx.controlPolicyBehavior.deleteMany({ where: { behaviorConditionId: id } });
       await tx.behaviorCondition.delete({ where: { id } });
 
-      await this.deactivatePoliciesWithoutConditions(
+      await deactivatePoliciesWithoutConditions(
         tx,
         impacted.map((item: any) => item.policyId),
       );
@@ -387,23 +346,7 @@ export class BehaviorConditionsService {
   }
 
   private toResponseDto(condition: any): BehaviorConditionResponseDto {
-    return {
-      id: condition.id,
-      name: condition.name,
-      enableDistanceCondition: condition.distanceThreshold !== null,
-      enableStepsCondition: condition.stepsThreshold !== null,
-      enableSpeedCondition: condition.speedThreshold !== null,
-      distanceThreshold: condition.distanceThreshold,
-      stepsThreshold: condition.stepsThreshold,
-      speedThreshold: condition.speedThreshold,
-      description: condition.description,
-      isActive: condition.isActive,
-      organization: condition.organization,
-      workType: condition.workType,
-      policyCount: condition._count?.policyBehaviors ?? 0,
-      createdAt: condition.createdAt,
-      updatedAt: condition.updatedAt,
-    };
+    return toBehaviorConditionResponseDto(condition);
   }
 
   private resolveThresholds(

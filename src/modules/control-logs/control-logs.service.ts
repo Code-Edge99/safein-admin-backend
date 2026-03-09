@@ -1,5 +1,7 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { toControlLogResponseDto } from './control-logs.mapper';
 import {
   CreateControlLogDto,
   ControlLogFilterDto,
@@ -53,13 +55,7 @@ export class ControlLogsService {
     organizationId: string | undefined,
     scopeOrganizationIds?: string[],
   ): void {
-    if (!organizationId || !scopeOrganizationIds) {
-      return;
-    }
-
-    if (!scopeOrganizationIds.includes(organizationId)) {
-      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
-    }
+    ensureOrganizationInScope(organizationId, scopeOrganizationIds);
   }
 
   private applyScopeToWhere(where: any, scopeOrganizationIds?: string[]): void {
@@ -485,35 +481,6 @@ export class ControlLogsService {
   }
 
   private toResponseDto(log: any): ControlLogResponseDto {
-    return {
-      id: log.id,
-      type: log.type,
-      action: log.action,
-      timestamp: log.timestamp,
-      latitude: log.latitude ? Number(log.latitude) : undefined,
-      longitude: log.longitude ? Number(log.longitude) : undefined,
-      reason: log.reason,
-      appName: log.appName,
-      packageName: log.packageName,
-      behaviorDistance: log.behaviorDistance,
-      behaviorSteps: log.behaviorSteps,
-      behaviorSpeed: log.behaviorSpeed,
-      employee: log.employee
-        ? {
-            id: log.employee.id,
-            name: log.employee.name,
-            organizationId: log.employee.organizationId || undefined,
-            organizationName: log.employee.organization?.name || undefined,
-          }
-        : undefined,
-      organizationId: log.organizationId || log.device?.organizationId || undefined,
-      organizationName: log.organization?.name || log.device?.organization?.name || undefined,
-      device: log.device,
-      policy: log.policy,
-      zone: log.zone,
-      zoneId: log.zone?.id || log.zoneId || undefined,
-      zoneName: log.zone?.name || undefined,
-      createdAt: log.createdAt,
-    };
+    return toControlLogResponseDto(log);
   }
 }

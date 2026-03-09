@@ -8,6 +8,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { RequestLoggingInterceptor } from './common/interceptors/request-logging.interceptor';
 import { FIXED_ADMIN_UNLIMITED_TOKEN } from './modules/auth/auth.constants';
+import { readStageConfig, resolveRuntimeStage } from './common/config/stage.config';
 
 const MASTER_ADMIN_ACCOUNT_ID = 'acc-master-admin';
 const MASTER_ADMIN_USERNAME = 'master-admin';
@@ -25,8 +26,8 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
 
-  const nodeEnv = configService.get<string>('NODE_ENV', 'development');
-  if (nodeEnv === 'production') {
+  const runtimeStage = resolveRuntimeStage(configService);
+  if (runtimeStage === 'prod') {
     const jwtSecret = configService.get<string>('JWT_SECRET');
     if (!jwtSecret || jwtSecret.length < 32) {
       throw new Error('JWT_SECRET must be set and at least 32 characters in production.');
@@ -37,7 +38,11 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
 
   // CORS
-  const corsOrigin = configService.get<string>('CORS_ORIGIN', 'http://localhost:5173');
+  const corsOrigin = readStageConfig(configService, 'CORS_ORIGIN', {
+    local: 'http://localhost:5173',
+    dev: 'http://localhost:5173',
+    prod: 'http://localhost:5173',
+  });
   const parsedOrigins = corsOrigin
     .split(',')
     .map((origin) => origin.trim())

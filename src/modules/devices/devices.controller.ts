@@ -32,6 +32,7 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard';
 import { PaginatedResponse } from '../../common/dto';
+import { AuthenticatedAdminRequest } from '../../common/types/authenticated-request.type';
 
 @ApiTags('장치')
 @Controller('devices')
@@ -44,14 +45,14 @@ export class DevicesController {
   @ApiOperation({ summary: '장치 등록' })
   @ApiResponse({ status: 201, description: '장치 등록 성공', type: DeviceResponseDto })
   @ApiResponse({ status: 409, description: '이미 등록된 장치' })
-  create(@Req() req: any, @Body() createDeviceDto: CreateDeviceDto): Promise<DeviceResponseDto> {
+  create(@Req() req: AuthenticatedAdminRequest, @Body() createDeviceDto: CreateDeviceDto): Promise<DeviceResponseDto> {
     return this.devicesService.create(createDeviceDto, req.organizationScopeIds ?? undefined);
   }
 
   @Get()
   @ApiOperation({ summary: '장치 목록 조회' })
   @ApiResponse({ status: 200, description: '장치 목록' })
-  findAll(@Req() req: any, @Query() filter: DeviceFilterDto): Promise<PaginatedResponse<DeviceResponseDto>> {
+  findAll(@Req() req: AuthenticatedAdminRequest, @Query() filter: DeviceFilterDto): Promise<PaginatedResponse<DeviceResponseDto>> {
     return this.devicesService.findAll(filter, req.organizationScopeIds ?? undefined);
   }
 
@@ -59,7 +60,7 @@ export class DevicesController {
   @ApiOperation({ summary: '장치 통계 조회' })
   @ApiQuery({ name: 'organizationId', required: false, description: '조직 ID' })
   @ApiResponse({ status: 200, description: '장치 통계' })
-  getStats(@Req() req: any, @Query('organizationId') organizationId?: string) {
+  getStats(@Req() req: AuthenticatedAdminRequest, @Query('organizationId') organizationId?: string) {
     return this.devicesService.getDeviceStats(organizationId, req.organizationScopeIds ?? undefined);
   }
 
@@ -68,7 +69,7 @@ export class DevicesController {
   @ApiParam({ name: 'id', description: '장치 ID (UUID)' })
   @ApiResponse({ status: 200, description: '장치 상세', type: DeviceDetailDto })
   @ApiResponse({ status: 404, description: '장치를 찾을 수 없음' })
-  findOne(@Req() req: any, @Param('id', ParseUUIDPipe) id: string): Promise<DeviceDetailDto> {
+  findOne(@Req() req: AuthenticatedAdminRequest, @Param('id', ParseUUIDPipe) id: string): Promise<DeviceDetailDto> {
     return this.devicesService.findOne(id, req.organizationScopeIds ?? undefined);
   }
 
@@ -76,7 +77,7 @@ export class DevicesController {
   @ApiOperation({ summary: '장치 식별자로 조회' })
   @ApiParam({ name: 'deviceId', description: '장치 식별자' })
   @ApiResponse({ status: 200, description: '장치 정보', type: DeviceResponseDto })
-  findByDeviceId(@Req() req: any, @Param('deviceId') deviceId: string): Promise<DeviceResponseDto> {
+  findByDeviceId(@Req() req: AuthenticatedAdminRequest, @Param('deviceId') deviceId: string): Promise<DeviceResponseDto> {
     return this.devicesService.findByDeviceId(deviceId, req.organizationScopeIds ?? undefined);
   }
 
@@ -85,7 +86,7 @@ export class DevicesController {
   @ApiParam({ name: 'id', description: '장치 ID (UUID)' })
   @ApiResponse({ status: 200, description: '장치 수정 성공', type: DeviceResponseDto })
   update(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() updateDeviceDto: UpdateDeviceDto,
   ): Promise<DeviceResponseDto> {
@@ -97,7 +98,7 @@ export class DevicesController {
   @ApiParam({ name: 'id', description: '장치 ID (UUID)' })
   @ApiResponse({ status: 200, description: '장치 할당 성공', type: DeviceResponseDto })
   assign(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: AssignDeviceDto,
   ): Promise<DeviceResponseDto> {
@@ -108,7 +109,7 @@ export class DevicesController {
   @ApiOperation({ summary: '장치 할당 해제' })
   @ApiParam({ name: 'id', description: '장치 ID (UUID)' })
   @ApiResponse({ status: 200, description: '장치 할당 해제 성공', type: DeviceResponseDto })
-  unassign(@Req() req: any, @Param('id', ParseUUIDPipe) id: string): Promise<DeviceResponseDto> {
+  unassign(@Req() req: AuthenticatedAdminRequest, @Param('id', ParseUUIDPipe) id: string): Promise<DeviceResponseDto> {
     return this.devicesService.unassign(id, req.organizationScopeIds ?? undefined);
   }
 
@@ -117,7 +118,7 @@ export class DevicesController {
   @ApiParam({ name: 'id', description: '장치 ID (UUID)' })
   @ApiResponse({ status: 200, description: '위치 업데이트 성공' })
   updateLocation(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: DeviceLocationDto,
   ): Promise<void> {
@@ -128,7 +129,7 @@ export class DevicesController {
   @ApiOperation({ summary: '장치 분실 처리' })
   @ApiParam({ name: 'id', description: '장치 ID (UUID)' })
   @ApiResponse({ status: 200, description: '분실 처리 성공', type: DeviceResponseDto })
-  markAsLost(@Req() req: any, @Param('id', ParseUUIDPipe) id: string): Promise<DeviceResponseDto> {
+  markAsLost(@Req() req: AuthenticatedAdminRequest, @Param('id', ParseUUIDPipe) id: string): Promise<DeviceResponseDto> {
     return this.devicesService.markAsLost(id, req.organizationScopeIds ?? undefined);
   }
 
@@ -136,7 +137,7 @@ export class DevicesController {
   @ApiOperation({ summary: '장치 삭제' })
   @ApiParam({ name: 'id', description: '장치 ID (UUID)' })
   @ApiResponse({ status: 200, description: '장치 삭제 성공' })
-  remove(@Req() req: any, @Param('id', ParseUUIDPipe) id: string): Promise<void> {
+  remove(@Req() req: AuthenticatedAdminRequest, @Param('id', ParseUUIDPipe) id: string): Promise<void> {
     return this.devicesService.remove(id, req.organizationScopeIds ?? undefined);
   }
 }

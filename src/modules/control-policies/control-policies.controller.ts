@@ -36,6 +36,7 @@ import {
 } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard';
+import { AuthenticatedAdminRequest } from '../../common/types/authenticated-request.type';
 
 @ApiTags('Control Policies')
 @ApiBearerAuth()
@@ -47,21 +48,21 @@ export class ControlPoliciesController {
   @Post()
   @ApiOperation({ summary: '제어 정책 생성' })
   @ApiResponse({ status: 201, description: '정책 생성 성공', type: ControlPolicyDetailDto })
-  async create(@Req() req: any, @Body() createDto: CreateControlPolicyDto): Promise<ControlPolicyDetailDto> {
+  async create(@Req() req: AuthenticatedAdminRequest, @Body() createDto: CreateControlPolicyDto): Promise<ControlPolicyDetailDto> {
     return this.controlPoliciesService.create(createDto, req.organizationScopeIds ?? undefined);
   }
 
   @Get()
   @ApiOperation({ summary: '제어 정책 목록 조회' })
   @ApiResponse({ status: 200, description: '정책 목록', type: ControlPolicyListResponseDto })
-  async findAll(@Req() req: any, @Query() filter: ControlPolicyFilterDto): Promise<ControlPolicyListResponseDto> {
+  async findAll(@Req() req: AuthenticatedAdminRequest, @Query() filter: ControlPolicyFilterDto): Promise<ControlPolicyListResponseDto> {
     return this.controlPoliciesService.findAll(filter, req.organizationScopeIds ?? undefined);
   }
 
   @Get('stats')
   @ApiOperation({ summary: '제어 정책 통계 조회' })
   @ApiResponse({ status: 200, description: '정책 통계', type: ControlPolicyStatsDto })
-  async getStats(@Req() req: any): Promise<ControlPolicyStatsDto> {
+  async getStats(@Req() req: AuthenticatedAdminRequest): Promise<ControlPolicyStatsDto> {
     return this.controlPoliciesService.getStats(req.organizationScopeIds ?? undefined);
   }
 
@@ -69,7 +70,7 @@ export class ControlPoliciesController {
   @ApiOperation({ summary: '조직별 제어 정책 조회' })
   @ApiParam({ name: 'orgId', description: '조직 ID' })
   @ApiResponse({ status: 200, description: '정책 목록', type: [ControlPolicyResponseDto] })
-  async findByOrganization(@Req() req: any, @Param('orgId') orgId: string): Promise<ControlPolicyResponseDto[]> {
+  async findByOrganization(@Req() req: AuthenticatedAdminRequest, @Param('orgId') orgId: string): Promise<ControlPolicyResponseDto[]> {
     return this.controlPoliciesService.findByOrganization(orgId, req.organizationScopeIds ?? undefined);
   }
 
@@ -78,7 +79,7 @@ export class ControlPoliciesController {
   @ApiParam({ name: 'workTypeId', description: '작업 유형 ID' })
   @ApiResponse({ status: 200, description: '정책 상세 정보', type: ControlPolicyDetailDto })
   async findByWorkType(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Param('workTypeId') workTypeId: string,
   ): Promise<ControlPolicyDetailDto | null> {
     return this.controlPoliciesService.findByWorkType(workTypeId, req.organizationScopeIds ?? undefined);
@@ -89,7 +90,7 @@ export class ControlPoliciesController {
   @ApiParam({ name: 'id', description: '정책 ID' })
   @ApiResponse({ status: 200, description: '정책 상세 정보', type: ControlPolicyDetailDto })
   @ApiResponse({ status: 404, description: '정책을 찾을 수 없음' })
-  async findOne(@Req() req: any, @Param('id') id: string): Promise<ControlPolicyDetailDto> {
+  async findOne(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<ControlPolicyDetailDto> {
     return this.controlPoliciesService.findOneDetail(id, req.organizationScopeIds ?? undefined);
   }
 
@@ -99,7 +100,7 @@ export class ControlPoliciesController {
   @ApiResponse({ status: 200, description: '정책 수정 성공', type: ControlPolicyDetailDto })
   @ApiResponse({ status: 404, description: '정책을 찾을 수 없음' })
   async update(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Param('id') id: string,
     @Body() updateDto: UpdateControlPolicyDto,
   ): Promise<ControlPolicyDetailDto> {
@@ -110,7 +111,7 @@ export class ControlPoliciesController {
   @ApiOperation({ summary: '제어 정책 활성/비활성 토글' })
   @ApiParam({ name: 'id', description: '정책 ID' })
   @ApiResponse({ status: 200, description: '상태 변경 성공', type: ControlPolicyResponseDto })
-  async toggleActive(@Req() req: any, @Param('id') id: string): Promise<ControlPolicyResponseDto> {
+  async toggleActive(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<ControlPolicyResponseDto> {
     return this.controlPoliciesService.toggleActive(id, req.organizationScopeIds ?? undefined);
   }
 
@@ -119,7 +120,7 @@ export class ControlPoliciesController {
   @ApiParam({ name: 'id', description: '정책 ID' })
   @ApiResponse({ status: 200, description: '구역 할당 성공', type: ControlPolicyDetailDto })
   async assignZones(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Param('id') id: string,
     @Body() dto: AssignZonesDto,
   ): Promise<ControlPolicyDetailDto> {
@@ -131,7 +132,7 @@ export class ControlPoliciesController {
   @ApiParam({ name: 'id', description: '정책 ID' })
   @ApiResponse({ status: 200, description: '시간 정책 할당 성공', type: ControlPolicyDetailDto })
   async assignTimePolicies(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Param('id') id: string,
     @Body() dto: AssignTimePoliciesDto,
   ): Promise<ControlPolicyDetailDto> {
@@ -147,7 +148,7 @@ export class ControlPoliciesController {
   @ApiParam({ name: 'id', description: '정책 ID' })
   @ApiResponse({ status: 200, description: '행동 조건 할당 성공', type: ControlPolicyDetailDto })
   async assignBehaviorConditions(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Param('id') id: string,
     @Body() dto: AssignBehaviorConditionsDto,
   ): Promise<ControlPolicyDetailDto> {
@@ -163,7 +164,7 @@ export class ControlPoliciesController {
   @ApiParam({ name: 'id', description: '정책 ID' })
   @ApiResponse({ status: 200, description: '허용앱 프리셋 할당 성공', type: ControlPolicyDetailDto })
   async assignAllowedApps(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Param('id') id: string,
     @Body() dto: AssignAllowedAppsDto,
   ): Promise<ControlPolicyDetailDto> {
@@ -179,7 +180,7 @@ export class ControlPoliciesController {
   @ApiParam({ name: 'id', description: '정책 ID' })
   @ApiResponse({ status: 200, description: '직원 할당 성공', type: ControlPolicyDetailDto })
   async assignEmployees(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Param('id') id: string,
     @Body() dto: AssignEmployeesDto,
   ): Promise<ControlPolicyDetailDto> {
@@ -196,7 +197,7 @@ export class ControlPoliciesController {
   @ApiParam({ name: 'id', description: '정책 ID' })
   @ApiResponse({ status: 204, description: '정책 삭제 성공' })
   @ApiResponse({ status: 404, description: '정책을 찾을 수 없음' })
-  async remove(@Req() req: any, @Param('id') id: string): Promise<void> {
+  async remove(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<void> {
     return this.controlPoliciesService.remove(id, req.organizationScopeIds ?? undefined);
   }
 }

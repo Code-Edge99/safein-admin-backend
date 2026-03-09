@@ -9,6 +9,9 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { AuditAction, DeviceOS, EmployeeStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { toControlPolicyDetailDto, toControlPolicyResponseDto } from './control-policies.mapper';
+import { readStageConfig } from '../../common/config/stage.config';
 import {
   CreateControlPolicyDto,
   UpdateControlPolicyDto,
@@ -42,13 +45,7 @@ export class ControlPoliciesService {
     organizationId: string | undefined,
     scopeOrganizationIds?: string[],
   ): void {
-    if (!organizationId || !scopeOrganizationIds) {
-      return;
-    }
-
-    if (!scopeOrganizationIds.includes(organizationId)) {
-      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
-    }
+    ensureOrganizationInScope(organizationId, scopeOrganizationIds);
   }
 
   private applyOrganizationScope(where: any, scopeOrganizationIds?: string[]): void {
@@ -913,7 +910,11 @@ export class ControlPoliciesService {
   }
 
   private getAppBackendBaseUrl(): string {
-    const baseUrl = this.configService.get<string>('APP_BACKEND_BASE_URL', 'http://localhost:3100/api/app');
+    const baseUrl = readStageConfig(this.configService, 'APP_BACKEND_BASE_URL', {
+      local: 'http://localhost:3100/api/app',
+      dev: 'http://localhost:3100/api/app',
+      prod: 'http://localhost:3100/api/app',
+    });
     return baseUrl.trim().replace(/\/$/, '');
   }
 
@@ -1350,73 +1351,10 @@ export class ControlPoliciesService {
   }
 
   private toResponseDto(policy: any): ControlPolicyResponseDto {
-    return {
-      id: policy.id,
-      name: policy.name,
-      description: policy.description,
-      priority: policy.priority,
-      isActive: policy.isActive,
-      organization: policy.organization,
-      workType: policy.workType,
-      zones: policy.zones?.map((z: any) => z.zone) ?? [],
-      timePolicies: policy.timePolicies?.map((t: any) => t.timePolicy) ?? [],
-      behaviorConditions: policy.behaviors?.map((b: any) => b.behaviorCondition) ?? [],
-      allowedAppPresets: this.mapAllowedAppPresets(policy.allowedApps),
-      zoneCount: policy._count?.zones ?? policy.zones?.length ?? 0,
-      timePolicyCount: policy._count?.timePolicies ?? policy.timePolicies?.length ?? 0,
-      behaviorConditionCount: policy._count?.behaviors ?? policy.behaviors?.length ?? 0,
-      allowedAppCount: policy._count?.allowedApps ?? policy.allowedApps?.length ?? 0,
-      targetEmployeeCount: policy._count?.targetEmployees ?? 0,
-      createdAt: policy.createdAt,
-      updatedAt: policy.updatedAt,
-    };
+    return toControlPolicyResponseDto(policy);
   }
 
   private toDetailDto(policy: any): ControlPolicyDetailDto {
-    return {
-      id: policy.id,
-      name: policy.name,
-      description: policy.description,
-      priority: policy.priority,
-      isActive: policy.isActive,
-      organization: policy.organization,
-      workType: policy.workType,
-      zoneCount: policy.zones?.length ?? 0,
-      timePolicyCount: policy.timePolicies?.length ?? 0,
-      behaviorConditionCount: policy.behaviors?.length ?? 0,
-      allowedAppCount: policy.allowedApps?.length ?? 0,
-      targetEmployeeCount: policy.targetEmployees?.length ?? 0,
-      zones: policy.zones?.map((z: any) => z.zone) ?? [],
-      timePolicies: policy.timePolicies?.map((t: any) => t.timePolicy) ?? [],
-      behaviorConditions: policy.behaviors?.map((b: any) => b.behaviorCondition) ?? [],
-      allowedAppPresets: this.mapAllowedAppPresets(policy.allowedApps),
-      targetEmployees: policy.targetEmployees?.map((e: any) => e.employee) ?? [],
-      createdAt: policy.createdAt,
-      updatedAt: policy.updatedAt,
-    };
-  }
-  private mapAllowedAppPresets(allowedApps: any[] | undefined) {
-    if (!Array.isArray(allowedApps)) {
-      return [];
-    }
-
-    return allowedApps
-      .map((item: any) => item?.preset)
-      .filter((preset: any) => !!preset?.id)
-      .map((preset: any) => ({
-        id: preset.id,
-        name: preset.name,
-        apps: Array.isArray(preset.items)
-          ? preset.items
-            .map((presetItem: any) => presetItem?.allowedApp)
-            .filter((app: any) => !!app?.id)
-            .map((app: any) => ({
-              id: app.id,
-              name: app.name,
-              packageName: app.packageName,
-              iconUrl: app.iconUrl ?? undefined,
-            }))
-          : [],
-      }));
+    return toControlPolicyDetailDto(policy);
   }
 }

@@ -5,12 +5,8 @@ SDK geocoder 실패 시 admin-backend의 `/api/maps/geocode` 프록시로 자동
 
 아래 환경변수 중 하나를 설정하세요:
 
-- 권장
-  - `NCP_MAPS_API_KEY_ID=<NCP Client ID>`
-  - `NCP_MAPS_API_KEY=<NCP Client Secret>`
-- 호환(기존 변수명)
-  - `NAVER_MAP_CLIENT_ID=<NCP Client ID>`
-  - `NAVER_MAP_CLIENT_SECRET=<NCP Client Secret>`
+- `NCP_MAPS_API_KEY_ID=<NCP Client ID>`
+- `NCP_MAPS_API_KEY=<NCP Client Secret>`
 
 프록시는 NCP Maps Geocoding REST API(`https://maps.apigw.ntruss.com/map-geocode/v2/geocode`)를 호출하며,
 요청 헤더에 `x-ncp-apigw-api-key-id`, `x-ncp-apigw-api-key`를 사용합니다.
@@ -40,12 +36,26 @@ smombie/
 - npm
 
 ### 3) 환경변수 설정
+프로젝트 루트에 `.env` 파일을 직접 생성하고 아래 예시를 기준으로 값 설정
+
 `smombie-admin-backend/.env`
 ```env
+APP_STAGE=local
 DATABASE_URL=postgresql://postgres:password@localhost:5432/safein?schema=public
 PORT=3000
 JWT_SECRET=your-admin-jwt-secret
 JWT_EXPIRATION=1d
+
+# 단일 .env에서 스테이지별 값 관리
+CORS_ORIGIN_LOCAL=http://localhost:5173
+CORS_ORIGIN_DEV=https://dev-admin.example.com
+CORS_ORIGIN_PROD=https://admin.example.com
+
+APP_BACKEND_BASE_URL_LOCAL=http://localhost:3100/api/app
+APP_BACKEND_BASE_URL_DEV=https://dev-app-api.example.com/api/app
+APP_BACKEND_BASE_URL_PROD=https://app-api.example.com/api/app
+
+# (선택) 하위 호환 단일 키
 CORS_ORIGIN=*
 APP_BACKEND_BASE_URL=http://localhost:3100/api/app
 ```
@@ -73,6 +83,13 @@ npm run dev
 - 운영에서 `smombie-prisma` 설치 시 seed를 막으려면:
   - `NODE_ENV=production` 사용 또는
   - `PRISMA_SEED_ON_INSTALL=false npm install`
+
+## config / env / json 관리 방안
+- `env`는 코드 저장소에 커밋하지 않고, 로컬/서버의 `.env`로만 관리
+- 소스에서 `APP_STAGE`(`local|dev|prod`)를 읽고 `*_LOCAL|*_DEV|*_PROD` 키를 선택
+- 샘플 값 안내는 README에서 유지하고 실제 비밀값은 시크릿 매니저(예: GitHub Secrets, AWS SSM, Vault)로 주입
+- JSON 자격증명 파일(예: Firebase Admin SDK)은 커밋 금지, 서버 파일시스템의 절대경로 또는 배포 시 마운트 경로를 환경변수로 주입
+- 운영/개발 값 분리는 `NODE_ENV` + 환경별 시크릿으로 관리(코드 하드코딩 금지)
 
 ## 자주 쓰는 명령어
 | 명령어 | 설명 |

@@ -1,0 +1,23 @@
+import { EmployeeResponseDto } from './dto';
+
+export function toEmployeeResponseDto(employee: any): EmployeeResponseDto {
+  return {
+    employeeId: employee.id,
+    name: employee.name,
+    organizationId: employee.organizationId,
+    organizationName: employee.organization?.name,
+    siteId: employee.siteId,
+    siteName: employee.site?.name,
+    position: employee.position,
+    role: employee.role,
+    email: employee.email,
+    phone: employee.phone,
+    workTypeId: employee.workTypeId,
+    workTypeName: employee.workType?.name,
+    status: employee.status,
+    hireDate: employee.hireDate,
+    memo: employee.memo,
+    createdAt: employee.createdAt,
+    updatedAt: employee.updatedAt,
+  };
+}

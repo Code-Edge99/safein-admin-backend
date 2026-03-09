@@ -10,6 +10,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard';
 import { DashboardService } from './dashboard.service';
+import { AuthenticatedAdminRequest } from '../../common/types/authenticated-request.type';
 
 @ApiTags('대시보드')
 @Controller('dashboard')
@@ -20,14 +21,14 @@ export class DashboardController {
 
   @Get('stats')
   @ApiOperation({ summary: '대시보드 통계' })
-  getStats(@Req() req: any) {
+  getStats(@Req() req: AuthenticatedAdminRequest) {
     return this.dashboardService.getStats(req.organizationScopeIds ?? undefined);
   }
 
   @Get('hourly-data')
   @ApiOperation({ summary: '시간대별 차단 통계' })
   getHourlyData(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Query('organizationId') organizationId?: string,
     @Query('date') date?: string,
   ) {
@@ -41,7 +42,7 @@ export class DashboardController {
   @Get('zone-violations')
   @ApiOperation({ summary: '구역별 위반 통계' })
   getZoneViolationData(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
@@ -55,7 +56,7 @@ export class DashboardController {
   @Get('organization-stats')
   @ApiOperation({ summary: '조직 일별 통계' })
   getOrganizationStats(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Query('organizationId') organizationId?: string,
     @Query('days') days?: number,
   ) {
@@ -69,7 +70,7 @@ export class DashboardController {
   @Get('employee-stats')
   @ApiOperation({ summary: '직원 리포트 통계' })
   getEmployeeStats(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Query('employeeId') employeeId?: string,
     @Query('organizationId') organizationId?: string,
     @Query('days') days?: number,
@@ -88,7 +89,7 @@ export class DashboardController {
 
   @Get('employee-report/:employeeId')
   @ApiOperation({ summary: '직원 리포트 상세 (Employee + ControlLog + DailyStat 기반)' })
-  getEmployeeReportDetail(@Param('employeeId') employeeId: string, @Req() req: any) {
+  getEmployeeReportDetail(@Param('employeeId') employeeId: string, @Req() req: AuthenticatedAdminRequest) {
     return this.dashboardService.getEmployeeReportDetail(
       employeeId,
       req.organizationScopeIds ?? undefined,
@@ -97,7 +98,7 @@ export class DashboardController {
 
   @Get('site-reports')
   @ApiOperation({ summary: '현장 리포트' })
-  getSiteReports(@Req() req: any) {
+  getSiteReports(@Req() req: AuthenticatedAdminRequest) {
     return this.dashboardService.getSiteReports(req.organizationScopeIds ?? undefined);
   }
 }

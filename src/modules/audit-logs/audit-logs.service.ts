@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { toAuditLogResponseDto } from './audit-logs.mapper';
 
 @Injectable()
 export class AuditLogsService {
@@ -9,13 +11,7 @@ export class AuditLogsService {
     organizationId: string | undefined,
     scopeOrganizationIds?: string[],
   ): void {
-    if (!organizationId || !scopeOrganizationIds) {
-      return;
-    }
-
-    if (!scopeOrganizationIds.includes(organizationId)) {
-      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
-    }
+    ensureOrganizationInScope(organizationId, scopeOrganizationIds);
   }
 
   async findAll(filter: {
@@ -104,21 +100,6 @@ export class AuditLogsService {
   }
 
   private toResponseDto(log: any) {
-    return {
-      id: log.id,
-      accountId: log.accountId,
-      userName: log.account?.name || '',
-      username: log.account?.username || '',
-      action: log.action,
-      resourceType: log.resourceType,
-      resourceId: log.resourceId,
-      resourceName: log.resourceName,
-      organizationId: log.organizationId,
-      changesBefore: log.changesBefore,
-      changesAfter: log.changesAfter,
-      ipAddress: log.ipAddress,
-      timestamp: log.timestamp,
-      createdAt: log.createdAt,
-    };
+    return toAuditLogResponseDto(log);
   }
 }

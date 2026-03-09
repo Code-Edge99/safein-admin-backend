@@ -46,6 +46,13 @@ export class CoordinateDto {
 
 }
 
+export interface ZoneCoordinatePoint {
+  lat?: number;
+  lng?: number;
+  latitude?: number;
+  longitude?: number;
+}
+
 
 export class CreateZoneDto {
   @ApiProperty({ description: '구역명' })
@@ -117,7 +124,7 @@ export class ZoneResponseDto {
   shape: string;
 
   @ApiProperty({ description: '좌표 데이터' })
-  coordinates: any;
+  coordinates: ZoneCoordinatePoint[];
 
   @ApiPropertyOptional({ description: '반경' })
   radius?: number;

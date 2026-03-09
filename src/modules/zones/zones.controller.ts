@@ -32,6 +32,7 @@ import {
 } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard';
+import { AuthenticatedAdminRequest } from '../../common/types/authenticated-request.type';
 
 @ApiTags('Zones')
 @ApiBearerAuth()
@@ -43,21 +44,21 @@ export class ZonesController {
   @Post()
   @ApiOperation({ summary: '구역 생성' })
   @ApiResponse({ status: 201, description: '구역 생성 성공', type: ZoneResponseDto })
-  async create(@Req() req: any, @Body() createZoneDto: CreateZoneDto): Promise<ZoneResponseDto> {
+  async create(@Req() req: AuthenticatedAdminRequest, @Body() createZoneDto: CreateZoneDto): Promise<ZoneResponseDto> {
     return this.zonesService.create(createZoneDto, req.organizationScopeIds ?? undefined);
   }
 
   @Get()
   @ApiOperation({ summary: '구역 목록 조회' })
   @ApiResponse({ status: 200, description: '구역 목록', type: ZoneListResponseDto })
-  async findAll(@Req() req: any, @Query() filter: ZoneFilterDto): Promise<ZoneListResponseDto> {
+  async findAll(@Req() req: AuthenticatedAdminRequest, @Query() filter: ZoneFilterDto): Promise<ZoneListResponseDto> {
     return this.zonesService.findAll(filter, req.organizationScopeIds ?? undefined);
   }
 
   @Get('stats')
   @ApiOperation({ summary: '구역 통계 조회' })
   @ApiResponse({ status: 200, description: '구역 통계', type: ZoneStatsDto })
-  async getStats(@Req() req: any): Promise<ZoneStatsDto> {
+  async getStats(@Req() req: AuthenticatedAdminRequest): Promise<ZoneStatsDto> {
     return this.zonesService.getZoneStats(req.organizationScopeIds ?? undefined);
   }
 
@@ -66,7 +67,7 @@ export class ZonesController {
   @ApiParam({ name: 'organizationId', description: '조직 ID' })
   @ApiResponse({ status: 200, description: '조직별 구역 목록', type: [ZoneResponseDto] })
   async findByOrganization(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Param('organizationId') organizationId: string,
   ): Promise<ZoneResponseDto[]> {
     return this.zonesService.findByOrganization(organizationId, req.organizationScopeIds ?? undefined);
@@ -77,7 +78,7 @@ export class ZonesController {
   @ApiParam({ name: 'id', description: '구역 ID' })
   @ApiResponse({ status: 200, description: '구역 상세 정보', type: ZoneResponseDto })
   @ApiResponse({ status: 404, description: '구역을 찾을 수 없음' })
-  async findOne(@Req() req: any, @Param('id') id: string): Promise<ZoneResponseDto> {
+  async findOne(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<ZoneResponseDto> {
     return this.zonesService.findOne(id, req.organizationScopeIds ?? undefined);
   }
 
@@ -87,7 +88,7 @@ export class ZonesController {
   @ApiResponse({ status: 200, description: '구역 수정 성공', type: ZoneResponseDto })
   @ApiResponse({ status: 404, description: '구역을 찾을 수 없음' })
   async update(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Param('id') id: string,
     @Body() updateZoneDto: UpdateZoneDto,
   ): Promise<ZoneResponseDto> {
@@ -98,7 +99,7 @@ export class ZonesController {
   @ApiOperation({ summary: '구역 활성/비활성 토글' })
   @ApiParam({ name: 'id', description: '구역 ID' })
   @ApiResponse({ status: 200, description: '상태 변경 성공', type: ZoneResponseDto })
-  async toggleActive(@Req() req: any, @Param('id') id: string): Promise<ZoneResponseDto> {
+  async toggleActive(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<ZoneResponseDto> {
     return this.zonesService.toggleActive(id, req.organizationScopeIds ?? undefined);
   }
 
@@ -111,7 +112,7 @@ export class ZonesController {
     schema: { type: 'object', properties: { isInside: { type: 'boolean' } } },
   })
   async checkPointInZone(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Param('id') id: string,
     @Body() point: CheckPointInZoneDto,
   ): Promise<{ isInside: boolean }> {
@@ -125,7 +126,7 @@ export class ZonesController {
   @ApiParam({ name: 'id', description: '구역 ID' })
   @ApiResponse({ status: 204, description: '구역 삭제 성공' })
   @ApiResponse({ status: 404, description: '구역을 찾을 수 없음' })
-  async remove(@Req() req: any, @Param('id') id: string): Promise<void> {
+  async remove(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<void> {
     return this.zonesService.remove(id, req.organizationScopeIds ?? undefined);
   }
 }

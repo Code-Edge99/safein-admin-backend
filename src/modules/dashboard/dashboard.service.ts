@@ -1,5 +1,7 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { buildSiteReportItem, SiteReportTrendPoint } from './dashboard.mapper';
 
 @Injectable()
 export class DashboardService {
@@ -51,13 +53,7 @@ export class DashboardService {
     organizationId: string | undefined,
     scopeOrganizationIds?: string[],
   ): void {
-    if (!organizationId || !scopeOrganizationIds) {
-      return;
-    }
-
-    if (!scopeOrganizationIds.includes(organizationId)) {
-      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
-    }
+    ensureOrganizationInScope(organizationId, scopeOrganizationIds);
   }
 
   private inScope(scopeOrganizationIds?: string[]): { in: string[] } | undefined {
@@ -1330,15 +1326,52 @@ export class DashboardService {
       },
     });
 
-    const result = [];
-    for (const site of sites) {
-      const trendStats = await this.prisma.organizationDailyStat.findMany({
+    if (sites.length === 0) {
+      return [];
+    }
+
+    const siteIds = sites.map((site) => site.id);
+
+    const [dailyStatsWindow, hourlyStatsWindow] = await Promise.all([
+      this.prisma.organizationDailyStat.findMany({
         where: {
-          organizationId: site.id,
-          date: { gte: trendStartDate, lte: endDate },
+          organizationId: { in: siteIds },
+          date: { gte: prevWeekStartDate, lte: endDate },
         },
         orderBy: { date: 'asc' },
-      });
+      }),
+      this.prisma.hourlyBlockStat.findMany({
+        where: {
+          organizationId: { in: siteIds },
+          date: { gte: currentStartDate },
+        },
+      }),
+    ]);
+
+    const dailyStatsByOrg = new Map<string, typeof dailyStatsWindow>();
+    for (const stat of dailyStatsWindow) {
+      const bucket = dailyStatsByOrg.get(stat.organizationId) || [];
+      bucket.push(stat);
+      dailyStatsByOrg.set(stat.organizationId, bucket);
+    }
+
+    const hourlyStatsByOrg = new Map<string, typeof hourlyStatsWindow>();
+    for (const stat of hourlyStatsWindow) {
+      const bucket = hourlyStatsByOrg.get(stat.organizationId) || [];
+      bucket.push(stat);
+      hourlyStatsByOrg.set(stat.organizationId, bucket);
+    }
+
+    const trendDates: string[] = [];
+    for (let day = 0; day < 30; day++) {
+      const date = new Date(trendStartDate.getTime() + day * 86400000);
+      trendDates.push(date.toISOString().split('T')[0]);
+    }
+
+    const result = [];
+    for (const site of sites) {
+      const orgStats = dailyStatsByOrg.get(site.id) || [];
+      const trendStats = orgStats.filter((s) => s.date >= trendStartDate);
 
       const currentStats = trendStats.filter((s) => s.date >= currentStartDate);
 
@@ -1361,26 +1394,10 @@ export class DashboardService {
         rounded: false,
       });
 
-      // 이전 주 데이터
-      const prevStats = await this.prisma.organizationDailyStat.findMany({
-        where: {
-          organizationId: site.id,
-          date: { gte: prevWeekStartDate, lt: currentStartDate },
-        },
-      });
+      const prevStats = orgStats.filter((s) => s.date >= prevWeekStartDate && s.date < currentStartDate);
       const prevTotal = prevStats.reduce((sum, s) => sum + s.totalBlocks, 0);
 
-      const trendValue = prevTotal > 0
-        ? Math.round(((totalViolations - prevTotal) / prevTotal) * 100)
-        : 0;
-
-      // 시간대별 위반
-      const hourlyStats = await this.prisma.hourlyBlockStat.findMany({
-        where: {
-          organizationId: site.id,
-          date: { gte: currentStartDate },
-        },
-      });
+      const hourlyStats = hourlyStatsByOrg.get(site.id) || [];
 
       let peakHour = '09:00';
       let peakBlocks = 0;
@@ -1403,37 +1420,26 @@ export class DashboardService {
         });
       });
 
-      const trendDates: string[] = [];
-      const allowedAppTrend: number[] = [];
-      const behaviorTrend: number[] = [];
-      for (let day = 0; day < 30; day++) {
-        const date = new Date(trendStartDate.getTime() + day * 86400000);
-        const key = date.toISOString().split('T')[0];
-        const data = dailyStatMap.get(key) || { allowed: 0, behavior: 0 };
-        trendDates.push(key);
-        allowedAppTrend.push(data.allowed);
-        behaviorTrend.push(data.behavior);
-      }
+      const trendMap = new Map<string, SiteReportTrendPoint>(dailyStatMap);
 
-      result.push({
-        id: site.id,
-        name: site.name,
-        type: site.type,
-        parentName: (site as any).parent?.name || null,
-        employeeCount: site._count.employees,
+      result.push(buildSiteReportItem({
+        site: {
+          id: site.id,
+          name: site.name,
+          type: site.type,
+          parentName: site.parent?.name || null,
+          employeeCount: site._count.employees,
+        },
         totalViolations,
         allowedAppBlocks,
         behaviorBlocks,
-        complianceRate: Math.round(complianceRate * 10) / 10,
-        trend: trendValue > 0 ? 'up' : trendValue < 0 ? 'down' : 'stable',
-        trendValue: Math.abs(trendValue),
+        complianceRate,
+        prevTotal,
         peakHour,
         peakBlocks,
-        previousWeek: prevTotal,
         trendDates,
-        allowedAppTrend,
-        behaviorTrend,
-      });
+        trendMap,
+      }));
     }
 
     return result;

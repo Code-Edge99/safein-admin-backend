@@ -1,6 +1,8 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OrganizationType as PrismaOrgType, DeviceStatus } from '@prisma/client';
+import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { toOrganizationResponseDto } from './organizations.mapper';
 import {
   CreateOrganizationDto,
   UpdateOrganizationDto,
@@ -17,20 +19,14 @@ export class OrganizationsService {
     organizationId: string | undefined,
     scopeOrganizationIds?: string[],
   ): void {
-    if (!organizationId || !scopeOrganizationIds) return;
-    if (!scopeOrganizationIds.includes(organizationId)) {
-      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
-    }
+    ensureOrganizationInScope(organizationId, scopeOrganizationIds);
   }
 
   private assertOrganizationInScope(
     organization: { id: string },
     scopeOrganizationIds?: string[],
   ): void {
-    if (!scopeOrganizationIds) return;
-    if (!scopeOrganizationIds.includes(organization.id)) {
-      throw new NotFoundException('조직을 찾을 수 없습니다.');
-    }
+    assertOrganizationInScopeOrThrow(organization.id, scopeOrganizationIds, '조직을 찾을 수 없습니다.');
   }
 
   async create(dto: CreateOrganizationDto, scopeOrganizationIds?: string[], actorUserId?: string): Promise<OrganizationResponseDto> {
@@ -397,25 +393,6 @@ export class OrganizationsService {
   }
 
   private toResponseDto(org: any): OrganizationResponseDto {
-    return {
-      id: org.id,
-      name: org.name,
-      type: org.type,
-      parentId: org.parentId,
-      address: org.address,
-      detailAddress: org.detailAddress,
-      description: org.description,
-      managerName: org.managerName,
-      managerPhone: org.managerPhone,
-      emergencyContact: org.emergencyContact,
-      isActive: org.isActive,
-      createdById: org.createdById,
-      updatedById: org.updatedById,
-      createdByName: org.createdBy?.name || org.createdBy?.username || '시스템',
-      updatedByName: org.updatedBy?.name || org.updatedBy?.username || '시스템',
-      employeeCount: org.employeeCount || 0,
-      createdAt: org.createdAt,
-      updatedAt: org.updatedAt,
-    };
+    return toOrganizationResponseDto(org);
   }
 }

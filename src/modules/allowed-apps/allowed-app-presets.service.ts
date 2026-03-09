@@ -1,5 +1,8 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
+import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { toAllowedAppPresetDetailDto, toAllowedAppPresetResponseDto } from './allowed-app-presets.mapper';
 import {
   CreateAllowedAppPresetDto,
   UpdateAllowedAppPresetDto,
@@ -21,20 +24,14 @@ export class AllowedAppPresetsService {
     organizationId: string | undefined,
     scopeOrganizationIds?: string[],
   ): void {
-    if (!organizationId || !scopeOrganizationIds) return;
-    if (!scopeOrganizationIds.includes(organizationId)) {
-      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
-    }
+    ensureOrganizationInScope(organizationId, scopeOrganizationIds);
   }
 
   private assertPresetInScope(
     preset: { organizationId: string },
     scopeOrganizationIds?: string[],
   ): void {
-    if (!scopeOrganizationIds) return;
-    if (!scopeOrganizationIds.includes(preset.organizationId)) {
-      throw new NotFoundException('허용앱 프리셋을 찾을 수 없습니다.');
-    }
+    assertOrganizationInScopeOrThrow(preset.organizationId, scopeOrganizationIds, '허용앱 프리셋을 찾을 수 없습니다.');
   }
 
   private normalizePlatform(platform?: string): 'android' | 'ios' | 'both' {
@@ -74,44 +71,6 @@ export class AllowedAppPresetsService {
       throw new NotFoundException(`존재하지 않는 허용앱이 포함되어 있습니다: ${missingIds.join(', ')}`);
     }
 
-  }
-
-  private async deactivatePoliciesWithoutConditions(tx: any, policyIds: string[]): Promise<void> {
-    const uniquePolicyIds = Array.from(new Set(policyIds.filter(Boolean)));
-    if (uniquePolicyIds.length === 0) return;
-
-    const policies = await tx.controlPolicy.findMany({
-      where: { id: { in: uniquePolicyIds } },
-      select: {
-        id: true,
-        _count: {
-          select: {
-            zones: true,
-            timePolicies: true,
-            behaviors: true,
-            allowedApps: true,
-          },
-        },
-      },
-    });
-
-    const emptyPolicyIds = policies
-      .filter(
-        (p: any) =>
-          p._count.zones + p._count.timePolicies + p._count.behaviors + p._count.allowedApps === 0,
-      )
-      .map((p: any) => p.id);
-
-    if (emptyPolicyIds.length === 0) return;
-
-    await tx.controlPolicy.updateMany({
-      where: { id: { in: emptyPolicyIds } },
-      data: { isActive: false },
-    });
-
-    await tx.controlPolicyEmployee.deleteMany({
-      where: { policyId: { in: emptyPolicyIds } },
-    });
   }
 
   async create(dto: CreateAllowedAppPresetDto, scopeOrganizationIds?: string[]): Promise<AllowedAppPresetDetailDto> {
@@ -324,7 +283,7 @@ export class AllowedAppPresetsService {
       await tx.controlPolicyAllowedApp.deleteMany({ where: { presetId: id } });
       await tx.allowedAppPreset.delete({ where: { id } });
 
-      await this.deactivatePoliciesWithoutConditions(
+      await deactivatePoliciesWithoutConditions(
         tx,
         impacted.map((item: any) => item.policyId),
       );
@@ -448,34 +407,10 @@ export class AllowedAppPresetsService {
   }
 
   private toResponseDto(preset: any): AllowedAppPresetResponseDto {
-    return {
-      id: preset.id,
-      name: preset.name,
-      description: preset.description,
-      organization: preset.organization,
-      workType: preset.workType,
-      appCount: preset._count?.items || 0,
-      policyCount: preset._count?.policyPresets || 0,
-      createdAt: preset.createdAt,
-      updatedAt: preset.updatedAt,
-    };
+    return toAllowedAppPresetResponseDto(preset);
   }
 
   private toDetailDto(preset: any): AllowedAppPresetDetailDto {
-    return {
-      ...this.toResponseDto(preset),
-      apps: preset.items?.map((item: any) => ({
-        id: item.allowedApp.id,
-        name: item.allowedApp.name,
-        packageName: item.allowedApp.packageName,
-        category: item.allowedApp.category,
-        platform: this.normalizePlatform(item.allowedApp.platform),
-        iconUrl: item.allowedApp.iconUrl,
-        isGlobal: item.allowedApp.isGlobal,
-        presetCount: 0,
-        createdAt: item.allowedApp.createdAt,
-        updatedAt: item.allowedApp.updatedAt,
-      })) || [],
-    };
+    return toAllowedAppPresetDetailDto(preset, (platform) => this.normalizePlatform(platform));
   }
 }

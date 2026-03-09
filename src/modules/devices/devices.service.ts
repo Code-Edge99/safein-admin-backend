@@ -8,6 +8,8 @@ import {
 import { Prisma, DeviceOS, DeviceStatus, DeviceOperationStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResponse } from '../../common/dto';
+import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { toDeviceResponseDto } from './devices.mapper';
 import {
   CreateDeviceDto,
   UpdateDeviceDto,
@@ -26,17 +28,11 @@ export class DevicesService {
     organizationId: string | undefined,
     scopeOrganizationIds?: string[],
   ): void {
-    if (!organizationId || !scopeOrganizationIds) return;
-    if (!scopeOrganizationIds.includes(organizationId)) {
-      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
-    }
+    ensureOrganizationInScope(organizationId, scopeOrganizationIds);
   }
 
   private assertDeviceInScope(device: { organizationId?: string | null }, scopeOrganizationIds?: string[]): void {
-    if (!scopeOrganizationIds) return;
-    if (!device.organizationId || !scopeOrganizationIds.includes(device.organizationId)) {
-      throw new NotFoundException('장치를 찾을 수 없습니다.');
-    }
+    assertOrganizationInScopeOrThrow(device.organizationId, scopeOrganizationIds, '장치를 찾을 수 없습니다.');
   }
 
   async create(dto: CreateDeviceDto, scopeOrganizationIds?: string[]): Promise<DeviceResponseDto> {
@@ -435,46 +431,6 @@ export class DevicesService {
   }
 
   private toResponseDto(device: any): DeviceResponseDto {
-    return {
-      id: device.id,
-      deviceId: device.deviceId,
-      employeeId: device.employeeId,
-      employeeName: device.employee?.name,
-      organizationId: device.organizationId,
-      organizationName: device.organization?.name,
-      os: device.os,
-      osVersion: device.osVersion,
-      model: device.model,
-      manufacturer: device.manufacturer,
-      appVersion: device.appVersion,
-      status: device.status,
-      deviceStatus: device.deviceStatus,
-      lastCommunication: device.lastCommunication,
-      registeredAt: device.registeredAt,
-      deactivatedAt: device.deactivatedAt,
-      deactivatedReason: device.deactivatedReason,
-      tokenInfo: device.token
-        ? {
-            isValid: device.token.isValid,
-            lastLogin: device.token.lastLogin ?? undefined,
-            expiresAt: device.token.expiresAt ?? undefined,
-          }
-        : undefined,
-      pushToken: device.pushToken,
-      pushTokenCheckedAt:
-        device.pushToken || (device.pushTokenStatus && device.pushTokenStatus !== 'NONE')
-          ? device.updatedAt
-          : undefined,
-      pushTokenStatus: device.pushTokenStatus,
-      mdmEnrollmentStatus: device.mdmEnrollmentStatus,
-      mdmVerifiedAt: device.mdmVerifiedAt,
-      lastMdmCheckinAt: device.lastMdmCheckinAt,
-      lastInstalledAppsSyncAt: device.lastInstalledAppsSyncAt,
-      mdmManualUnblockUntilLogin: device.mdmManualUnblockUntilLogin,
-      mdmManualUnblockReason: device.mdmManualUnblockReason,
-      mdmManualUnblockSetAt: device.mdmManualUnblockSetAt,
-      createdAt: device.createdAt,
-      updatedAt: device.updatedAt,
-    };
+    return toDeviceResponseDto(device);
   }
 }

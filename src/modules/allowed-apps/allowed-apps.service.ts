@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { toAllowedAppResponseDto } from './allowed-apps.mapper';
 import {
   CreateAllowedAppDto,
   UpdateAllowedAppDto,
@@ -481,18 +482,6 @@ export class AllowedAppsService {
   }
 
   private toResponseDto(app: any, installedCount: number = 0): AllowedAppResponseDto {
-    return {
-      id: app.id,
-      name: app.name,
-      packageName: app.packageName,
-      category: app.category,
-      platform: this.normalizePlatform(app.platform),
-      iconUrl: app.iconUrl,
-      isGlobal: app.isGlobal,
-      presetCount: app._count?.presetItems || 0,
-      installedCount,
-      createdAt: app.createdAt,
-      updatedAt: app.updatedAt,
-    };
+    return toAllowedAppResponseDto(app, (platform) => this.normalizePlatform(platform), installedCount);
   }
 }

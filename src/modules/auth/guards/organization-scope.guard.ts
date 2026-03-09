@@ -6,17 +6,15 @@ import {
 } from '@nestjs/common';
 import { AdminRole } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { AuthenticatedAdminRequest } from '../../../common/types/authenticated-request.type';
 
 @Injectable()
 export class OrganizationScopeGuard implements CanActivate {
   constructor(private readonly prisma: PrismaService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest();
-    const user = request.user as {
-      role: string;
-      organizationId?: string;
-    };
+    const request = context.switchToHttp().getRequest<AuthenticatedAdminRequest>();
+    const user = request.user;
 
     if (!user) {
       throw new ForbiddenException('인증 정보가 없습니다.');
@@ -79,7 +77,7 @@ export class OrganizationScopeGuard implements CanActivate {
     return Array.from(visited);
   }
 
-  private validateRequestedOrganization(request: any, scopeIds: string[]): void {
+  private validateRequestedOrganization(request: AuthenticatedAdminRequest, scopeIds: string[]): void {
     const requestedIds = new Set<string>();
 
     const addIfString = (value: unknown) => {

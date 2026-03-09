@@ -29,6 +29,7 @@ import {
   AllowedAppStatsDto,
 } from './dto';
 import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard';
+import { AuthenticatedAdminRequest } from '../../common/types/authenticated-request.type';
 
 @ApiTags('허용앱 프리셋')
 @Controller('allowed-app-presets')
@@ -40,21 +41,21 @@ export class AllowedAppPresetsController {
   @Post()
   @ApiOperation({ summary: '허용앱 프리셋 생성' })
   @ApiResponse({ status: 201, type: AllowedAppPresetDetailDto })
-  create(@Req() req: any, @Body() dto: CreateAllowedAppPresetDto): Promise<AllowedAppPresetDetailDto> {
+  create(@Req() req: AuthenticatedAdminRequest, @Body() dto: CreateAllowedAppPresetDto): Promise<AllowedAppPresetDetailDto> {
     return this.presetsService.create(dto, req.organizationScopeIds ?? undefined);
   }
 
   @Get()
   @ApiOperation({ summary: '허용앱 프리셋 목록 조회' })
   @ApiResponse({ status: 200, type: AllowedAppPresetListResponseDto })
-  findAll(@Req() req: any, @Query() filter: AllowedAppPresetFilterDto): Promise<AllowedAppPresetListResponseDto> {
+  findAll(@Req() req: AuthenticatedAdminRequest, @Query() filter: AllowedAppPresetFilterDto): Promise<AllowedAppPresetListResponseDto> {
     return this.presetsService.findAll(filter, req.organizationScopeIds ?? undefined);
   }
 
   @Get('stats')
   @ApiOperation({ summary: '허용앱 통계' })
   @ApiResponse({ status: 200, type: AllowedAppStatsDto })
-  getStats(@Req() req: any): Promise<AllowedAppStatsDto> {
+  getStats(@Req() req: AuthenticatedAdminRequest): Promise<AllowedAppStatsDto> {
     return this.presetsService.getStats(req.organizationScopeIds ?? undefined);
   }
 
@@ -62,7 +63,7 @@ export class AllowedAppPresetsController {
   @ApiOperation({ summary: '조직별 프리셋 목록' })
   @ApiResponse({ status: 200, type: [AllowedAppPresetResponseDto] })
   findByOrganization(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Param('organizationId') organizationId: string,
   ): Promise<AllowedAppPresetResponseDto[]> {
     return this.presetsService.findByOrganization(organizationId, req.organizationScopeIds ?? undefined);
@@ -71,7 +72,7 @@ export class AllowedAppPresetsController {
   @Get(':id')
   @ApiOperation({ summary: '허용앱 프리셋 상세 조회' })
   @ApiResponse({ status: 200, type: AllowedAppPresetDetailDto })
-  findOne(@Req() req: any, @Param('id') id: string): Promise<AllowedAppPresetDetailDto> {
+  findOne(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<AllowedAppPresetDetailDto> {
     return this.presetsService.findOne(id, req.organizationScopeIds ?? undefined);
   }
 
@@ -79,7 +80,7 @@ export class AllowedAppPresetsController {
   @ApiOperation({ summary: '허용앱 프리셋 수정' })
   @ApiResponse({ status: 200, type: AllowedAppPresetDetailDto })
   update(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Param('id') id: string,
     @Body() dto: UpdateAllowedAppPresetDto,
   ): Promise<AllowedAppPresetDetailDto> {
@@ -90,7 +91,7 @@ export class AllowedAppPresetsController {
   @ApiOperation({ summary: '프리셋에 앱 추가' })
   @ApiResponse({ status: 200, type: AllowedAppPresetDetailDto })
   addApps(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Param('id') id: string,
     @Body() dto: AssignAppsToPresetDto,
   ): Promise<AllowedAppPresetDetailDto> {
@@ -101,7 +102,7 @@ export class AllowedAppPresetsController {
   @ApiOperation({ summary: '프리셋에서 앱 제거' })
   @ApiResponse({ status: 200, type: AllowedAppPresetDetailDto })
   removeApps(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Param('id') id: string,
     @Body() dto: AssignAppsToPresetDto,
   ): Promise<AllowedAppPresetDetailDto> {
@@ -111,7 +112,7 @@ export class AllowedAppPresetsController {
   @Delete(':id')
   @ApiOperation({ summary: '허용앱 프리셋 삭제' })
   @ApiResponse({ status: 204 })
-  remove(@Req() req: any, @Param('id') id: string): Promise<void> {
+  remove(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<void> {
     return this.presetsService.remove(id, req.organizationScopeIds ?? undefined);
   }
 }

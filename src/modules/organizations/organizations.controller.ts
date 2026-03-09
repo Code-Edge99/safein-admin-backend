@@ -26,6 +26,7 @@ import {
 } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard';
+import { AuthenticatedAdminRequest } from '../../common/types/authenticated-request.type';
 
 @ApiTags('조직')
 @Controller('organizations')
@@ -37,7 +38,7 @@ export class OrganizationsController {
   @Post()
   @ApiOperation({ summary: '조직 생성' })
   @ApiResponse({ status: 201, description: '조직 생성 성공', type: OrganizationResponseDto })
-  create(@Req() req: any, @Body() createOrganizationDto: CreateOrganizationDto): Promise<OrganizationResponseDto> {
+  create(@Req() req: AuthenticatedAdminRequest, @Body() createOrganizationDto: CreateOrganizationDto): Promise<OrganizationResponseDto> {
     return this.organizationsService.create(
       createOrganizationDto,
       req.organizationScopeIds ?? undefined,
@@ -48,14 +49,14 @@ export class OrganizationsController {
   @Get()
   @ApiOperation({ summary: '전체 조직 목록 조회' })
   @ApiResponse({ status: 200, description: '조직 목록', type: [OrganizationResponseDto] })
-  findAll(@Req() req: any): Promise<OrganizationResponseDto[]> {
+  findAll(@Req() req: AuthenticatedAdminRequest): Promise<OrganizationResponseDto[]> {
     return this.organizationsService.findAll(req.organizationScopeIds ?? undefined);
   }
 
   @Get('tree')
   @ApiOperation({ summary: '조직 트리 조회' })
   @ApiResponse({ status: 200, description: '조직 트리', type: [OrganizationTreeDto] })
-  findTree(@Req() req: any): Promise<OrganizationTreeDto[]> {
+  findTree(@Req() req: AuthenticatedAdminRequest): Promise<OrganizationTreeDto[]> {
     return this.organizationsService.findTree(req.organizationScopeIds ?? undefined);
   }
 
@@ -64,7 +65,7 @@ export class OrganizationsController {
   @ApiParam({ name: 'id', description: '조직 ID' })
   @ApiResponse({ status: 200, description: '조직 상세', type: OrganizationResponseDto })
   @ApiResponse({ status: 404, description: '조직을 찾을 수 없음' })
-  findOne(@Req() req: any, @Param('id') id: string): Promise<OrganizationResponseDto> {
+  findOne(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<OrganizationResponseDto> {
     return this.organizationsService.findOne(id, req.organizationScopeIds ?? undefined);
   }
 
@@ -72,7 +73,7 @@ export class OrganizationsController {
   @ApiOperation({ summary: '조직 통계 조회' })
   @ApiParam({ name: 'id', description: '조직 ID' })
   @ApiResponse({ status: 200, description: '조직 통계', type: OrganizationStatsDto })
-  findOneWithStats(@Req() req: any, @Param('id') id: string): Promise<OrganizationStatsDto> {
+  findOneWithStats(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<OrganizationStatsDto> {
     return this.organizationsService.findOneWithStats(id, req.organizationScopeIds ?? undefined);
   }
 
@@ -80,7 +81,7 @@ export class OrganizationsController {
   @ApiOperation({ summary: '상위 조직 목록 조회' })
   @ApiParam({ name: 'id', description: '조직 ID' })
   @ApiResponse({ status: 200, description: '상위 조직 목록', type: [OrganizationResponseDto] })
-  getAncestors(@Req() req: any, @Param('id') id: string): Promise<OrganizationResponseDto[]> {
+  getAncestors(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<OrganizationResponseDto[]> {
     return this.organizationsService.getAncestors(id, req.organizationScopeIds ?? undefined);
   }
 
@@ -88,7 +89,7 @@ export class OrganizationsController {
   @ApiOperation({ summary: '하위 조직 목록 조회' })
   @ApiParam({ name: 'id', description: '조직 ID' })
   @ApiResponse({ status: 200, description: '하위 조직 목록', type: [OrganizationResponseDto] })
-  getDescendants(@Req() req: any, @Param('id') id: string): Promise<OrganizationResponseDto[]> {
+  getDescendants(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<OrganizationResponseDto[]> {
     return this.organizationsService.getDescendants(id, req.organizationScopeIds ?? undefined);
   }
 
@@ -97,7 +98,7 @@ export class OrganizationsController {
   @ApiParam({ name: 'id', description: '조직 ID' })
   @ApiResponse({ status: 200, description: '조직 수정 성공', type: OrganizationResponseDto })
   update(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Param('id') id: string,
     @Body() updateOrganizationDto: UpdateOrganizationDto,
   ): Promise<OrganizationResponseDto> {
@@ -114,7 +115,7 @@ export class OrganizationsController {
   @ApiParam({ name: 'id', description: '조직 ID' })
   @ApiResponse({ status: 200, description: '조직 삭제 성공' })
   @ApiResponse({ status: 400, description: '삭제 불가 (하위 조직 또는 직원 존재)' })
-  remove(@Req() req: any, @Param('id') id: string): Promise<void> {
+  remove(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<void> {
     return this.organizationsService.remove(id, req.organizationScopeIds ?? undefined);
   }
 }

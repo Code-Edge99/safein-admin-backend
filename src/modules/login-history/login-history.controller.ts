@@ -10,6 +10,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard';
 import { LoginHistoryService } from './login-history.service';
+import { AuthenticatedAdminRequest } from '../../common/types/authenticated-request.type';
 
 @ApiTags('로그인 이력')
 @Controller('login-history')
@@ -21,7 +22,7 @@ export class LoginHistoryController {
   @Get()
   @ApiOperation({ summary: '로그인 이력 목록 조회' })
   findAll(
-    @Req() req: any,
+    @Req() req: AuthenticatedAdminRequest,
     @Query('search') search?: string,
     @Query('status') status?: string,
     @Query('accountId') accountId?: string,
@@ -43,7 +44,7 @@ export class LoginHistoryController {
 
   @Get(':id')
   @ApiOperation({ summary: '로그인 이력 상세 조회' })
-  findOne(@Req() req: any, @Param('id') id: string) {
+  findOne(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string) {
     return this.loginHistoryService.findOne(id, req.organizationScopeIds ?? undefined);
   }
 }

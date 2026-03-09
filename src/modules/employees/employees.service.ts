@@ -11,6 +11,9 @@ import * as bcrypt from 'bcrypt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResponse } from '../../common/dto';
+import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { toEmployeeResponseDto } from './employees.mapper';
+import { readStageConfig } from '../../common/config/stage.config';
 import {
   CreateEmployeeDto,
   UpdateEmployeeDto,
@@ -34,20 +37,14 @@ export class EmployeesService {
     organizationId: string | undefined,
     scopeOrganizationIds?: string[],
   ): void {
-    if (!organizationId || !scopeOrganizationIds) return;
-    if (!scopeOrganizationIds.includes(organizationId)) {
-      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
-    }
+    ensureOrganizationInScope(organizationId, scopeOrganizationIds);
   }
 
   private assertOrganizationInScope(
     organizationId: string | null | undefined,
     scopeOrganizationIds?: string[],
   ): void {
-    if (!scopeOrganizationIds) return;
-    if (!organizationId || !scopeOrganizationIds.includes(organizationId)) {
-      throw new NotFoundException('직원을 찾을 수 없습니다.');
-    }
+    assertOrganizationInScopeOrThrow(organizationId, scopeOrganizationIds, '직원을 찾을 수 없습니다.');
   }
 
   async create(dto: CreateEmployeeDto, scopeOrganizationIds?: string[]): Promise<EmployeeResponseDto> {
@@ -620,25 +617,7 @@ export class EmployeesService {
   }
 
   private toResponseDto(employee: any): EmployeeResponseDto {
-    return {
-      employeeId: employee.id,
-      name: employee.name,
-      organizationId: employee.organizationId,
-      organizationName: employee.organization?.name,
-      siteId: employee.siteId,
-      siteName: employee.site?.name,
-      position: employee.position,
-      role: employee.role,
-      email: employee.email,
-      phone: employee.phone,
-      workTypeId: employee.workTypeId,
-      workTypeName: employee.workType?.name,
-      status: employee.status,
-      hireDate: employee.hireDate,
-      memo: employee.memo,
-      createdAt: employee.createdAt,
-      updatedAt: employee.updatedAt,
-    };
+    return toEmployeeResponseDto(employee);
   }
 
   private normalizePhone(phone?: string): string | undefined {
@@ -714,7 +693,11 @@ export class EmployeesService {
   }
 
   private getAppBackendBaseUrl(): string {
-    const baseUrl = this.configService.get<string>('APP_BACKEND_BASE_URL', 'http://localhost:3100/api/app');
+    const baseUrl = readStageConfig(this.configService, 'APP_BACKEND_BASE_URL', {
+      local: 'http://localhost:3100/api/app',
+      dev: 'http://localhost:3100/api/app',
+      prod: 'http://localhost:3100/api/app',
+    });
     return baseUrl.trim().replace(/\/$/, '');
   }
 

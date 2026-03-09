@@ -16,12 +16,8 @@ export class MapsService {
   constructor(private readonly configService: ConfigService) {}
 
   private getCredentials() {
-    const keyId =
-      this.configService.get<string>('NCP_MAPS_API_KEY_ID')
-      || this.configService.get<string>('NAVER_MAP_CLIENT_ID');
-    const key =
-      this.configService.get<string>('NCP_MAPS_API_KEY')
-      || this.configService.get<string>('NAVER_MAP_CLIENT_SECRET');
+    const keyId = this.configService.get<string>('NCP_MAPS_API_KEY_ID');
+    const key = this.configService.get<string>('NCP_MAPS_API_KEY');
 
     if (!keyId || !key) {
       throw new ServiceUnavailableException(

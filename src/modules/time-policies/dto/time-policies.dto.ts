@@ -58,6 +58,20 @@ export class ExcludePeriodDto {
   end: string;
 }
 
+export class ExcludePeriodResponseDto {
+  @ApiProperty({ description: '예외시간 ID' })
+  id: string;
+
+  @ApiProperty({ description: '예외시간 이름', example: '점심시간' })
+  name: string;
+
+  @ApiProperty({ description: '시작 시간 (HH:MM 형식)', example: '12:00' })
+  start: string;
+
+  @ApiProperty({ description: '종료 시간 (HH:MM 형식)', example: '13:00' })
+  end: string;
+}
+
 export class CreateTimePolicyDto {
   @ApiProperty({ description: '정책명' })
   @IsString()
@@ -140,8 +154,8 @@ export class TimePolicyResponseDto {
     name: string;
   };
 
-  @ApiPropertyOptional({ description: '예외시간 목록' })
-  excludePeriods?: any[];
+  @ApiPropertyOptional({ description: '예외시간 목록', type: [ExcludePeriodResponseDto] })
+  excludePeriods?: ExcludePeriodResponseDto[];
 
   @ApiPropertyOptional({ description: '작업 유형 정보' })
   workType?: {

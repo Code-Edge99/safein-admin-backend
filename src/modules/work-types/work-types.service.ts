@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { toWorkTypeResponseDto } from './work-types.mapper';
 import {
   CreateWorkTypeDto,
   UpdateWorkTypeDto,
@@ -15,20 +17,14 @@ export class WorkTypesService {
     organizationId: string | undefined,
     scopeOrganizationIds?: string[],
   ): void {
-    if (!organizationId || !scopeOrganizationIds) return;
-    if (!scopeOrganizationIds.includes(organizationId)) {
-      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
-    }
+    ensureOrganizationInScope(organizationId, scopeOrganizationIds);
   }
 
   private assertWorkTypeInScope(
     workType: { organizationId: string },
     scopeOrganizationIds?: string[],
   ): void {
-    if (!scopeOrganizationIds) return;
-    if (!scopeOrganizationIds.includes(workType.organizationId)) {
-      throw new NotFoundException('근무 유형을 찾을 수 없습니다.');
-    }
+    assertOrganizationInScopeOrThrow(workType.organizationId, scopeOrganizationIds, '근무 유형을 찾을 수 없습니다.');
   }
 
   async create(dto: CreateWorkTypeDto, scopeOrganizationIds?: string[]): Promise<WorkTypeResponseDto> {
@@ -206,17 +202,6 @@ export class WorkTypesService {
   }
 
   private toResponseDto(workType: any): WorkTypeResponseDto {
-    return {
-      id: workType.id,
-      name: workType.name,
-      description: workType.description,
-      organizationId: workType.organizationId,
-      organizationName: workType.organization?.name,
-      isActive: workType.isActive,
-      createdAt: workType.createdAt,
-      updatedAt: workType.updatedAt,
-      employeeCount: workType._count?.employees,
-      hasPolicy: !!workType.controlPolicy,
-    };
+    return toWorkTypeResponseDto(workType);
   }
 }

@@ -1,5 +1,8 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
+import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { toTimePolicyResponseDto } from './time-policies.mapper';
 import {
   CreateTimePolicyDto,
   UpdateTimePolicyDto,
@@ -18,55 +21,11 @@ export class TimePoliciesService {
     organizationId: string | undefined,
     scopeOrganizationIds?: string[],
   ): void {
-    if (!organizationId || !scopeOrganizationIds) return;
-    if (!scopeOrganizationIds.includes(organizationId)) {
-      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
-    }
+    ensureOrganizationInScope(organizationId, scopeOrganizationIds);
   }
 
   private assertPolicyInScope(policy: { organizationId: string }, scopeOrganizationIds?: string[]): void {
-    if (!scopeOrganizationIds) return;
-    if (!scopeOrganizationIds.includes(policy.organizationId)) {
-      throw new NotFoundException('시간 정책을 찾을 수 없습니다.');
-    }
-  }
-
-  private async deactivatePoliciesWithoutConditions(tx: any, policyIds: string[]): Promise<void> {
-    const uniquePolicyIds = Array.from(new Set(policyIds.filter(Boolean)));
-    if (uniquePolicyIds.length === 0) return;
-
-    const policies = await tx.controlPolicy.findMany({
-      where: { id: { in: uniquePolicyIds } },
-      select: {
-        id: true,
-        _count: {
-          select: {
-            zones: true,
-            timePolicies: true,
-            behaviors: true,
-            allowedApps: true,
-          },
-        },
-      },
-    });
-
-    const emptyPolicyIds = policies
-      .filter(
-        (p: any) =>
-          p._count.zones + p._count.timePolicies + p._count.behaviors + p._count.allowedApps === 0,
-      )
-      .map((p: any) => p.id);
-
-    if (emptyPolicyIds.length === 0) return;
-
-    await tx.controlPolicy.updateMany({
-      where: { id: { in: emptyPolicyIds } },
-      data: { isActive: false },
-    });
-
-    await tx.controlPolicyEmployee.deleteMany({
-      where: { policyId: { in: emptyPolicyIds } },
-    });
+    assertOrganizationInScopeOrThrow(policy.organizationId, scopeOrganizationIds, '시간 정책을 찾을 수 없습니다.');
   }
 
   async create(
@@ -344,7 +303,7 @@ export class TimePoliciesService {
       await tx.controlPolicyTimePolicy.deleteMany({ where: { timePolicyId: id } });
       await tx.timePolicy.delete({ where: { id } });
 
-      await this.deactivatePoliciesWithoutConditions(
+      await deactivatePoliciesWithoutConditions(
         tx,
         impacted.map((item: any) => item.policyId),
       );
@@ -480,48 +439,7 @@ export class TimePoliciesService {
     return days[date.getDay()];
   }
 
-  // Helper: Format time from Date
-  private formatTime(date: Date): string {
-    const hours = date.getHours().toString().padStart(2, '0');
-    const minutes = date.getMinutes().toString().padStart(2, '0');
-    return `${hours}:${minutes}`;
-  }
-
   private toResponseDto(policy: any, customTimeSlots?: TimeSlotDto[]): TimePolicyResponseDto {
-    const timeSlots: TimeSlotDto[] = customTimeSlots || [
-      {
-        startTime: this.formatTime(policy.startTime),
-        endTime: this.formatTime(policy.endTime),
-        days: policy.days,
-      },
-    ];
-
-    // Count affected employees (by organization and optionally work type)
-    let affectedEmployeeCount = 0;
-    // This would require additional query - simplified for now
-
-    // excludePeriods를 프론트엔드 형식으로 변환
-    const formattedExcludePeriods = (policy.excludePeriods || []).map((ep: any) => ({
-      id: ep.id,
-      name: ep.name,
-      start: this.formatTime(ep.startTime),
-      end: this.formatTime(ep.endTime),
-    }));
-
-    return {
-      id: policy.id,
-      name: policy.name,
-      description: policy.description,
-      timeSlots,
-      priority: 0, // Not in current schema
-      allowOutsideHours: false, // Not in current schema
-      status: policy.isActive ? 'ACTIVE' : 'INACTIVE',
-      organization: policy.organization,
-      workType: policy.workType,
-      excludePeriods: formattedExcludePeriods,
-      affectedEmployeeCount,
-      createdAt: policy.createdAt,
-      updatedAt: policy.updatedAt,
-    };
+    return toTimePolicyResponseDto(policy, customTimeSlots);
   }
 }

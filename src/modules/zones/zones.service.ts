@@ -1,5 +1,8 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
+import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { toZoneResponseDto } from './zones.mapper';
 import {
   CreateZoneDto,
   UpdateZoneDto,
@@ -18,55 +21,11 @@ export class ZonesService {
     organizationId: string | undefined,
     scopeOrganizationIds?: string[],
   ): void {
-    if (!organizationId || !scopeOrganizationIds) return;
-    if (!scopeOrganizationIds.includes(organizationId)) {
-      throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
-    }
+    ensureOrganizationInScope(organizationId, scopeOrganizationIds);
   }
 
   private assertZoneInScope(zone: { organizationId: string }, scopeOrganizationIds?: string[]): void {
-    if (!scopeOrganizationIds) return;
-    if (!scopeOrganizationIds.includes(zone.organizationId)) {
-      throw new NotFoundException('구역을 찾을 수 없습니다.');
-    }
-  }
-
-  private async deactivatePoliciesWithoutConditions(tx: any, policyIds: string[]): Promise<void> {
-    const uniquePolicyIds = Array.from(new Set(policyIds.filter(Boolean)));
-    if (uniquePolicyIds.length === 0) return;
-
-    const policies = await tx.controlPolicy.findMany({
-      where: { id: { in: uniquePolicyIds } },
-      select: {
-        id: true,
-        _count: {
-          select: {
-            zones: true,
-            timePolicies: true,
-            behaviors: true,
-            allowedApps: true,
-          },
-        },
-      },
-    });
-
-    const emptyPolicyIds = policies
-      .filter(
-        (p: any) =>
-          p._count.zones + p._count.timePolicies + p._count.behaviors + p._count.allowedApps === 0,
-      )
-      .map((p: any) => p.id);
-
-    if (emptyPolicyIds.length === 0) return;
-
-    await tx.controlPolicy.updateMany({
-      where: { id: { in: emptyPolicyIds } },
-      data: { isActive: false },
-    });
-
-    await tx.controlPolicyEmployee.deleteMany({
-      where: { policyId: { in: emptyPolicyIds } },
-    });
+    assertOrganizationInScopeOrThrow(zone.organizationId, scopeOrganizationIds, '구역을 찾을 수 없습니다.');
   }
 
   async create(createZoneDto: CreateZoneDto, scopeOrganizationIds?: string[]): Promise<ZoneResponseDto> {
@@ -334,7 +293,7 @@ export class ZonesService {
       await tx.controlPolicyZone.deleteMany({ where: { zoneId: id } });
       await tx.zone.delete({ where: { id } });
 
-      await this.deactivatePoliciesWithoutConditions(
+      await deactivatePoliciesWithoutConditions(
         tx,
         impacted.map((item: any) => item.policyId),
       );
@@ -522,35 +481,6 @@ export class ZonesService {
   }
 
   private toResponseDto(zone: any): ZoneResponseDto {
-    let coordinates = zone.coordinates;
-    if (typeof coordinates === 'string') {
-      try {
-        coordinates = JSON.parse(coordinates);
-      } catch {
-        coordinates = [];
-      }
-    }
-
-    return {
-      id: zone.id,
-      name: zone.name,
-      description: zone.description,
-      type: zone.type,
-      shape: zone.shape,
-      coordinates,
-      radius: zone.radius,
-      bboxMinLat: zone.bboxMinLat ?? undefined,
-      bboxMinLng: zone.bboxMinLon ?? undefined,
-      bboxMaxLat: zone.bboxMaxLat ?? undefined,
-      bboxMaxLng: zone.bboxMaxLon ?? undefined,
-      centerLat: zone.centerLat ?? undefined,
-      centerLng: zone.centerLon ?? undefined,
-      groupId: zone.groupId,
-      isActive: zone.isActive,
-      organization: zone.organization,
-      workType: zone.workType,
-      createdAt: zone.createdAt,
-      updatedAt: zone.updatedAt,
-    };
+    return toZoneResponseDto(zone);
   }
 }
