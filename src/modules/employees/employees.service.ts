@@ -5,8 +5,9 @@ import {
   BadGatewayException,
   ConflictException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
-import { Prisma, EmployeeStatus, DeviceOperationStatus } from '@prisma/client';
+import { Prisma, EmployeeStatus, DeviceOperationStatus, DeviceOS, PushTokenStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
@@ -29,6 +30,8 @@ import {
 
 @Injectable()
 export class EmployeesService {
+  private readonly logger = new Logger(EmployeesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
@@ -260,6 +263,14 @@ export class EmployeesService {
   ): Promise<EmployeeResponseDto> {
     await this.findOne(employeeId, scopeOrganizationIds); // 존재 여부 확인
 
+    const previousEmployee = await this.prisma.employee.findUnique({
+      where: { id: employeeId },
+      select: {
+        id: true,
+        status: true,
+      },
+    });
+
     if ((dto.newPassword && !dto.confirmPassword) || (!dto.newPassword && dto.confirmPassword)) {
       throw new BadRequestException('새 비밀번호와 확인 비밀번호를 모두 입력해주세요.');
     }
@@ -360,6 +371,15 @@ export class EmployeesService {
     } catch (error) {
       this.handleUniqueConstraintError(error);
       throw error;
+    }
+
+    if (
+      previousEmployee
+      && dto.status
+      && this.isNonActiveEmployeeStatus(dto.status as EmployeeStatus)
+      && previousEmployee.status !== (dto.status as EmployeeStatus)
+    ) {
+      await this.notifyPolicyChangedForEmployees([employee.id], 'employee_status_non_active');
     }
 
     return this.toResponseDto(employee);
@@ -562,13 +582,37 @@ export class EmployeesService {
     status: EmployeeStatusEnum,
     scopeOrganizationIds?: string[],
   ): Promise<{ updated: number }> {
+    const normalizedStatus = status as EmployeeStatus;
+
+    const targetEmployees = await this.prisma.employee.findMany({
+      where: {
+        id: { in: employeeIds },
+        ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+      },
+      select: {
+        id: true,
+        status: true,
+      },
+    });
+
+    const shouldNotifyEmployeeIds = this.isNonActiveEmployeeStatus(normalizedStatus)
+      ? targetEmployees
+        .filter((employee) => employee.status !== normalizedStatus)
+        .map((employee) => employee.id)
+      : [];
+
     const result = await this.prisma.employee.updateMany({
       where: {
         id: { in: employeeIds },
         ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
       },
-      data: { status: status as EmployeeStatus },
+      data: { status: normalizedStatus },
     });
+
+    if (shouldNotifyEmployeeIds.length > 0) {
+      await this.notifyPolicyChangedForEmployees(shouldNotifyEmployeeIds, 'employee_status_non_active');
+    }
+
     return { updated: result.count };
   }
 
@@ -884,5 +928,111 @@ export class EmployeesService {
     }
 
     return { ok: true };
+  }
+
+  private isNonActiveEmployeeStatus(status?: EmployeeStatus): boolean {
+    return !!status && status !== EmployeeStatus.ACTIVE;
+  }
+
+  private async notifyPolicyChangedForEmployees(
+    employeeIds: string[],
+    trigger: 'employee_status_non_active',
+  ): Promise<void> {
+    const uniqueEmployeeIds = Array.from(new Set(employeeIds.filter(Boolean)));
+    if (uniqueEmployeeIds.length === 0) {
+      return;
+    }
+
+    const devices = await this.prisma.device.findMany({
+      where: {
+        employeeId: { in: uniqueEmployeeIds },
+        pushToken: { not: null },
+        pushTokenStatus: { not: PushTokenStatus.ERROR },
+      },
+      select: {
+        id: true,
+        os: true,
+        pushToken: true,
+        employeeId: true,
+      },
+    });
+
+    const endpointUrl = `${this.getAppBackendBaseUrl()}/internal/push/fcm/send`;
+    let successCount = 0;
+    let failedCount = 0;
+
+    for (const device of devices) {
+      const token = device.pushToken?.trim();
+      if (!token) {
+        continue;
+      }
+
+      try {
+        await this.sendPolicyChangedPush(endpointUrl, {
+          token,
+          os: device.os,
+          trigger,
+          policyApplied: false,
+        });
+        successCount += 1;
+      } catch (error) {
+        failedCount += 1;
+        this.logger.warn(
+          `직원 상태 변경 policy_changed 전송 실패(deviceId=${device.id}, employeeId=${device.employeeId}): ${String(error)}`,
+        );
+      }
+    }
+
+    this.logger.log(
+      `직원 상태 변경 policy_changed 전송 완료(trigger=${trigger}, employees=${uniqueEmployeeIds.length}, devices=${devices.length}, success=${successCount}, failed=${failedCount})`,
+    );
+  }
+
+  private async sendPolicyChangedPush(
+    endpointUrl: string,
+    params: {
+      token: string;
+      os: DeviceOS;
+      trigger: string;
+      policyApplied: boolean;
+    },
+  ): Promise<void> {
+    const response = await fetch(endpointUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        message: {
+          token: params.token,
+          data: {
+            type: 'policy_changed',
+            policyVersion: String(Date.now()),
+            extraData: {
+              trigger: params.trigger,
+              policyApplied: params.policyApplied ? 'true' : 'false',
+            },
+          },
+          ...(params.os === DeviceOS.Android
+            ? {
+              android: {
+                priority: 'HIGH',
+              },
+            }
+            : {
+              android: {
+                priority: 'NORMAL',
+              },
+            }),
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const responseText = await response.text();
+      throw new BadGatewayException(
+        `policy_changed 호출 실패(status=${response.status}): ${responseText || 'empty response'}`,
+      );
+    }
   }
 }
