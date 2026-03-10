@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsUUID } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsBoolean } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 
 export class CreateWorkTypeDto {
@@ -13,7 +13,7 @@ export class CreateWorkTypeDto {
   description?: string;
 
   @ApiProperty({ description: '조직 ID' })
-  @IsUUID()
+  @IsString()
   @IsNotEmpty()
   organizationId: string;
 
