@@ -783,9 +783,11 @@ export class ControlPoliciesService {
       const appBackendBaseUrl = this.getAppBackendBaseUrl();
       const endpointUrl = `${appBackendBaseUrl}/internal/push/fcm/send`;
       const dispatchConcurrency = this.resolvePolicyPushConcurrency();
+      const dispatchId = `${params.policyId}-${Date.now()}`;
+      const endpointHint = this.resolveEndpointHint(endpointUrl);
 
       this.logger.log(
-        `[policy_changed] dispatch start trigger=${params.trigger}, policyId=${params.policyId}, org=${params.organizationId}, workType=${params.workTypeId}, endpoint=${endpointUrl}, concurrency=${dispatchConcurrency}`,
+        `[policy_changed] dispatch start dispatchId=${dispatchId}, trigger=${params.trigger}, policyId=${params.policyId}, org=${params.organizationId}, workType=${params.workTypeId}, endpoint=${endpointUrl}, concurrency=${dispatchConcurrency}, endpointHint=${endpointHint}`,
       );
 
       const totalTargetEmployees = await this.prisma.employee.count({
@@ -860,6 +862,7 @@ export class ControlPoliciesService {
         const results = await Promise.all(chunk.map(async (target) => {
           try {
             await this.sendPolicyChangedPush(endpointUrl, {
+              dispatchId,
               token: target.token,
               os: target.os,
               policyId: params.policyId,
@@ -921,11 +924,13 @@ export class ControlPoliciesService {
       }
 
       const summary = {
+        dispatchId,
         trigger: params.trigger,
         policyId: params.policyId,
         workTypeId: params.workTypeId,
         organizationId: params.organizationId,
         endpointUrl,
+        endpointHint,
         dispatchConcurrency,
         targetEmployees: totalTargetEmployees,
         employeesWithToken: targetEmployeeIds.size,
@@ -942,12 +947,12 @@ export class ControlPoliciesService {
 
       if (failedDispatchDeviceIds.length > 0) {
         this.logger.warn(
-          `[policy_changed] failed device ids: ${failedDispatchDeviceIds.slice(0, 20).join(', ')}`
+          `[policy_changed] failed device ids dispatchId=${dispatchId}: ${failedDispatchDeviceIds.slice(0, 20).join(', ')}`
           + `${failedDispatchDeviceIds.length > 20 ? ' ...' : ''}`,
         );
 
         if (failureReasons.length > 0) {
-          this.logger.warn(`[policy_changed] failed reasons: ${failureReasons.join(' | ')}`);
+          this.logger.warn(`[policy_changed] failed reasons dispatchId=${dispatchId}: ${failureReasons.join(' | ')}`);
         }
       }
 
@@ -972,6 +977,7 @@ export class ControlPoliciesService {
   private async sendPolicyChangedPush(
     endpointUrl: string,
     params: {
+      dispatchId: string;
       token: string;
       os: DeviceOS;
       policyId: string;
@@ -989,6 +995,8 @@ export class ControlPoliciesService {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'x-smombie-dispatch-id': params.dispatchId,
+          'x-smombie-source': 'admin-backend:policy_changed',
         },
         signal: abortController.signal,
         body: JSON.stringify({
@@ -1022,11 +1030,14 @@ export class ControlPoliciesService {
       }
 
       if (error instanceof Error && error.name === 'AbortError') {
-        throw new PolicyPushSendError(`request-timeout>${timeoutMs}ms`, false);
+        throw new PolicyPushSendError(
+          `network-timeout>${timeoutMs}ms, endpoint=${endpointUrl}, dispatchId=${params.dispatchId}`,
+          false,
+        );
       }
 
       throw new PolicyPushSendError(
-        error instanceof Error ? error.message : String(error),
+        this.formatFetchError(error, endpointUrl, params.dispatchId),
         false,
       );
     } finally {
@@ -1068,6 +1079,48 @@ export class ControlPoliciesService {
     }
 
     return 8000;
+  }
+
+  private resolveEndpointHint(endpointUrl: string): string {
+    try {
+      const host = new URL(endpointUrl).hostname.toLowerCase();
+      if (host === 'localhost' || host === '127.0.0.1') {
+        return 'container 환경이면 localhost는 자기 컨테이너를 가리킬 수 있음(APP_BACKEND_BASE_URL 확인 필요)';
+      }
+
+      return `host=${host}`;
+    } catch {
+      return 'endpoint URL 파싱 실패';
+    }
+  }
+
+  private formatFetchError(error: unknown, endpointUrl: string, dispatchId: string): string {
+    if (error instanceof Error) {
+      const errorName = error.name || 'Error';
+      const errorMessage = error.message || String(error);
+      const errorCause = (error as Error & { cause?: unknown }).cause;
+
+      if (typeof errorCause === 'object' && errorCause !== null) {
+        const causeCode = 'code' in (errorCause as Record<string, unknown>)
+          ? String((errorCause as Record<string, unknown>).code)
+          : 'unknown';
+        const causeErrno = 'errno' in (errorCause as Record<string, unknown>)
+          ? String((errorCause as Record<string, unknown>).errno)
+          : 'unknown';
+        const causeSyscall = 'syscall' in (errorCause as Record<string, unknown>)
+          ? String((errorCause as Record<string, unknown>).syscall)
+          : 'unknown';
+        const causeAddress = 'address' in (errorCause as Record<string, unknown>)
+          ? String((errorCause as Record<string, unknown>).address)
+          : 'unknown';
+
+        return `network-fetch-failed name=${errorName}, message=${errorMessage}, code=${causeCode}, errno=${causeErrno}, syscall=${causeSyscall}, address=${causeAddress}, endpoint=${endpointUrl}, dispatchId=${dispatchId}`;
+      }
+
+      return `network-fetch-failed name=${errorName}, message=${errorMessage}, endpoint=${endpointUrl}, dispatchId=${dispatchId}`;
+    }
+
+    return `network-fetch-failed unknown-error=${String(error)}, endpoint=${endpointUrl}, dispatchId=${dispatchId}`;
   }
 
   private getAppBackendBaseUrl(): string {
