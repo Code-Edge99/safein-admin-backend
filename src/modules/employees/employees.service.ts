@@ -801,7 +801,7 @@ export class EmployeesService {
     if (existingTarget) {
       if (!confirmed) {
         throw new ConflictException(
-          '입력한 아이디를 이미 사용하는 직원이 있습니다. 기존 사용자를 "휴대폰 정보 확인" 상태로 전환하고 아이디를 재할당하려면 confirmIdReassignment=true로 다시 요청하세요.',
+          '입력한 아이디를 이미 사용하는 직원이 있습니다. 기존 사용자를 "아이디 정보 확인" 상태로 전환하고 아이디를 재할당하려면 confirmIdReassignment=true로 다시 요청하세요.',
         );
       }
 
