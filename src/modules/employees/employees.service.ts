@@ -28,6 +28,16 @@ import {
   EmployeeStatusEnum,
 } from './dto';
 
+class EmployeePolicyPushSendError extends Error {
+  constructor(
+    message: string,
+    readonly shouldMarkTokenAsError: boolean,
+  ) {
+    super(message);
+    this.name = 'EmployeePolicyPushSendError';
+  }
+}
+
 @Injectable()
 export class EmployeesService {
   private readonly logger = new Logger(EmployeesService.name);
@@ -960,6 +970,7 @@ export class EmployeesService {
     const endpointUrl = `${this.getAppBackendBaseUrl()}/internal/push/fcm/send`;
     let successCount = 0;
     let failedCount = 0;
+    const tokenErrorDeviceIds: string[] = [];
 
     for (const device of devices) {
       const token = device.pushToken?.trim();
@@ -977,14 +988,28 @@ export class EmployeesService {
         successCount += 1;
       } catch (error) {
         failedCount += 1;
+        if (error instanceof EmployeePolicyPushSendError && error.shouldMarkTokenAsError) {
+          tokenErrorDeviceIds.push(device.id);
+        }
         this.logger.warn(
           `직원 상태 변경 policy_changed 전송 실패(deviceId=${device.id}, employeeId=${device.employeeId}): ${String(error)}`,
         );
       }
     }
 
+    let markedAsErrorCount = 0;
+    if (tokenErrorDeviceIds.length > 0) {
+      const uniqueFailedDeviceIds = Array.from(new Set(tokenErrorDeviceIds));
+      markedAsErrorCount = await this.prisma.$executeRaw`
+        UPDATE devices
+        SET "pushTokenStatus" = 'ERROR',
+            "updatedAt" = NOW()
+        WHERE id IN (${Prisma.join(uniqueFailedDeviceIds)})
+      `;
+    }
+
     this.logger.log(
-      `직원 상태 변경 policy_changed 전송 완료(trigger=${trigger}, employees=${uniqueEmployeeIds.length}, devices=${devices.length}, success=${successCount}, failed=${failedCount})`,
+      `직원 상태 변경 policy_changed 전송 완료(trigger=${trigger}, employees=${uniqueEmployeeIds.length}, devices=${devices.length}, success=${successCount}, failed=${failedCount}, markedAsError=${markedAsErrorCount})`,
     );
   }
 
@@ -1040,9 +1065,26 @@ export class EmployeesService {
 
     if (!response.ok) {
       const responseText = await response.text();
-      throw new BadGatewayException(
+      throw new EmployeePolicyPushSendError(
         `policy_changed 호출 실패(status=${response.status}): ${responseText || 'empty response'}`,
+        this.shouldMarkTokenAsError(response.status, responseText),
       );
     }
+  }
+
+  private shouldMarkTokenAsError(statusCode: number, responseText: string): boolean {
+    if (statusCode === 502) {
+      return true;
+    }
+
+    if (statusCode !== 400) {
+      return false;
+    }
+
+    const body = (responseText || '').toLowerCase();
+    return body.includes('invalid-registration-token')
+      || body.includes('registration-token-not-registered')
+      || body.includes('not a valid fcm registration token')
+      || body.includes('registration token is not a valid');
   }
 }

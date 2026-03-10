@@ -1056,7 +1056,9 @@ export class ControlPoliciesService {
 
     const body = (responseText || '').toLowerCase();
     return body.includes('invalid-registration-token')
-      || body.includes('registration-token-not-registered');
+      || body.includes('registration-token-not-registered')
+      || body.includes('not a valid fcm registration token')
+      || body.includes('registration token is not a valid');
   }
 
   private resolvePolicyPushConcurrency(): number {
