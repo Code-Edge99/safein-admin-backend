@@ -911,6 +911,7 @@ export class ControlPoliciesService {
             type: 'policy_changed',
             policyVersion: params.policyId,
             extraData: {
+              reason: params.trigger,
               trigger: params.trigger,
               policyApplied,
             },
@@ -922,8 +923,17 @@ export class ControlPoliciesService {
               },
             }
             : {
-              android: {
-                priority: 'NORMAL',
+              apns: {
+                headers: {
+                  'apns-priority': '10',
+                  'apns-collapse-id': 'policy_changed',
+                },
+                payload: {
+                  aps: {
+                    'content-available': 1,
+                    sound: 'default',
+                  },
+                },
               },
             }),
         },
