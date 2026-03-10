@@ -736,6 +736,36 @@ export class ControlPoliciesService {
     return this.toResponseDto(updated);
   }
 
+  async notifyPoliciesChanged(
+    policyIds: string[],
+    trigger: 'create' | 'activate' | 'update' | 'deactivate' = 'update',
+  ): Promise<void> {
+    const uniquePolicyIds = Array.from(new Set(policyIds.filter(Boolean)));
+    if (uniquePolicyIds.length === 0) {
+      return;
+    }
+
+    const policies = await this.prisma.controlPolicy.findMany({
+      where: {
+        id: { in: uniquePolicyIds },
+      },
+      select: {
+        id: true,
+        organizationId: true,
+        workTypeId: true,
+      },
+    });
+
+    for (const policy of policies) {
+      await this.notifyPolicyChangedForWorkType({
+        policyId: policy.id,
+        organizationId: policy.organizationId,
+        workTypeId: policy.workTypeId,
+        trigger,
+      });
+    }
+  }
+
   private async notifyPolicyChangedForWorkType(params: {
     policyId: string;
     organizationId: string;

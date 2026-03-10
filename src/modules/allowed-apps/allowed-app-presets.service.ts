@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException 
 import { PrismaService } from '../../prisma/prisma.service';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
 import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toAllowedAppPresetDetailDto, toAllowedAppPresetResponseDto } from './allowed-app-presets.mapper';
 import {
   CreateAllowedAppPresetDto,
@@ -18,7 +19,10 @@ export class AllowedAppPresetsService {
   private readonly validPlatforms = ['android', 'ios', 'both'] as const;
   private platformsNormalized = false;
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly controlPoliciesService: ControlPoliciesService,
+  ) {}
 
   private ensureOrganizationInScope(
     organizationId: string | undefined,
@@ -251,6 +255,8 @@ export class AllowedAppPresetsService {
       },
     });
 
+    await this.notifyPoliciesByPreset(id);
+
     return this.toDetailDto(preset);
   }
 
@@ -274,11 +280,13 @@ export class AllowedAppPresetsService {
 
     this.assertPresetInScope(preset, scopeOrganizationIds);
 
+    let impactedPolicyIds: string[] = [];
     await this.prisma.$transaction(async (tx) => {
       const impacted = await tx.controlPolicyAllowedApp.findMany({
         where: { presetId: id },
         select: { policyId: true },
       });
+      impactedPolicyIds = impacted.map((item: any) => item.policyId);
 
       await tx.controlPolicyAllowedApp.deleteMany({ where: { presetId: id } });
       await tx.allowedAppPreset.delete({ where: { id } });
@@ -288,6 +296,8 @@ export class AllowedAppPresetsService {
         impacted.map((item: any) => item.policyId),
       );
     });
+
+    await this.controlPoliciesService.notifyPoliciesChanged(impactedPolicyIds, 'update');
   }
 
   async addApps(
@@ -317,6 +327,8 @@ export class AllowedAppPresetsService {
       });
     }
 
+    await this.notifyPoliciesByPreset(id);
+
     return this.findOne(id);
   }
 
@@ -336,7 +348,21 @@ export class AllowedAppPresetsService {
       },
     });
 
+    await this.notifyPoliciesByPreset(id);
+
     return this.findOne(id, scopeOrganizationIds);
+  }
+
+  private async notifyPoliciesByPreset(presetId: string): Promise<void> {
+    const impactedPolicies = await this.prisma.controlPolicyAllowedApp.findMany({
+      where: { presetId },
+      select: { policyId: true },
+    });
+
+    await this.controlPoliciesService.notifyPoliciesChanged(
+      impactedPolicies.map((item) => item.policyId),
+      'update',
+    );
   }
 
   async findByOrganization(

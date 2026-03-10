@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException 
 import { PrismaService } from '../../prisma/prisma.service';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
 import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toZoneResponseDto } from './zones.mapper';
 import {
   CreateZoneDto,
@@ -15,7 +16,10 @@ import {
 
 @Injectable()
 export class ZonesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly controlPoliciesService: ControlPoliciesService,
+  ) {}
 
   private ensureOrganizationInScope(
     organizationId: string | undefined,
@@ -257,6 +261,15 @@ export class ZonesService {
       },
     });
 
+    const impactedPolicies = await this.prisma.controlPolicyZone.findMany({
+      where: { zoneId: id },
+      select: { policyId: true },
+    });
+    await this.controlPoliciesService.notifyPoliciesChanged(
+      impactedPolicies.map((item) => item.policyId),
+      'update',
+    );
+
     return this.toResponseDto(zone);
   }
 
@@ -284,11 +297,13 @@ export class ZonesService {
       throw new BadRequestException('이력 데이터가 있는 구역은 삭제할 수 없습니다. 비활성화로 관리해주세요.');
     }
 
+    let impactedPolicyIds: string[] = [];
     await this.prisma.$transaction(async (tx) => {
       const impacted = await tx.controlPolicyZone.findMany({
         where: { zoneId: id },
         select: { policyId: true },
       });
+      impactedPolicyIds = impacted.map((item: any) => item.policyId);
 
       await tx.controlPolicyZone.deleteMany({ where: { zoneId: id } });
       await tx.zone.delete({ where: { id } });
@@ -298,6 +313,8 @@ export class ZonesService {
         impacted.map((item: any) => item.policyId),
       );
     });
+
+    await this.controlPoliciesService.notifyPoliciesChanged(impactedPolicyIds, 'update');
   }
 
   async toggleActive(id: string, scopeOrganizationIds?: string[]): Promise<ZoneResponseDto> {
@@ -315,6 +332,15 @@ export class ZonesService {
         },
       },
     });
+
+    const impactedPolicies = await this.prisma.controlPolicyZone.findMany({
+      where: { zoneId: id },
+      select: { policyId: true },
+    });
+    await this.controlPoliciesService.notifyPoliciesChanged(
+      impactedPolicies.map((item) => item.policyId),
+      'update',
+    );
 
     return this.toResponseDto(updated);
   }

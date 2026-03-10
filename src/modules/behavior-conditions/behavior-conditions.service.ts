@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException 
 import { PrismaService } from '../../prisma/prisma.service';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
 import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toBehaviorConditionResponseDto } from './behavior-conditions.mapper';
 import {
   CreateBehaviorConditionDto,
@@ -14,7 +15,10 @@ import {
 
 @Injectable()
 export class BehaviorConditionsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly controlPoliciesService: ControlPoliciesService,
+  ) {}
 
   private ensureOrganizationInScope(
     organizationId: string | undefined,
@@ -268,17 +272,28 @@ export class BehaviorConditionsService {
       },
     });
 
+    const impactedPolicies = await this.prisma.controlPolicyBehavior.findMany({
+      where: { behaviorConditionId: id },
+      select: { policyId: true },
+    });
+    await this.controlPoliciesService.notifyPoliciesChanged(
+      impactedPolicies.map((item) => item.policyId),
+      'update',
+    );
+
     return this.toResponseDto(condition);
   }
 
   async remove(id: string, scopeOrganizationIds?: string[]): Promise<void> {
     await this.findOne(id, scopeOrganizationIds);
 
+    let impactedPolicyIds: string[] = [];
     await this.prisma.$transaction(async (tx) => {
       const impacted = await tx.controlPolicyBehavior.findMany({
         where: { behaviorConditionId: id },
         select: { policyId: true },
       });
+      impactedPolicyIds = impacted.map((item: any) => item.policyId);
 
       await tx.controlPolicyBehavior.deleteMany({ where: { behaviorConditionId: id } });
       await tx.behaviorCondition.delete({ where: { id } });
@@ -288,6 +303,8 @@ export class BehaviorConditionsService {
         impacted.map((item: any) => item.policyId),
       );
     });
+
+    await this.controlPoliciesService.notifyPoliciesChanged(impactedPolicyIds, 'update');
   }
 
   async toggleActive(id: string, scopeOrganizationIds?: string[]): Promise<BehaviorConditionResponseDto> {
@@ -308,6 +325,15 @@ export class BehaviorConditionsService {
         _count: { select: { policyBehaviors: true } },
       },
     });
+
+    const impactedPolicies = await this.prisma.controlPolicyBehavior.findMany({
+      where: { behaviorConditionId: id },
+      select: { policyId: true },
+    });
+    await this.controlPoliciesService.notifyPoliciesChanged(
+      impactedPolicies.map((item) => item.policyId),
+      'update',
+    );
 
     return this.toResponseDto(updated);
   }

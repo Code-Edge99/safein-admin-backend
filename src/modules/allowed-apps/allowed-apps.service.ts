@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toAllowedAppResponseDto } from './allowed-apps.mapper';
 import {
   CreateAllowedAppDto,
@@ -18,7 +19,10 @@ export class AllowedAppsService {
   private platformsNormalized = false;
   private readonly refreshConcurrency = 5;
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly controlPoliciesService: ControlPoliciesService,
+  ) {}
 
   private normalizePackageName(packageName: string): string {
     return packageName.trim().toLowerCase();
@@ -214,6 +218,8 @@ export class AllowedAppsService {
       },
     });
 
+    await this.notifyPoliciesByAllowedApp(id);
+
     const installedCountMap = await this.getInstalledCountByApps([id]);
     return this.toResponseDto(app, installedCountMap.get(id) || 0);
   }
@@ -384,8 +390,34 @@ export class AllowedAppsService {
       },
     });
 
+    await this.notifyPoliciesByAllowedApp(id);
+
     const installedCountMap = await this.getInstalledCountByApps([id]);
     return this.toResponseDto(updated, installedCountMap.get(id) || 0);
+  }
+
+  private async notifyPoliciesByAllowedApp(allowedAppId: string): Promise<void> {
+    const presetItems = await this.prisma.allowedAppPresetItem.findMany({
+      where: { allowedAppId },
+      select: { presetId: true },
+    });
+
+    const presetIds = Array.from(new Set(presetItems.map((item) => item.presetId)));
+    if (presetIds.length === 0) {
+      return;
+    }
+
+    const impactedPolicies = await this.prisma.controlPolicyAllowedApp.findMany({
+      where: {
+        presetId: { in: presetIds },
+      },
+      select: { policyId: true },
+    });
+
+    await this.controlPoliciesService.notifyPoliciesChanged(
+      impactedPolicies.map((item) => item.policyId),
+      'update',
+    );
   }
 
   /**

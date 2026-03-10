@@ -10,6 +10,7 @@ import {
   ValidateNested,
   Min,
   Max,
+  ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -49,13 +50,25 @@ export class ExcludePeriodDto {
   @IsNotEmpty()
   name: string;
 
-  @ApiProperty({ description: '시작 시간 (HH:MM 형식)', example: '12:00' })
+  @ApiPropertyOptional({ description: '시작 시간 (HH:MM 형식)', example: '12:00' })
+  @ValidateIf((value: ExcludePeriodDto) => !value.startTime)
   @IsString()
-  start: string;
+  start?: string;
 
-  @ApiProperty({ description: '종료 시간 (HH:MM 형식)', example: '13:00' })
+  @ApiPropertyOptional({ description: '시작 시간 별칭 (HH:MM 형식)', example: '12:00' })
+  @ValidateIf((value: ExcludePeriodDto) => !value.start)
   @IsString()
-  end: string;
+  startTime?: string;
+
+  @ApiPropertyOptional({ description: '종료 시간 (HH:MM 형식)', example: '13:00' })
+  @ValidateIf((value: ExcludePeriodDto) => !value.endTime)
+  @IsString()
+  end?: string;
+
+  @ApiPropertyOptional({ description: '종료 시간 별칭 (HH:MM 형식)', example: '13:00' })
+  @ValidateIf((value: ExcludePeriodDto) => !value.end)
+  @IsString()
+  endTime?: string;
 }
 
 export class ExcludePeriodResponseDto {
@@ -98,6 +111,22 @@ export class CreateTimePolicyDto {
   @ValidateNested({ each: true })
   @Type(() => TimeSlotDto)
   timeSlots: TimeSlotDto[];
+
+  @ApiPropertyOptional({ description: '시작 시간 레거시 필드(HH:MM). timeSlots 미사용 시 허용' })
+  @IsString()
+  @IsOptional()
+  startTime?: string;
+
+  @ApiPropertyOptional({ description: '종료 시간 레거시 필드(HH:MM). timeSlots 미사용 시 허용' })
+  @IsString()
+  @IsOptional()
+  endTime?: string;
+
+  @ApiPropertyOptional({ description: '적용 요일 레거시 필드. timeSlots 미사용 시 허용', enum: DayOfWeek, isArray: true })
+  @IsArray()
+  @IsEnum(DayOfWeek, { each: true })
+  @IsOptional()
+  days?: DayOfWeek[];
 
   @ApiPropertyOptional({ description: '예외시간 목록', type: [ExcludePeriodDto] })
   @IsArray()

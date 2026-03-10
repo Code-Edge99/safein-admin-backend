@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException 
 import { PrismaService } from '../../prisma/prisma.service';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
 import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toTimePolicyResponseDto } from './time-policies.mapper';
 import {
   CreateTimePolicyDto,
@@ -15,7 +16,10 @@ import {
 
 @Injectable()
 export class TimePoliciesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly controlPoliciesService: ControlPoliciesService,
+  ) {}
 
   private ensureOrganizationInScope(
     organizationId: string | undefined,
@@ -32,7 +36,7 @@ export class TimePoliciesService {
     createTimePolicyDto: CreateTimePolicyDto,
     scopeOrganizationIds?: string[],
   ): Promise<TimePolicyResponseDto> {
-    const { organizationId, workTypeId, timeSlots, excludePeriods, ...rest } = createTimePolicyDto;
+    const { organizationId, workTypeId, excludePeriods, ...rest } = createTimePolicyDto;
 
     this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
 
@@ -54,27 +58,29 @@ export class TimePoliciesService {
       }
     }
 
-    // Extract start/end time from first time slot (simplified model)
-    // Full time slot support can be stored in a separate table
-    const firstSlot = timeSlots[0];
-    const days = firstSlot?.days || [];
+    const normalizedSlot = this.resolvePrimaryTimeSlot(createTimePolicyDto);
+    if (!normalizedSlot) {
+      throw new BadRequestException('timeSlots 또는 startTime/endTime/days 입력이 필요합니다.');
+    }
+    const { startTime, endTime, days } = normalizedSlot;
+    const normalizedExcludePeriods = this.normalizeExcludePeriods(excludePeriods);
 
     const policy = await this.prisma.timePolicy.create({
       data: {
         name: rest.name,
         description: rest.description,
-        startTime: this.parseTimeToDate(firstSlot?.startTime || '09:00'),
-        endTime: this.parseTimeToDate(firstSlot?.endTime || '18:00'),
+        startTime: this.parseTimeToDate(startTime),
+        endTime: this.parseTimeToDate(endTime),
         days,
         organizationId,
         workTypeId,
         isActive: rest.status !== 'INACTIVE',
-        ...(excludePeriods && excludePeriods.length > 0 && {
+        ...(normalizedExcludePeriods.length > 0 && {
           excludePeriods: {
-            create: excludePeriods.map((ep) => ({
+            create: normalizedExcludePeriods.map((ep) => ({
               name: ep.name,
-              startTime: this.parseTimeToDate(ep.start),
-              endTime: this.parseTimeToDate(ep.end),
+              startTime: this.parseTimeToDate(ep.startTime),
+              endTime: this.parseTimeToDate(ep.endTime),
             })),
           },
         }),
@@ -90,7 +96,7 @@ export class TimePoliciesService {
       },
     });
 
-    return this.toResponseDto(policy, timeSlots);
+    return this.toResponseDto(policy);
   }
 
   async findAll(
@@ -204,7 +210,17 @@ export class TimePoliciesService {
   ): Promise<TimePolicyResponseDto> {
     await this.findOne(id, scopeOrganizationIds);
 
-    const { organizationId, workTypeId, timeSlots, status, excludePeriods, ...rest } = updateTimePolicyDto;
+    const {
+      organizationId,
+      workTypeId,
+      status,
+      excludePeriods,
+      timeSlots,
+      startTime,
+      endTime,
+      days,
+      ...rest
+    } = updateTimePolicyDto;
 
     const updateData: any = { ...rest };
 
@@ -231,11 +247,16 @@ export class TimePoliciesService {
       updateData.workTypeId = workTypeId || null;
     }
 
-    if (timeSlots && timeSlots.length > 0) {
-      const firstSlot = timeSlots[0];
-      updateData.startTime = this.parseTimeToDate(firstSlot.startTime);
-      updateData.endTime = this.parseTimeToDate(firstSlot.endTime);
-      updateData.days = firstSlot.days;
+    const normalizedSlot = this.resolvePrimaryTimeSlot({
+      timeSlots,
+      startTime,
+      endTime,
+      days,
+    });
+    if (normalizedSlot) {
+      updateData.startTime = this.parseTimeToDate(normalizedSlot.startTime);
+      updateData.endTime = this.parseTimeToDate(normalizedSlot.endTime);
+      updateData.days = normalizedSlot.days;
     }
 
     if (status !== undefined) {
@@ -244,16 +265,17 @@ export class TimePoliciesService {
 
     // excludePeriods가 있으면 기존 것 모두 삭제 후 새로 생성
     if (excludePeriods !== undefined) {
+      const normalizedExcludePeriods = this.normalizeExcludePeriods(excludePeriods);
       await this.prisma.timePolicyExcludePeriod.deleteMany({
         where: { timePolicyId: id },
       });
-      if (excludePeriods.length > 0) {
+      if (normalizedExcludePeriods.length > 0) {
         await this.prisma.timePolicyExcludePeriod.createMany({
-          data: excludePeriods.map((ep) => ({
+          data: normalizedExcludePeriods.map((ep) => ({
             timePolicyId: id,
             name: ep.name,
-            startTime: this.parseTimeToDate(ep.start),
-            endTime: this.parseTimeToDate(ep.end),
+            startTime: this.parseTimeToDate(ep.startTime),
+            endTime: this.parseTimeToDate(ep.endTime),
           })),
         });
       }
@@ -273,7 +295,16 @@ export class TimePoliciesService {
       },
     });
 
-    return this.toResponseDto(policy, timeSlots);
+    const impactedPolicies = await this.prisma.controlPolicyTimePolicy.findMany({
+      where: { timePolicyId: id },
+      select: { policyId: true },
+    });
+    await this.controlPoliciesService.notifyPoliciesChanged(
+      impactedPolicies.map((item) => item.policyId),
+      'update',
+    );
+
+    return this.toResponseDto(policy);
   }
 
   async remove(id: string, scopeOrganizationIds?: string[]): Promise<void> {
@@ -294,11 +325,13 @@ export class TimePoliciesService {
 
     this.assertPolicyInScope(policy, scopeOrganizationIds);
 
+    let impactedPolicyIds: string[] = [];
     await this.prisma.$transaction(async (tx) => {
       const impacted = await tx.controlPolicyTimePolicy.findMany({
         where: { timePolicyId: id },
         select: { policyId: true },
       });
+      impactedPolicyIds = impacted.map((item: any) => item.policyId);
 
       await tx.controlPolicyTimePolicy.deleteMany({ where: { timePolicyId: id } });
       await tx.timePolicy.delete({ where: { id } });
@@ -308,6 +341,8 @@ export class TimePoliciesService {
         impacted.map((item: any) => item.policyId),
       );
     });
+
+    await this.controlPoliciesService.notifyPoliciesChanged(impactedPolicyIds, 'update');
   }
 
   async toggleActive(id: string, scopeOrganizationIds?: string[]): Promise<TimePolicyResponseDto> {
@@ -333,6 +368,15 @@ export class TimePoliciesService {
         },
       },
     });
+
+    const impactedPolicies = await this.prisma.controlPolicyTimePolicy.findMany({
+      where: { timePolicyId: id },
+      select: { policyId: true },
+    });
+    await this.controlPoliciesService.notifyPoliciesChanged(
+      impactedPolicies.map((item) => item.policyId),
+      'update',
+    );
 
     return this.toResponseDto(updated);
   }
@@ -364,7 +408,11 @@ export class TimePoliciesService {
     const startTime = this.extractTime(policy.startTime);
     const endTime = this.extractTime(policy.endTime);
 
-    if (currentTime < startTime || currentTime > endTime) {
+    const inPolicyRange = startTime <= endTime
+      ? currentTime >= startTime && currentTime <= endTime
+      : currentTime >= startTime || currentTime <= endTime;
+
+    if (!inPolicyRange) {
       return false;
     }
 
@@ -372,7 +420,11 @@ export class TimePoliciesService {
     for (const exclude of policy.excludePeriods) {
       const excludeStart = this.extractTime(exclude.startTime);
       const excludeEnd = this.extractTime(exclude.endTime);
-      if (currentTime >= excludeStart && currentTime <= excludeEnd) {
+      const inExcludeRange = excludeStart <= excludeEnd
+        ? currentTime >= excludeStart && currentTime <= excludeEnd
+        : currentTime >= excludeStart || currentTime <= excludeEnd;
+
+      if (inExcludeRange) {
         return false;
       }
     }
@@ -423,14 +475,14 @@ export class TimePoliciesService {
   // Helper: Parse HH:MM string to Date with time
   private parseTimeToDate(timeStr: string): Date {
     const [hours, minutes] = timeStr.split(':').map(Number);
-    const date = new Date();
-    date.setHours(hours, minutes, 0, 0);
+    const date = new Date(Date.UTC(1970, 0, 1, 0, 0, 0, 0));
+    date.setUTCHours(hours, minutes, 0, 0);
     return date;
   }
 
   // Helper: Extract time as minutes from midnight
   private extractTime(date: Date): number {
-    return date.getHours() * 60 + date.getMinutes();
+    return date.getUTCHours() * 60 + date.getUTCMinutes();
   }
 
   // Helper: Get day of week in Korean
@@ -441,5 +493,53 @@ export class TimePoliciesService {
 
   private toResponseDto(policy: any, customTimeSlots?: TimeSlotDto[]): TimePolicyResponseDto {
     return toTimePolicyResponseDto(policy, customTimeSlots);
+  }
+
+  private resolvePrimaryTimeSlot(
+    dto: Partial<CreateTimePolicyDto>,
+  ): { startTime: string; endTime: string; days: string[] } | null {
+    const firstSlot = Array.isArray(dto.timeSlots) && dto.timeSlots.length > 0
+      ? dto.timeSlots[0]
+      : null;
+
+    const startTime = (firstSlot?.startTime ?? dto.startTime)?.trim();
+    const endTime = (firstSlot?.endTime ?? dto.endTime)?.trim();
+    const days = Array.isArray(firstSlot?.days)
+      ? firstSlot.days
+      : Array.isArray(dto.days)
+        ? dto.days
+        : [];
+
+    if (!startTime || !endTime || days.length === 0) {
+      return null;
+    }
+
+    return {
+      startTime,
+      endTime,
+      days,
+    };
+  }
+
+  private normalizeExcludePeriods(
+    excludePeriods?: Array<{ name: string; start?: string; end?: string; startTime?: string; endTime?: string }>,
+  ): Array<{ name: string; startTime: string; endTime: string }> {
+    if (!Array.isArray(excludePeriods)) {
+      return [];
+    }
+
+    return excludePeriods
+      .map((period) => {
+        const startTime = (period.start ?? period.startTime ?? '').trim();
+        const endTime = (period.end ?? period.endTime ?? '').trim();
+        const name = (period.name ?? '').trim();
+
+        return {
+          name,
+          startTime,
+          endTime,
+        };
+      })
+      .filter((period) => period.name.length > 0 && period.startTime.length > 0 && period.endTime.length > 0);
   }
 }
