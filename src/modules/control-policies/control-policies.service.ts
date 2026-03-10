@@ -32,6 +32,13 @@ class PolicyPushSendError extends Error {
   }
 }
 
+type PolicyPushTarget = {
+  id: string;
+  token: string;
+  os: DeviceOS;
+  employeeId: string;
+};
+
 @Injectable()
 export class ControlPoliciesService {
   private readonly logger = new Logger(ControlPoliciesService.name);
@@ -775,6 +782,11 @@ export class ControlPoliciesService {
     try {
       const appBackendBaseUrl = this.getAppBackendBaseUrl();
       const endpointUrl = `${appBackendBaseUrl}/internal/push/fcm/send`;
+      const dispatchConcurrency = this.resolvePolicyPushConcurrency();
+
+      this.logger.log(
+        `[policy_changed] dispatch start trigger=${params.trigger}, policyId=${params.policyId}, org=${params.organizationId}, workType=${params.workTypeId}, endpoint=${endpointUrl}, concurrency=${dispatchConcurrency}`,
+      );
 
       const totalTargetEmployees = await this.prisma.employee.count({
         where: {
@@ -807,31 +819,92 @@ export class ControlPoliciesService {
       const targetEmployeeIds = new Set<string>();
       const failedDispatchDeviceIds: string[] = [];
       const tokenErrorDeviceIds: string[] = [];
+      const failureReasons: string[] = [];
       let successCount = 0;
       let targetTokenCount = 0;
+      let skippedNoEmployeeCount = 0;
+      let skippedNoTokenCount = 0;
+
+      this.logger.log(
+        `[policy_changed] candidate devices loaded policyId=${params.policyId}, deviceCount=${devices.length}, targetEmployees=${totalTargetEmployees}`,
+      );
+
+      const dispatchTargets: PolicyPushTarget[] = [];
 
       for (const device of devices) {
         const token = device.pushToken?.trim();
-        if (!device.employeeId || !token) {
+        if (!device.employeeId) {
+          skippedNoEmployeeCount += 1;
+          continue;
+        }
+
+        if (!token) {
+          skippedNoTokenCount += 1;
           continue;
         }
 
         targetEmployeeIds.add(device.employeeId);
-        targetTokenCount += 1;
+        dispatchTargets.push({
+          id: device.id,
+          employeeId: device.employeeId,
+          token,
+          os: device.os,
+        });
+      }
 
-        try {
-          await this.sendPolicyChangedPush(endpointUrl, {
-            token,
-            os: device.os,
-            policyId: params.policyId,
-            trigger: params.trigger,
-          });
-          successCount += 1;
-        } catch (error) {
-          failedDispatchDeviceIds.push(device.id);
+      targetTokenCount = dispatchTargets.length;
 
-          if (error instanceof PolicyPushSendError && error.shouldMarkTokenAsError) {
-            tokenErrorDeviceIds.push(device.id);
+      for (let index = 0; index < dispatchTargets.length; index += dispatchConcurrency) {
+        const chunk = dispatchTargets.slice(index, index + dispatchConcurrency);
+
+        const results = await Promise.all(chunk.map(async (target) => {
+          try {
+            await this.sendPolicyChangedPush(endpointUrl, {
+              token: target.token,
+              os: target.os,
+              policyId: params.policyId,
+              trigger: params.trigger,
+            });
+
+            return {
+              ok: true,
+              deviceId: target.id,
+              shouldMarkTokenAsError: false,
+              reason: '',
+            };
+          } catch (error) {
+            let shouldMarkTokenAsError = false;
+            let reason = String(error);
+
+            if (error instanceof PolicyPushSendError) {
+              shouldMarkTokenAsError = error.shouldMarkTokenAsError;
+              reason = error.message;
+            } else if (error instanceof Error) {
+              reason = error.message;
+            }
+
+            return {
+              ok: false,
+              deviceId: target.id,
+              shouldMarkTokenAsError,
+              reason,
+            };
+          }
+        }));
+
+        for (const result of results) {
+          if (result.ok) {
+            successCount += 1;
+            continue;
+          }
+
+          failedDispatchDeviceIds.push(result.deviceId);
+          if (result.shouldMarkTokenAsError) {
+            tokenErrorDeviceIds.push(result.deviceId);
+          }
+
+          if (failureReasons.length < 20) {
+            failureReasons.push(`${result.deviceId}:${result.reason}`);
           }
         }
       }
@@ -852,9 +925,13 @@ export class ControlPoliciesService {
         policyId: params.policyId,
         workTypeId: params.workTypeId,
         organizationId: params.organizationId,
+        endpointUrl,
+        dispatchConcurrency,
         targetEmployees: totalTargetEmployees,
         employeesWithToken: targetEmployeeIds.size,
         employeesWithoutToken: Math.max(totalTargetEmployees - targetEmployeeIds.size, 0),
+        skippedNoEmployeeCount,
+        skippedNoTokenCount,
         targetTokens: targetTokenCount,
         successCount,
         failedCount: failedDispatchDeviceIds.length,
@@ -868,6 +945,10 @@ export class ControlPoliciesService {
           `[policy_changed] failed device ids: ${failedDispatchDeviceIds.slice(0, 20).join(', ')}`
           + `${failedDispatchDeviceIds.length > 20 ? ' ...' : ''}`,
         );
+
+        if (failureReasons.length > 0) {
+          this.logger.warn(`[policy_changed] failed reasons: ${failureReasons.join(' | ')}`);
+        }
       }
 
       await this.prisma.auditLog.create({
@@ -899,54 +980,94 @@ export class ControlPoliciesService {
   ): Promise<void> {
     const policyApplied = params.trigger === 'deactivate' ? 'false' : 'true';
 
-    const response = await fetch(endpointUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        message: {
-          token: params.token,
-          data: {
-            type: 'policy_changed',
-            policyVersion: params.policyId,
-            extraData: {
-              reason: params.trigger,
-              trigger: params.trigger,
-              policyApplied,
+    const timeoutMs = this.resolvePolicyPushTimeoutMs();
+    const abortController = new AbortController();
+    const timer = setTimeout(() => abortController.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(endpointUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        signal: abortController.signal,
+        body: JSON.stringify({
+          message: {
+            token: params.token,
+            data: {
+              type: 'policy_changed',
+              policyVersion: params.policyId,
+              extraData: {
+                reason: params.trigger,
+                policyApplied,
+              },
+            },
+            android: {
+              priority: 'HIGH',
             },
           },
-          ...(params.os === DeviceOS.Android
-            ? {
-              android: {
-                priority: 'HIGH',
-              },
-            }
-            : {
-              apns: {
-                headers: {
-                  'apns-priority': '10',
-                  'apns-collapse-id': 'policy_changed',
-                },
-                payload: {
-                  aps: {
-                    'content-available': 1,
-                    sound: 'default',
-                  },
-                },
-              },
-            }),
-        },
-      }),
-    });
+        }),
+      });
 
-    if (!response.ok) {
-      const responseText = await response.text();
+      if (!response.ok) {
+        const responseText = await response.text();
+        throw new PolicyPushSendError(
+          `status=${response.status}, body=${responseText || 'empty'}`,
+          this.shouldMarkTokenAsError(response.status, responseText),
+        );
+      }
+    } catch (error) {
+      if (error instanceof PolicyPushSendError) {
+        throw error;
+      }
+
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new PolicyPushSendError(`request-timeout>${timeoutMs}ms`, false);
+      }
+
       throw new PolicyPushSendError(
-        `status=${response.status}, body=${responseText || 'empty'}`,
-        response.status === 502,
+        error instanceof Error ? error.message : String(error),
+        false,
       );
+    } finally {
+      clearTimeout(timer);
     }
+  }
+
+  private shouldMarkTokenAsError(statusCode: number, responseText: string): boolean {
+    if (statusCode === 502) {
+      return true;
+    }
+
+    if (statusCode !== 400) {
+      return false;
+    }
+
+    const body = (responseText || '').toLowerCase();
+    return body.includes('invalid-registration-token')
+      || body.includes('registration-token-not-registered');
+  }
+
+  private resolvePolicyPushConcurrency(): number {
+    const raw = this.configService.get<string>('POLICY_PUSH_CONCURRENCY')?.trim();
+    const parsed = Number(raw);
+
+    if (Number.isFinite(parsed) && parsed >= 1) {
+      return Math.floor(parsed);
+    }
+
+    return 20;
+  }
+
+  private resolvePolicyPushTimeoutMs(): number {
+    const raw = this.configService.get<string>('POLICY_PUSH_TIMEOUT_MS')?.trim();
+    const parsed = Number(raw);
+
+    if (Number.isFinite(parsed) && parsed >= 500) {
+      return Math.floor(parsed);
+    }
+
+    return 8000;
   }
 
   private getAppBackendBaseUrl(): string {
