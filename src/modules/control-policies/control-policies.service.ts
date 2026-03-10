@@ -811,7 +811,7 @@ export class ControlPoliciesService {
         JOIN employees e ON e.id = d."employeeId"
         WHERE d."organizationId" = ${params.organizationId}
           AND e."workTypeId" = ${params.workTypeId}
-          AND e.status = ${EmployeeStatus.ACTIVE}
+          AND e.status = CAST(${EmployeeStatus.ACTIVE} AS "EmployeeStatus")
           AND d."pushToken" IS NOT NULL
           AND (d."pushTokenStatus" IS NULL OR d."pushTokenStatus" <> 'ERROR')
       `;
