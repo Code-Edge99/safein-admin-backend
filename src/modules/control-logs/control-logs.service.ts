@@ -1,7 +1,7 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
-import { encryptLocation } from '../../common/security/location-crypto';
+import { decryptLocation, encryptLocation } from '../../common/security/location-crypto';
 import { toControlLogResponseDto } from './control-logs.mapper';
 import {
   CreateControlLogDto,
@@ -15,6 +15,100 @@ import {
 @Injectable()
 export class ControlLogsService {
   constructor(private prisma: PrismaService) {}
+
+  private async resolveAppNameMap(packageNames: string[]): Promise<Map<string, string>> {
+    if (packageNames.length === 0) {
+      return new Map();
+    }
+
+    const [installedApps, allowedApps] = await Promise.all([
+      this.prisma.installedApp.findMany({
+        where: { packageName: { in: packageNames } },
+        select: { packageName: true, appName: true, lastDetectedAt: true },
+        orderBy: { lastDetectedAt: 'desc' },
+      }),
+      this.prisma.allowedApp.findMany({
+        where: { packageName: { in: packageNames } },
+        select: { packageName: true, name: true },
+      }),
+    ]);
+
+    const packageNameToAppName = new Map<string, string>();
+    installedApps.forEach((app) => {
+      if (!packageNameToAppName.has(app.packageName) && app.appName) {
+        packageNameToAppName.set(app.packageName, app.appName);
+      }
+    });
+    allowedApps.forEach((app) => {
+      if (!packageNameToAppName.has(app.packageName) && app.name) {
+        packageNameToAppName.set(app.packageName, app.name);
+      }
+    });
+
+    return packageNameToAppName;
+  }
+
+  private async resolveLocationFallback(
+    deviceId: string,
+    timestamp: Date,
+  ): Promise<{ latitude?: number; longitude?: number }> {
+    const nearestLocation = await this.prisma.deviceLocation.findFirst({
+      where: {
+        deviceId,
+        timestamp: { lte: timestamp },
+      },
+      orderBy: { timestamp: 'desc' },
+    }) ?? await this.prisma.deviceLocation.findFirst({
+      where: {
+        deviceId,
+        timestamp: { gte: timestamp },
+      },
+      orderBy: { timestamp: 'asc' },
+    });
+
+    if (!nearestLocation) {
+      return {};
+    }
+
+    const location = decryptLocation(nearestLocation);
+    return {
+      latitude: location?.latitude,
+      longitude: location?.longitude,
+    };
+  }
+
+  private async enrichLogDtos(logs: any[]): Promise<ControlLogResponseDto[]> {
+    const packageNames = Array.from(
+      new Set(
+        logs
+          .filter((log) => !log.appName && log.packageName)
+          .map((log) => log.packageName as string),
+      ),
+    );
+    const packageNameToAppName = await this.resolveAppNameMap(packageNames);
+
+    const dtos = await Promise.all(logs.map(async (log) => {
+      const dto = this.toResponseDto(log);
+
+      if (!dto.appName && dto.packageName) {
+        dto.appName = packageNameToAppName.get(dto.packageName) || dto.packageName;
+      }
+
+      if ((dto.latitude === undefined || dto.longitude === undefined) && log.deviceId) {
+        const fallbackLocation = await this.resolveLocationFallback(log.deviceId, log.timestamp);
+        if (dto.latitude === undefined && fallbackLocation.latitude !== undefined) {
+          dto.latitude = fallbackLocation.latitude;
+        }
+        if (dto.longitude === undefined && fallbackLocation.longitude !== undefined) {
+          dto.longitude = fallbackLocation.longitude;
+        }
+      }
+
+      return dto;
+    }));
+
+    return dtos;
+  }
 
   private buildScopeCondition(scopeOrganizationIds: string[]) {
     return {
@@ -261,7 +355,7 @@ export class ControlLogsService {
     ]);
 
     return {
-      data: logs.map((log) => this.toResponseDto(log)),
+      data: await this.enrichLogDtos(logs),
       total,
       page,
       limit,
@@ -304,7 +398,7 @@ export class ControlLogsService {
       throw new NotFoundException('제어 로그를 찾을 수 없습니다.');
     }
 
-    return this.toResponseDto(log);
+    return (await this.enrichLogDtos([log]))[0];
   }
 
   async findByEmployee(

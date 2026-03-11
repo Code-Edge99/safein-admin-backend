@@ -89,6 +89,72 @@ export class EmployeesService {
     return trimmed.length > 0 ? trimmed : null;
   }
 
+  private async validateEmployeeAssignment(
+    organizationId: string,
+    siteId: string,
+    workTypeId?: string | null,
+  ): Promise<void> {
+    const organization = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { id: true, parentId: true, type: true },
+    });
+
+    if (!organization) {
+      throw new NotFoundException('조직을 찾을 수 없습니다.');
+    }
+
+    const site = await this.prisma.organization.findUnique({
+      where: { id: siteId },
+      select: { id: true, type: true },
+    });
+
+    if (!site) {
+      throw new NotFoundException('현장을 찾을 수 없습니다.');
+    }
+
+    if (site.type !== 'site') {
+      throw new BadRequestException('현장 ID는 site 조직이어야 합니다.');
+    }
+
+    let currentOrganization: { id: string; parentId: string | null; type: string } | null = organization;
+    let belongsToSite = false;
+
+    while (currentOrganization) {
+      if (currentOrganization.id === siteId) {
+        belongsToSite = true;
+        break;
+      }
+
+      if (!currentOrganization.parentId) {
+        break;
+      }
+
+      currentOrganization = await this.prisma.organization.findUnique({
+        where: { id: currentOrganization.parentId },
+        select: { id: true, parentId: true, type: true },
+      });
+    }
+
+    if (!belongsToSite) {
+      throw new BadRequestException('선택한 조직이 선택한 현장에 속하지 않습니다.');
+    }
+
+    if (workTypeId) {
+      const workType = await this.prisma.workType.findUnique({
+        where: { id: workTypeId },
+        select: { id: true, organizationId: true },
+      });
+
+      if (!workType) {
+        throw new NotFoundException('근무 유형을 찾을 수 없습니다.');
+      }
+
+      if (workType.organizationId !== siteId) {
+        throw new BadRequestException('근무 유형이 선택한 현장에 속하지 않습니다.');
+      }
+    }
+  }
+
   async create(dto: CreateEmployeeDto, scopeOrganizationIds?: string[]): Promise<EmployeeResponseDto> {
     const normalizedEmployeeId = this.normalizeEmployeeId(dto.employeeId);
     const normalizedName = dto.name?.trim();
@@ -112,33 +178,7 @@ export class EmployeesService {
     this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
     this.ensureOrganizationInScope(dto.siteId, scopeOrganizationIds);
 
-    // 조직 존재 여부 확인
-    const organization = await this.prisma.organization.findUnique({
-      where: { id: dto.organizationId },
-    });
-
-    if (!organization) {
-      throw new NotFoundException('조직을 찾을 수 없습니다.');
-    }
-
-    // 현장 존재 여부 확인
-    const site = await this.prisma.organization.findUnique({
-      where: { id: dto.siteId },
-    });
-
-    if (!site) {
-      throw new NotFoundException('현장을 찾을 수 없습니다.');
-    }
-
-    // 근무 유형 존재 여부 확인
-    if (dto.workTypeId) {
-      const workType = await this.prisma.workType.findUnique({
-        where: { id: dto.workTypeId },
-      });
-      if (!workType) {
-        throw new NotFoundException('근무 유형을 찾을 수 없습니다.');
-      }
-    }
+    await this.validateEmployeeAssignment(dto.organizationId, dto.siteId, dto.workTypeId);
 
     let employee;
     try {
@@ -302,15 +342,23 @@ export class EmployeesService {
     dto: UpdateEmployeeDto,
     scopeOrganizationIds?: string[],
   ): Promise<EmployeeResponseDto> {
-    await this.findOne(employeeId, scopeOrganizationIds); // 존재 여부 확인
-
     const previousEmployee = await this.prisma.employee.findUnique({
       where: { id: employeeId },
       select: {
         id: true,
         status: true,
+        organizationId: true,
+        siteId: true,
+        workTypeId: true,
       },
     });
+
+    if (!previousEmployee) {
+      throw new NotFoundException('직원을 찾을 수 없습니다.');
+    }
+
+    this.assertNotDeletedStatus(previousEmployee.status as EmployeeStatus);
+    this.assertOrganizationInScope(previousEmployee.organizationId, scopeOrganizationIds);
 
     if ((dto.newPassword && !dto.confirmPassword) || (!dto.newPassword && dto.confirmPassword)) {
       throw new BadRequestException('새 비밀번호와 확인 비밀번호를 모두 입력해주세요.');
@@ -338,35 +386,18 @@ export class EmployeesService {
     this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
     this.ensureOrganizationInScope(dto.siteId, scopeOrganizationIds);
 
-    // 조직 존재 여부 확인
-    if (dto.organizationId) {
-      const organization = await this.prisma.organization.findUnique({
-        where: { id: dto.organizationId },
-      });
-      if (!organization) {
-        throw new NotFoundException('조직을 찾을 수 없습니다.');
-      }
+    const targetOrganizationId = dto.organizationId ?? previousEmployee.organizationId;
+    const targetSiteId = dto.siteId ?? previousEmployee.siteId;
+
+    if (!targetSiteId) {
+      throw new BadRequestException('현장을 찾을 수 없습니다.');
     }
 
-    // 현장 존재 여부 확인
-    if (dto.siteId) {
-      const site = await this.prisma.organization.findUnique({
-        where: { id: dto.siteId },
-      });
-      if (!site) {
-        throw new NotFoundException('현장을 찾을 수 없습니다.');
-      }
-    }
-
-    // 근무 유형 존재 여부 확인
-    if (dto.workTypeId) {
-      const workType = await this.prisma.workType.findUnique({
-        where: { id: dto.workTypeId },
-      });
-      if (!workType) {
-        throw new NotFoundException('근무 유형을 찾을 수 없습니다.');
-      }
-    }
+    await this.validateEmployeeAssignment(
+      targetOrganizationId,
+      targetSiteId,
+      dto.workTypeId ?? previousEmployee.workTypeId,
+    );
 
     let employee;
     try {

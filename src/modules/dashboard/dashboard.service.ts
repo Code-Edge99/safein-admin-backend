@@ -721,6 +721,42 @@ export class DashboardService {
       orderBy: { timestamp: 'desc' },
     });
 
+    const controlLogPackageNames = Array.from(
+      new Set(
+        controlLogs
+          .map((log) => log.packageName)
+          .filter((packageName): packageName is string => !!packageName),
+      ),
+    );
+
+    const [allowedApps, installedApps]: Array<Array<{ packageName: string; name?: string; appName?: string }>> = await Promise.all([
+      controlLogPackageNames.length > 0
+        ? this.prisma.allowedApp.findMany({
+            where: { packageName: { in: controlLogPackageNames } },
+            select: { packageName: true, name: true },
+          })
+        : Promise.resolve([]),
+      controlLogPackageNames.length > 0
+        ? this.prisma.installedApp.findMany({
+            where: { packageName: { in: controlLogPackageNames } },
+            select: { packageName: true, appName: true, lastDetectedAt: true },
+            orderBy: { lastDetectedAt: 'desc' },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const packageNameToAppName = new Map<string, string>();
+    installedApps.forEach((app) => {
+      if (!packageNameToAppName.has(app.packageName) && app.appName) {
+        packageNameToAppName.set(app.packageName, app.appName);
+      }
+    });
+    allowedApps.forEach((app) => {
+      if (!packageNameToAppName.has(app.packageName) && app.name) {
+        packageNameToAppName.set(app.packageName, app.name);
+      }
+    });
+
     const [zoneVisitSessions, workSessions, appUsageSessions] = await Promise.all([
       this.prisma.zoneVisitSession.findMany({
         where: {
@@ -813,9 +849,13 @@ export class DashboardService {
 
     // ── 인사이트: 앱별 위반 Top 3 (ControlLog 기반) ──
     const appCounts = new Map<string, number>();
-    controlLogs
-      .filter((l) => l.appName)
-      .forEach((l) => appCounts.set(l.appName!, (appCounts.get(l.appName!) || 0) + 1));
+    controlLogs.forEach((log) => {
+      const appLabel = log.appName || (log.packageName ? packageNameToAppName.get(log.packageName) || log.packageName : null);
+      if (!appLabel) {
+        return;
+      }
+      appCounts.set(appLabel, (appCounts.get(appLabel) || 0) + 1);
+    });
     const topViolationApps = Array.from(appCounts.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, 3)
@@ -1008,14 +1048,15 @@ export class DashboardService {
         zoneName: l.zone?.name || null,
         location:
           l.zone?.name
+          || (location ? { lat: location.latitude, lng: location.longitude } : null)
           || (l.zone?.id || l.zoneId ? `구역 ID: ${l.zone?.id || l.zoneId}` : null),
         latitude: location?.latitude ?? null,
         longitude: location?.longitude ?? null,
-        appName: l.appName || null,
+        appName: l.appName || (l.packageName ? packageNameToAppName.get(l.packageName) || l.packageName : null),
         description:
           l.reason ||
           (l.type === 'app_control'
-            ? `${l.appName || '앱'} 사용 감지`
+            ? `${l.appName || (l.packageName ? packageNameToAppName.get(l.packageName) || l.packageName : '앱')} 사용 감지`
             : '행동 패턴 감지'),
       };
     });
@@ -1031,7 +1072,7 @@ export class DashboardService {
         description:
           log.reason ||
           (log.type === 'app_control'
-            ? `${log.appName || '앱'} 사용 감지`
+            ? `${log.appName || (log.packageName ? packageNameToAppName.get(log.packageName) || log.packageName : '앱')} 사용 감지`
             : '행동 패턴 감지'),
       })),
       ...zoneVisitSessions.flatMap((session) => {
