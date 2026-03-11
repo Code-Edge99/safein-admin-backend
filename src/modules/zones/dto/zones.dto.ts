@@ -253,3 +253,23 @@ export class ZoneStatsDto {
   @ApiProperty({ description: '유형별 구역 수' })
   byType: Record<string, number>;
 }
+
+export class ZoneDetailStatsDto {
+  @ApiProperty({ description: '금일 통제 건수' })
+  todayBlocks: number;
+
+  @ApiProperty({ description: '최근 7일 통제 건수' })
+  weeklyBlocks: number;
+
+  @ApiProperty({ description: '최근 30일 통제 건수' })
+  monthlyBlocks: number;
+
+  @ApiProperty({ description: '최근 30일 구역 출입 건수' })
+  monthlyEntries: number;
+
+  @ApiProperty({ description: '최근 30일 통제를 경험한 고유 직원 수' })
+  uniqueEmployees: number;
+
+  @ApiPropertyOptional({ description: '마지막 통제 시각' })
+  lastViolationAt: string | null;
+}

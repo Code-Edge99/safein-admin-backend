@@ -405,6 +405,92 @@ export class ZonesService {
     };
   }
 
+  async getZoneDetailStats(
+    id: string,
+    scopeOrganizationIds?: string[],
+  ): Promise<{
+    todayBlocks: number;
+    weeklyBlocks: number;
+    monthlyBlocks: number;
+    monthlyEntries: number;
+    uniqueEmployees: number;
+    lastViolationAt: string | null;
+  }> {
+    const zone = await this.prisma.zone.findUnique({
+      where: { id },
+      select: { id: true, organizationId: true },
+    });
+
+    if (!zone) {
+      throw new NotFoundException('구역을 찾을 수 없습니다.');
+    }
+
+    this.assertZoneInScope(zone, scopeOrganizationIds);
+
+    const now = new Date();
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+
+    const weeklyStart = new Date(todayStart);
+    weeklyStart.setDate(weeklyStart.getDate() - 6);
+
+    const monthlyStart = new Date(todayStart);
+    monthlyStart.setDate(monthlyStart.getDate() - 29);
+
+    const blockedWhere = {
+      zoneId: id,
+      action: 'blocked' as const,
+    };
+
+    const [todayBlocks, weeklyBlocks, monthlyBlocks, monthlyEntries, uniqueEmployees, lastViolation] = await Promise.all([
+      this.prisma.controlLog.count({
+        where: {
+          ...blockedWhere,
+          timestamp: { gte: todayStart },
+        },
+      }),
+      this.prisma.controlLog.count({
+        where: {
+          ...blockedWhere,
+          timestamp: { gte: weeklyStart },
+        },
+      }),
+      this.prisma.controlLog.count({
+        where: {
+          ...blockedWhere,
+          timestamp: { gte: monthlyStart },
+        },
+      }),
+      this.prisma.zoneVisitSession.count({
+        where: {
+          zoneId: id,
+          enteredAt: { gte: monthlyStart },
+        },
+      }),
+      this.prisma.controlLog.groupBy({
+        by: ['employeeId'],
+        where: {
+          ...blockedWhere,
+          timestamp: { gte: monthlyStart },
+        },
+      }),
+      this.prisma.controlLog.findFirst({
+        where: blockedWhere,
+        orderBy: { timestamp: 'desc' },
+        select: { timestamp: true },
+      }),
+    ]);
+
+    return {
+      todayBlocks,
+      weeklyBlocks,
+      monthlyBlocks,
+      monthlyEntries,
+      uniqueEmployees: uniqueEmployees.length,
+      lastViolationAt: lastViolation?.timestamp?.toISOString() ?? null,
+    };
+  }
+
   // Helper: 좌표 정규화 — lat/lng과 latitude/longitude 모두 지원
   private normalizeCoordinates(coordinates: any[]): { lat: number; lng: number }[] {
     return coordinates.map((c: any) => ({

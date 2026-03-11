@@ -28,6 +28,7 @@ import {
   ZoneResponseDto,
   ZoneListResponseDto,
   ZoneStatsDto,
+  ZoneDetailStatsDto,
   CheckPointInZoneDto,
 } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -60,6 +61,17 @@ export class ZonesController {
   @ApiResponse({ status: 200, description: '구역 통계', type: ZoneStatsDto })
   async getStats(@Req() req: AuthenticatedAdminRequest): Promise<ZoneStatsDto> {
     return this.zonesService.getZoneStats(req.organizationScopeIds ?? undefined);
+  }
+
+  @Get(':id/detail-stats')
+  @ApiOperation({ summary: '구역 상세 통계 조회' })
+  @ApiParam({ name: 'id', description: '구역 ID' })
+  @ApiResponse({ status: 200, description: '구역 상세 통계', type: ZoneDetailStatsDto })
+  async getDetailStats(
+    @Req() req: AuthenticatedAdminRequest,
+    @Param('id') id: string,
+  ): Promise<ZoneDetailStatsDto> {
+    return this.zonesService.getZoneDetailStats(id, req.organizationScopeIds ?? undefined);
   }
 
   @Get('organization/:organizationId')
