@@ -8,7 +8,8 @@ import {
   IsNumber,
   MinLength,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
+import { normalizeOptionalPhoneNumber } from '../../../common/utils/phone.util';
 
 // Enum 정의
 export enum AdminRoleEnum {
@@ -45,6 +46,7 @@ export class CreateAccountDto {
   email: string;
 
   @ApiPropertyOptional({ description: '전화번호' })
+  @Transform(({ value }) => normalizeOptionalPhoneNumber(value))
   @IsString()
   @IsOptional()
   phone?: string;

@@ -5,6 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { normalizePhoneNumber } from '../../common/utils/phone.util';
 import * as bcrypt from 'bcrypt';
 import { toAccountResponseDto } from './accounts.mapper';
 import {
@@ -25,6 +26,8 @@ export class AccountsService {
   constructor(private prisma: PrismaService) {}
 
   async create(dto: CreateAccountDto): Promise<AccountResponseDto> {
+    const normalizedPhone = normalizePhoneNumber(dto.phone);
+
     // 사용자명 중복 체크
     const existing = await this.prisma.account.findUnique({
       where: { username: dto.username },
@@ -43,7 +46,7 @@ export class AccountsService {
         passwordHash,
         name: dto.name,
         email: dto.email,
-        phone: dto.phone,
+        phone: normalizedPhone || undefined,
         role: dto.role as any,
         organizationId: dto.organizationId,
       },
@@ -136,6 +139,7 @@ export class AccountsService {
 
   async update(id: string, dto: UpdateAccountDto): Promise<AccountResponseDto> {
     const existingAccount = await this.findOne(id);
+    const normalizedPhone = normalizePhoneNumber(dto.phone);
 
     if (dto.username && dto.username !== existingAccount.username) {
       const existingUsername = await this.prisma.account.findUnique({
@@ -154,7 +158,7 @@ export class AccountsService {
         username: dto.username,
         name: dto.name,
         email: dto.email,
-        phone: dto.phone,
+        phone: dto.phone === undefined ? undefined : normalizedPhone || null,
         role: dto.role as any,
         organizationId: dto.organizationId,
         status: dto.status as any,

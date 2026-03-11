@@ -9,7 +9,34 @@ import {
   Matches,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import { BaseFilterDto } from '../../../common/dto';
+
+function normalizePhoneBasedEmployeeId(value: unknown): unknown {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  return value.replace(/\D/g, '').trim();
+}
+
+function normalizeOptionalText(value: unknown): unknown {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeOptionalEmail(value: unknown): unknown {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const trimmed = value.trim().toLowerCase();
+  return trimmed.length > 0 ? trimmed : null;
+}
 
 export enum EmployeeStatusEnum {
   ACTIVE = 'ACTIVE',
@@ -21,47 +48,56 @@ export enum EmployeeStatusEnum {
 
 export class CreateEmployeeDto {
   @ApiProperty({ description: '직원 ID (로그인 ID)' })
+  @Transform(({ value }) => normalizePhoneBasedEmployeeId(value))
   @IsString()
   @IsNotEmpty()
   employeeId: string;
 
   @ApiProperty({ description: '직원 이름' })
+  @Transform(({ value }) => normalizeOptionalText(value))
   @IsString()
   @IsNotEmpty()
   name: string;
 
   @ApiProperty({ description: '조직 ID' })
+  @Transform(({ value }) => normalizeOptionalText(value))
   @IsString()
   @IsNotEmpty()
   organizationId: string;
 
   @ApiProperty({ description: '현장 ID' })
+  @Transform(({ value }) => normalizeOptionalText(value))
   @IsString()
   @IsNotEmpty()
   siteId: string;
 
   @ApiPropertyOptional({ description: '직급/직책' })
   @IsOptional()
+  @Transform(({ value }) => normalizeOptionalText(value))
   @IsString()
   position?: string;
 
   @ApiPropertyOptional({ description: '역할' })
   @IsOptional()
+  @Transform(({ value }) => normalizeOptionalText(value))
   @IsString()
   role?: string;
 
   @ApiPropertyOptional({ description: '이메일' })
   @IsOptional()
+  @Transform(({ value }) => normalizeOptionalEmail(value))
   @IsEmail()
-  email?: string;
+  email?: string | null;
 
   @ApiPropertyOptional({ description: '메모' })
   @IsOptional()
+  @Transform(({ value }) => normalizeOptionalText(value))
   @IsString()
   memo?: string;
 
   @ApiPropertyOptional({ description: '근무 유형 ID' })
   @IsOptional()
+  @Transform(({ value }) => normalizeOptionalText(value))
   @IsString()
   workTypeId?: string;
 
@@ -98,6 +134,9 @@ export class UpdateEmployeeDto extends PartialType(CreateEmployeeDto) {
   @IsString()
   @IsNotEmpty()
   confirmPassword?: string;
+
+  @Transform(({ value }) => normalizeOptionalEmail(value))
+  email?: string | null;
 }
 
 export class EmployeeResponseDto {

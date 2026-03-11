@@ -1,5 +1,7 @@
 import { IsString, IsNotEmpty, IsOptional, IsEnum, IsBoolean } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
+import { normalizeOptionalPhoneNumber } from '../../../common/utils/phone.util';
 
 export enum OrganizationType {
   COMPANY = 'company',
@@ -46,6 +48,7 @@ export class CreateOrganizationDto {
 
   @ApiPropertyOptional({ description: '현장 담당자 연락처' })
   @IsOptional()
+  @Transform(({ value }) => normalizeOptionalPhoneNumber(value))
   @IsString()
   managerPhone?: string;
 

@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException 
 import { PrismaService } from '../../prisma/prisma.service';
 import { OrganizationType as PrismaOrgType, DeviceStatus } from '@prisma/client';
 import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { normalizePhoneNumber } from '../../common/utils/phone.util';
 import { toOrganizationResponseDto } from './organizations.mapper';
 import {
   CreateOrganizationDto,
@@ -31,6 +32,7 @@ export class OrganizationsService {
 
   async create(dto: CreateOrganizationDto, scopeOrganizationIds?: string[], actorUserId?: string): Promise<OrganizationResponseDto> {
     this.ensureOrganizationInScope(dto.parentId || undefined, scopeOrganizationIds);
+    const normalizedManagerPhone = normalizePhoneNumber(dto.managerPhone);
 
     // 상위 조직 검증
     if (dto.parentId) {
@@ -50,7 +52,7 @@ export class OrganizationsService {
         detailAddress: dto.detailAddress,
         description: dto.description,
         managerName: dto.managerName,
-        managerPhone: dto.managerPhone,
+        managerPhone: normalizedManagerPhone || undefined,
         emergencyContact: dto.emergencyContact,
         createdById: actorUserId,
         updatedById: actorUserId,
@@ -236,6 +238,7 @@ export class OrganizationsService {
     actorUserId?: string,
   ): Promise<OrganizationResponseDto> {
     await this.findOne(id, scopeOrganizationIds); // 존재 여부 확인
+    const normalizedManagerPhone = normalizePhoneNumber(dto.managerPhone);
 
     // 순환 참조 방지
     if (dto.parentId) {
@@ -267,7 +270,7 @@ export class OrganizationsService {
         detailAddress: dto.detailAddress,
         description: dto.description,
         managerName: dto.managerName,
-        managerPhone: dto.managerPhone,
+        managerPhone: dto.managerPhone === undefined ? undefined : normalizedManagerPhone || null,
         emergencyContact: dto.emergencyContact,
         updatedById: actorUserId,
         parentId: dto.parentId,

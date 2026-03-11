@@ -67,11 +67,42 @@ export class EmployeesService {
     }
   }
 
+  private normalizeEmployeeId(value?: string | null): string {
+    return (value ?? '').replace(/\D/g, '').trim();
+  }
+
+  private normalizeOptionalText(value?: string | null): string | null {
+    if (typeof value !== 'string') {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  private normalizeOptionalEmail(value?: string | null): string | null {
+    if (typeof value !== 'string') {
+      return null;
+    }
+
+    const trimmed = value.trim().toLowerCase();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
   async create(dto: CreateEmployeeDto, scopeOrganizationIds?: string[]): Promise<EmployeeResponseDto> {
-    const normalizedEmployeeId = dto.employeeId?.trim();
+    const normalizedEmployeeId = this.normalizeEmployeeId(dto.employeeId);
+    const normalizedName = dto.name?.trim();
+    const normalizedPosition = this.normalizeOptionalText(dto.position);
+    const normalizedRole = this.normalizeOptionalText(dto.role);
+    const normalizedEmail = this.normalizeOptionalEmail(dto.email ?? null);
+    const normalizedMemo = this.normalizeOptionalText(dto.memo);
 
     if (!normalizedEmployeeId) {
       throw new BadRequestException('직원 ID는 필수 입력값입니다.');
+    }
+
+    if (!normalizedName) {
+      throw new BadRequestException('직원 이름은 필수 입력값입니다.');
     }
 
     await this.ensureUniqueEmployeeIdentity({
@@ -114,13 +145,13 @@ export class EmployeesService {
       employee = await this.prisma.employee.create({
         data: {
           id: normalizedEmployeeId,
-          name: dto.name,
+          name: normalizedName,
           organizationId: dto.organizationId,
           siteId: dto.siteId,
-          position: dto.position,
-          role: dto.role,
-          email: dto.email,
-          memo: dto.memo?.trim() || null,
+          position: normalizedPosition,
+          role: normalizedRole,
+          email: normalizedEmail,
+          memo: normalizedMemo,
           workTypeId: dto.workTypeId,
           status: (dto.status as EmployeeStatus) || EmployeeStatus.ACTIVE,
           hireDate: dto.hireDate ? new Date(dto.hireDate) : undefined,
@@ -289,10 +320,19 @@ export class EmployeesService {
       throw new BadRequestException('새 비밀번호가 일치하지 않습니다.');
     }
 
-    const requestedEmployeeId = dto.employeeId !== undefined ? dto.employeeId?.trim() || '' : undefined;
+    const requestedEmployeeId = dto.employeeId !== undefined ? this.normalizeEmployeeId(dto.employeeId) : undefined;
+    const normalizedName = dto.name !== undefined ? dto.name.trim() : undefined;
+    const normalizedPosition = dto.position !== undefined ? this.normalizeOptionalText(dto.position) : undefined;
+    const normalizedRole = dto.role !== undefined ? this.normalizeOptionalText(dto.role) : undefined;
+    const normalizedEmail = dto.email !== undefined ? this.normalizeOptionalEmail(dto.email) : undefined;
+    const normalizedMemo = dto.memo !== undefined ? this.normalizeOptionalText(dto.memo) : undefined;
 
     if (requestedEmployeeId !== undefined && !requestedEmployeeId) {
       throw new BadRequestException('직원 ID는 비워둘 수 없습니다.');
+    }
+
+    if (normalizedName !== undefined && !normalizedName) {
+      throw new BadRequestException('직원 이름은 비워둘 수 없습니다.');
     }
 
     this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
@@ -345,13 +385,13 @@ export class EmployeesService {
         const updatedEmployee = await tx.employee.update({
           where: { id: workingEmployeeId },
           data: {
-            name: dto.name,
+            name: normalizedName,
             organizationId: dto.organizationId,
             siteId: dto.siteId,
-            position: dto.position,
-            role: dto.role,
-            email: dto.email,
-            memo: dto.memo !== undefined ? (dto.memo.trim() || null) : undefined,
+            position: normalizedPosition,
+            role: normalizedRole,
+            email: normalizedEmail,
+            memo: normalizedMemo,
             workTypeId: dto.workTypeId,
             status: dto.status as EmployeeStatus | undefined,
             hireDate: dto.hireDate ? new Date(dto.hireDate) : undefined,
