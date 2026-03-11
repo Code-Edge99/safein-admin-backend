@@ -136,6 +136,8 @@ export class ControlLogResponseDto {
     name: string;
     organizationId?: string;
     organizationName?: string;
+    siteId?: string;
+    siteName?: string;
   };
 
   @ApiPropertyOptional({ description: '디바이스 정보' })
@@ -149,6 +151,12 @@ export class ControlLogResponseDto {
 
   @ApiPropertyOptional({ description: '스냅샷 조직명' })
   organizationName?: string;
+
+  @ApiPropertyOptional({ description: '현장 ID' })
+  siteId?: string;
+
+  @ApiPropertyOptional({ description: '현장명' })
+  siteName?: string;
 
   @ApiPropertyOptional({ description: '정책 정보' })
   policy?: {

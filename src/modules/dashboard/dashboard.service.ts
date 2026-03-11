@@ -531,7 +531,6 @@ export class DashboardService {
         organizationId: true,
         organization: { select: { id: true, name: true } },
         workType: { select: { id: true, name: true } },
-        hireDate: true,
       },
       orderBy: { name: 'asc' },
     });
@@ -585,7 +584,6 @@ export class DashboardService {
         organizationId: employee.organizationId || '',
         organizationName: employee.organization?.name || '',
         workType: employee.workType?.name || '',
-        hireDate: employee.hireDate || null,
         totalBlocks: 0,
         totalEvents: 0,
         allowedEvents: 0,
@@ -670,7 +668,6 @@ export class DashboardService {
         complianceRate,
         riskLevel,
         lastViolation: emp.dailyStats[0]?.date || null,
-        hireDate: emp.hireDate,
         zoneViolations: emp.zoneViolations,
       };
     });
@@ -1111,16 +1108,6 @@ export class DashboardService {
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
       .slice(0, 50);
 
-    // ── 근속 기간 계산 ──
-    let tenure = '-';
-    if (employee.hireDate) {
-      const diff = now.getTime() - employee.hireDate.getTime();
-      const years = Math.floor(diff / (365.25 * 86400000));
-      const months = Math.floor((diff % (365.25 * 86400000)) / (30.44 * 86400000));
-      if (years > 0) tenure = `${years}년 ${months}개월`;
-      else tenure = `${months}개월`;
-    }
-
     return {
       id: employee.id,
       employeeId: employee.id,
@@ -1128,10 +1115,6 @@ export class DashboardService {
       organizationId: employee.organizationId,
       organizationName: employee.organization?.name || '',
       workType: employee.workType?.name || '-',
-      hireDate: employee.hireDate
-        ? employee.hireDate.toISOString().split('T')[0]
-        : null,
-      tenure,
       period: '최근 30일',
       avgWorkHours,
 
