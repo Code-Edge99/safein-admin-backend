@@ -38,7 +38,7 @@ export class CreateDeviceDto {
 
   @ApiPropertyOptional({ description: '직원 ID' })
   @IsOptional()
-  @IsUUID()
+  @IsString()
   employeeId?: string;
 
   @ApiPropertyOptional({ description: '조직 ID' })
@@ -211,7 +211,7 @@ export class DeviceFilterDto extends BaseFilterDto {
 
   @ApiPropertyOptional({ description: '직원 ID' })
   @IsOptional()
-  @IsUUID()
+  @IsString()
   employeeId?: string;
 
   @ApiPropertyOptional({ description: '미할당 장치만' })
@@ -221,7 +221,8 @@ export class DeviceFilterDto extends BaseFilterDto {
 
 export class AssignDeviceDto {
   @ApiProperty({ description: '직원 ID' })
-  @IsUUID()
+  @IsString()
+  @IsNotEmpty()
   employeeId: string;
 }
 

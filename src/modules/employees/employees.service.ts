@@ -112,10 +112,6 @@ export class EmployeesService {
       throw new NotFoundException('현장을 찾을 수 없습니다.');
     }
 
-    if (site.type !== 'site') {
-      throw new BadRequestException('현장 ID는 site 조직이어야 합니다.');
-    }
-
     let currentOrganization: { id: string; parentId: string | null; type: string } | null = organization;
     let belongsToSite = false;
 
