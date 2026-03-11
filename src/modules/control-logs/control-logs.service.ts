@@ -1,6 +1,7 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { encryptLocation } from '../../common/security/location-crypto';
 import { toControlLogResponseDto } from './control-logs.mapper';
 import {
   CreateControlLogDto,
@@ -97,6 +98,14 @@ export class ControlLogsService {
 
   async create(createDto: CreateControlLogDto): Promise<ControlLogResponseDto> {
     const resolvedDevice = await this.resolveDeviceContext(createDto.deviceId);
+    const encryptedLocation = createDto.latitude !== undefined && createDto.longitude !== undefined
+      ? encryptLocation({ latitude: createDto.latitude, longitude: createDto.longitude })
+      : {
+          locationCiphertext: null,
+          locationIv: null,
+          locationTag: null,
+          locationKeyVersion: null,
+        };
 
     const log = await this.prisma.controlLog.create({
       data: {
@@ -108,8 +117,7 @@ export class ControlLogsService {
         type: createDto.type as any,
         action: createDto.action as any,
         timestamp: new Date(createDto.timestamp),
-        latitude: createDto.latitude,
-        longitude: createDto.longitude,
+        ...encryptedLocation,
         reason: createDto.reason,
         appName: createDto.appName,
         packageName: createDto.packageName,

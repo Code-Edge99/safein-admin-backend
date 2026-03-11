@@ -10,6 +10,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResponse } from '../../common/dto';
 import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
 import { toDeviceResponseDto } from './devices.mapper';
+import { decryptLocation, encryptLocation } from '../../common/security/location-crypto';
 import {
   CreateDeviceDto,
   UpdateDeviceDto,
@@ -181,11 +182,13 @@ export class DevicesService {
 
     this.assertDeviceInScope(device, scopeOrganizationIds);
 
+    const lastLocation = device.locations[0] ? decryptLocation(device.locations[0]) : undefined;
+
     return {
       ...this.toResponseDto(device),
-      lastLocation: device.locations[0] ? {
-        latitude: device.locations[0].latitude.toNumber(),
-        longitude: device.locations[0].longitude.toNumber(),
+      lastLocation: lastLocation ? {
+        latitude: lastLocation.latitude,
+        longitude: lastLocation.longitude,
         timestamp: device.locations[0].timestamp,
       } : undefined,
     };
@@ -328,11 +331,15 @@ export class DevicesService {
     }
     this.assertDeviceInScope(device, scopeOrganizationIds);
 
+    const encryptedLocation = encryptLocation({
+      latitude: dto.latitude,
+      longitude: dto.longitude,
+    });
+
     await this.prisma.deviceLocation.create({
       data: {
         deviceId: id,
-        latitude: dto.latitude,
-        longitude: dto.longitude,
+        ...encryptedLocation,
         accuracy: dto.accuracy,
         timestamp: new Date(),
       },

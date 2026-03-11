@@ -1,13 +1,16 @@
 import { ControlLogResponseDto } from './dto';
+import { decryptLocation } from '../../common/security/location-crypto';
 
 export function toControlLogResponseDto(log: any): ControlLogResponseDto {
+  const location = decryptLocation(log);
+
   return {
     id: log.id,
     type: log.type,
     action: log.action,
     timestamp: log.timestamp,
-    latitude: log.latitude ? Number(log.latitude) : undefined,
-    longitude: log.longitude ? Number(log.longitude) : undefined,
+    latitude: location?.latitude,
+    longitude: location?.longitude,
     reason: log.reason,
     appName: log.appName,
     packageName: log.packageName,

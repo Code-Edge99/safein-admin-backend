@@ -1,6 +1,7 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { decryptLocation } from '../../common/security/location-crypto';
 import { buildSiteReportItem, SiteReportTrendPoint } from './dashboard.mapper';
 
 @Injectable()
@@ -998,25 +999,29 @@ export class DashboardService {
     }));
 
     // ── 발생 이력 (ControlLog 최근 50건) ──
-    const violationHistory = controlLogs.slice(0, 50).map((l) => ({
-      id: l.id,
-      type: l.type === 'app_control' ? '앱 제어 위반' : '행동 감지',
-      action: l.action === 'blocked' ? '차단' : '허용',
-      timestamp: l.timestamp.toISOString(),
-      zoneId: l.zone?.id || l.zoneId || null,
-      zoneName: l.zone?.name || null,
-      location:
-        l.zone?.name
-        || (l.zone?.id || l.zoneId ? `구역 ID: ${l.zone?.id || l.zoneId}` : null),
-      latitude: l.latitude ? Number(l.latitude) : null,
-      longitude: l.longitude ? Number(l.longitude) : null,
-      appName: l.appName || null,
-      description:
-        l.reason ||
-        (l.type === 'app_control'
-          ? `${l.appName || '앱'} 사용 감지`
-          : '행동 패턴 감지'),
-    }));
+    const violationHistory = controlLogs.slice(0, 50).map((l) => {
+      const location = decryptLocation(l);
+
+      return {
+        id: l.id,
+        type: l.type === 'app_control' ? '앱 제어 위반' : '행동 감지',
+        action: l.action === 'blocked' ? '차단' : '허용',
+        timestamp: l.timestamp.toISOString(),
+        zoneId: l.zone?.id || l.zoneId || null,
+        zoneName: l.zone?.name || null,
+        location:
+          l.zone?.name
+          || (l.zone?.id || l.zoneId ? `구역 ID: ${l.zone?.id || l.zoneId}` : null),
+        latitude: location?.latitude ?? null,
+        longitude: location?.longitude ?? null,
+        appName: l.appName || null,
+        description:
+          l.reason ||
+          (l.type === 'app_control'
+            ? `${l.appName || '앱'} 사용 감지`
+            : '행동 패턴 감지'),
+      };
+    });
 
     const recentActivity = [
       ...controlLogs.map((log) => ({

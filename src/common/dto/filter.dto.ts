@@ -1,4 +1,4 @@
-import { IsOptional, IsDateString, IsString, IsUUID, IsEnum } from 'class-validator';
+import { IsOptional, IsDateString, IsString, IsEnum } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { PaginationDto } from './pagination.dto';
 
@@ -17,7 +17,7 @@ export class DateRangeFilterDto {
 export class OrganizationFilterDto {
   @ApiPropertyOptional({ description: '조직 ID' })
   @IsOptional()
-  @IsUUID()
+  @IsString()
   organizationId?: string;
 
   @ApiPropertyOptional({ description: '하위 조직 포함 여부' })
@@ -35,7 +35,7 @@ export class SearchFilterDto {
 export class BaseFilterDto extends PaginationDto {
   @ApiPropertyOptional({ description: '조직 ID' })
   @IsOptional()
-  @IsUUID()
+  @IsString()
   organizationId?: string;
 
   @ApiPropertyOptional({ description: '검색어' })

@@ -1,6 +1,11 @@
 #!/bin/sh
 set -e
 
+if [ -z "${LOCATION_ENCRYPTION_KEY:-}" ]; then
+  echo "[security] LOCATION_ENCRYPTION_KEY is required."
+  exit 1
+fi
+
 npx prisma migrate deploy --schema ./prisma/schema.prisma
 
 node dist/main &

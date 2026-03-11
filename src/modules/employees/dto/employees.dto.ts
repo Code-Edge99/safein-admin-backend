@@ -2,7 +2,6 @@ import {
   IsString,
   IsNotEmpty,
   IsOptional,
-  IsUUID,
   IsEmail,
   IsEnum,
   IsArray,
@@ -197,9 +196,14 @@ export class EmployeeExclusionDto {
 }
 
 export class EmployeeFilterDto extends BaseFilterDto {
+  @ApiPropertyOptional({ description: '조직 ID' })
+  @IsOptional()
+  @IsString()
+  organizationId?: string;
+
   @ApiPropertyOptional({ description: '근무 유형 ID' })
   @IsOptional()
-  @IsUUID()
+  @IsString()
   workTypeId?: string;
 
   @ApiPropertyOptional({ description: '상태 필터', enum: EmployeeStatusEnum })
@@ -209,7 +213,7 @@ export class EmployeeFilterDto extends BaseFilterDto {
 
   @ApiPropertyOptional({ description: '현장 ID' })
   @IsOptional()
-  @IsUUID()
+  @IsString()
   siteId?: string;
 }
 
@@ -222,13 +226,13 @@ export class BulkEmployeeActionDto {
 
 export class BulkAssignWorkTypeDto extends BulkEmployeeActionDto {
   @ApiProperty({ description: '근무 유형 ID' })
-  @IsUUID()
+  @IsString()
   workTypeId: string;
 }
 
 export class BulkMoveOrganizationDto extends BulkEmployeeActionDto {
   @ApiProperty({ description: '대상 조직 ID' })
-  @IsUUID()
+  @IsString()
   targetOrganizationId: string;
 }
 
