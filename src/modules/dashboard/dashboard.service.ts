@@ -99,6 +99,57 @@ export class DashboardService {
     };
   }
 
+  private buildControlLogOrganizationIdsCondition(organizationIds: string[]): any | undefined {
+    if (organizationIds.length === 0) {
+      return undefined;
+    }
+
+    return {
+      OR: [
+        { organizationId: { in: organizationIds } },
+        {
+          AND: [
+            { organizationId: null },
+            { device: { organizationId: { in: organizationIds } } },
+          ],
+        },
+      ],
+    };
+  }
+
+  private async collectDescendantOrganizationIds(
+    rootId: string,
+    scopeOrganizationIds?: string[],
+  ): Promise<string[]> {
+    this.ensureOrganizationInScope(rootId, scopeOrganizationIds);
+
+    const visited = new Set<string>([rootId]);
+    let frontier = [rootId];
+
+    while (frontier.length > 0) {
+      const children = await this.prisma.organization.findMany({
+        where: {
+          parentId: { in: frontier },
+          isActive: true,
+          ...(scopeOrganizationIds ? { id: { in: scopeOrganizationIds } } : {}),
+        },
+        select: { id: true },
+      });
+
+      const nextFrontier: string[] = [];
+      for (const child of children) {
+        if (!visited.has(child.id)) {
+          visited.add(child.id);
+          nextFrontier.push(child.id);
+        }
+      }
+
+      frontier = nextFrontier;
+    }
+
+    return Array.from(visited);
+  }
+
   async getStats(scopeOrganizationIds?: string[]) {
     const now = new Date();
     const onlineThreshold = new Date(now.getTime() - 15 * 60 * 1000);
@@ -267,15 +318,16 @@ export class DashboardService {
 
     this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
 
+    const targetOrganizationIds = organizationId
+      ? await this.collectDescendantOrganizationIds(organizationId, scopeOrganizationIds)
+      : scopeOrganizationIds;
+
     const where: any = { date: targetDate };
-    const controlLogScopeCondition = this.buildControlLogOrganizationScopeCondition(
-      scopeOrganizationIds,
-      organizationId,
-    );
-    if (organizationId) {
-      where.organizationId = organizationId;
-    } else if (scopeOrganizationIds) {
-      where.organizationId = { in: scopeOrganizationIds };
+    const controlLogScopeCondition = targetOrganizationIds
+      ? this.buildControlLogOrganizationIdsCondition(targetOrganizationIds)
+      : this.buildControlLogOrganizationScopeCondition(scopeOrganizationIds, organizationId);
+    if (targetOrganizationIds) {
+      where.organizationId = { in: targetOrganizationIds };
     }
 
     let stats = await this.prisma.hourlyBlockStat.findMany({
@@ -1347,11 +1399,27 @@ export class DashboardService {
     const sites = await this.prisma.organization.findMany({
       where: {
         type: { not: 'company' },
+        isActive: true,
         ...(scopeOrganizationIds ? { id: { in: scopeOrganizationIds } } : {}),
       },
       include: {
-        _count: { select: { employees: true } },
         parent: { select: { id: true, name: true } },
+      },
+      orderBy: [
+        { type: 'asc' },
+        { name: 'asc' },
+      ],
+    });
+
+    const allOrganizations = await this.prisma.organization.findMany({
+      where: {
+        type: { not: 'company' },
+        isActive: true,
+        ...(scopeOrganizationIds ? { id: { in: scopeOrganizationIds } } : {}),
+      },
+      select: {
+        id: true,
+        parentId: true,
       },
     });
 
@@ -1360,19 +1428,79 @@ export class DashboardService {
     }
 
     const siteIds = sites.map((site) => site.id);
+    const childrenByParent = new Map<string, string[]>();
+    for (const organization of allOrganizations) {
+      if (!organization.parentId) {
+        continue;
+      }
 
-    const [dailyStatsWindow, hourlyStatsWindow] = await Promise.all([
+      const childIds = childrenByParent.get(organization.parentId) || [];
+      childIds.push(organization.id);
+      childrenByParent.set(organization.parentId, childIds);
+    }
+
+    const subtreeCache = new Map<string, string[]>();
+    const getSubtreeIds = (organizationId: string): string[] => {
+      if (subtreeCache.has(organizationId)) {
+        return subtreeCache.get(organizationId)!;
+      }
+
+      const childIds = childrenByParent.get(organizationId) || [];
+      const subtreeIds = [organizationId, ...childIds.flatMap((childId) => getSubtreeIds(childId))];
+      subtreeCache.set(organizationId, subtreeIds);
+      return subtreeIds;
+    };
+
+    const relevantOrganizationIds = Array.from(new Set(sites.flatMap((site) => getSubtreeIds(site.id))));
+
+    const [dailyStatsWindow, hourlyStatsWindow, employees, rawLogs] = await Promise.all([
       this.prisma.organizationDailyStat.findMany({
         where: {
-          organizationId: { in: siteIds },
+          organizationId: { in: relevantOrganizationIds },
           date: { gte: prevWeekStartDate, lte: endDate },
         },
         orderBy: { date: 'asc' },
       }),
       this.prisma.hourlyBlockStat.findMany({
         where: {
-          organizationId: { in: siteIds },
+          organizationId: { in: relevantOrganizationIds },
           date: { gte: currentStartDate },
+        },
+      }),
+      this.prisma.employee.findMany({
+        where: {
+          OR: [
+            { organizationId: { in: relevantOrganizationIds } },
+            { siteId: { in: relevantOrganizationIds } },
+          ],
+        },
+        select: {
+          id: true,
+          organizationId: true,
+          siteId: true,
+        },
+      }),
+      this.prisma.controlLog.findMany({
+        where: {
+          action: 'blocked',
+          timestamp: { gte: currentStartDate, lte: endDate },
+          organizationId: { in: relevantOrganizationIds },
+        },
+        select: {
+          organizationId: true,
+          appName: true,
+          zoneId: true,
+          zone: { select: { name: true } },
+          policy: {
+            select: {
+              _count: {
+                select: {
+                  timePolicies: true,
+                  zones: true,
+                },
+              },
+            },
+          },
         },
       }),
     ]);
@@ -1391,6 +1519,17 @@ export class DashboardService {
       hourlyStatsByOrg.set(stat.organizationId, bucket);
     }
 
+    const rawLogsByOrg = new Map<string, typeof rawLogs>();
+    for (const log of rawLogs) {
+      if (!log.organizationId) {
+        continue;
+      }
+
+      const bucket = rawLogsByOrg.get(log.organizationId) || [];
+      bucket.push(log);
+      rawLogsByOrg.set(log.organizationId, bucket);
+    }
+
     const trendDates: string[] = [];
     for (let day = 0; day < 30; day++) {
       const date = new Date(trendStartDate.getTime() + day * 86400000);
@@ -1399,7 +1538,9 @@ export class DashboardService {
 
     const result = [];
     for (const site of sites) {
-      const orgStats = dailyStatsByOrg.get(site.id) || [];
+      const subtreeIds = getSubtreeIds(site.id);
+      const subtreeIdSet = new Set(subtreeIds);
+      const orgStats = subtreeIds.flatMap((subtreeId) => dailyStatsByOrg.get(subtreeId) || []);
       const trendStats = orgStats.filter((s) => s.date >= trendStartDate);
 
       const currentStats = trendStats.filter((s) => s.date >= currentStartDate);
@@ -1426,7 +1567,7 @@ export class DashboardService {
       const prevStats = orgStats.filter((s) => s.date >= prevWeekStartDate && s.date < currentStartDate);
       const prevTotal = prevStats.reduce((sum, s) => sum + s.totalBlocks, 0);
 
-      const hourlyStats = hourlyStatsByOrg.get(site.id) || [];
+      const hourlyStats = subtreeIds.flatMap((subtreeId) => hourlyStatsByOrg.get(subtreeId) || []);
 
       let peakHour = '09:00';
       let peakBlocks = 0;
@@ -1443,11 +1584,53 @@ export class DashboardService {
       const dailyStatMap = new Map<string, { allowed: number; behavior: number }>();
       trendStats.forEach((item) => {
         const key = item.date.toISOString().split('T')[0];
+        const existing = dailyStatMap.get(key) || { allowed: 0, behavior: 0 };
         dailyStatMap.set(key, {
-          allowed: item.appControlBlocks,
-          behavior: item.behaviorBlocks,
+          allowed: existing.allowed + item.appControlBlocks,
+          behavior: existing.behavior + item.behaviorBlocks,
         });
       });
+
+      const employeeCount = employees.filter((employee) => (
+        subtreeIdSet.has(employee.organizationId)
+        || (employee.siteId ? subtreeIdSet.has(employee.siteId) : false)
+      )).length;
+
+      const subtreeLogs = subtreeIds.flatMap((subtreeId) => rawLogsByOrg.get(subtreeId) || []);
+      const appCounts = new Map<string, number>();
+      const zoneCounts = new Map<string, number>();
+      let timeConditionBlocks = 0;
+      let zoneConditionBlocks = 0;
+
+      subtreeLogs.forEach((log) => {
+        const appName = String(log.appName || '').trim();
+        if (appName.length > 0) {
+          appCounts.set(appName, (appCounts.get(appName) || 0) + 1);
+        }
+
+        const zoneName = String(log.zone?.name || '').trim();
+        if (zoneName.length > 0) {
+          zoneCounts.set(zoneName, (zoneCounts.get(zoneName) || 0) + 1);
+        }
+
+        if ((log.policy?._count?.timePolicies || 0) > 0) {
+          timeConditionBlocks += 1;
+        }
+
+        if ((log.policy?._count?.zones || 0) > 0 || log.zoneId) {
+          zoneConditionBlocks += 1;
+        }
+      });
+
+      const topApps = [...appCounts.entries()]
+        .sort((left, right) => right[1] - left[1])
+        .slice(0, 5)
+        .map(([name, blocks]) => ({ name, blocks, iconUrl: '' }));
+
+      const zoneStats = [...zoneCounts.entries()]
+        .sort((left, right) => right[1] - left[1])
+        .slice(0, 5)
+        .map(([zone, blocks]) => ({ zone, blocks }));
 
       const trendMap = new Map<string, SiteReportTrendPoint>(dailyStatMap);
 
@@ -1457,7 +1640,7 @@ export class DashboardService {
           name: site.name,
           type: site.type,
           parentName: site.parent?.name || null,
-          employeeCount: site._count.employees,
+          employeeCount,
         },
         totalViolations,
         allowedAppBlocks,
@@ -1468,6 +1651,10 @@ export class DashboardService {
         peakBlocks,
         trendDates,
         trendMap,
+        topApps,
+        zoneStats,
+        timeConditionBlocks,
+        zoneConditionBlocks,
       }));
     }
 
