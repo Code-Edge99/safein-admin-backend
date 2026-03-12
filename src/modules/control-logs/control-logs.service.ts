@@ -210,6 +210,7 @@ export class ControlLogsService {
         zoneId: createDto.zoneId,
         type: createDto.type as any,
         action: createDto.action as any,
+        originalTimestamp: createDto.timestamp,
         timestamp: new Date(createDto.timestamp),
         ...encryptedLocation,
         reason: createDto.reason,

@@ -106,6 +106,9 @@ export class ControlLogResponseDto {
   @ApiProperty({ description: '발생 시간' })
   timestamp: Date;
 
+  @ApiPropertyOptional({ description: '앱이 보낸 원본 발생 시각(영국 시간 기준 ISO 8601)' })
+  originalTimestamp?: string;
+
   @ApiPropertyOptional({ description: '위도' })
   latitude?: number;
 

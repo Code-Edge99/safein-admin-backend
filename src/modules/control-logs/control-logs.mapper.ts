@@ -9,6 +9,7 @@ export function toControlLogResponseDto(log: any): ControlLogResponseDto {
     type: log.type,
     action: log.action,
     timestamp: log.timestamp,
+    originalTimestamp: log.originalTimestamp || undefined,
     latitude: location?.latitude,
     longitude: location?.longitude,
     reason: log.reason,
