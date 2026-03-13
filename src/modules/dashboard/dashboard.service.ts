@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
 import { decryptLocation } from '../../common/security/location-crypto';
+import { findEmployeeByIdentifier, resolveEmployeePrimaryId } from '../../common/utils/employee-identifier.util';
 import { buildSiteReportItem, SiteReportTrendPoint } from './dashboard.mapper';
 
 @Injectable()
@@ -571,7 +572,10 @@ export class DashboardService {
     this.ensureOrganizationInScope(filter.organizationId, filter.scopeOrganizationIds);
 
     const employeeWhere: any = {};
-    if (filter.employeeId) employeeWhere.id = filter.employeeId;
+    if (filter.employeeId) {
+      const resolvedEmployeeId = await resolveEmployeePrimaryId(this.prisma, filter.employeeId);
+      employeeWhere.id = resolvedEmployeeId || '__missing_employee__';
+    }
     if (filter.organizationId) employeeWhere.organizationId = filter.organizationId;
     else if (filter.scopeOrganizationIds) employeeWhere.organizationId = { in: filter.scopeOrganizationIds };
 
@@ -579,13 +583,14 @@ export class DashboardService {
       where: employeeWhere,
       select: {
         id: true,
+        referenceId: true,
         name: true,
         organizationId: true,
         organization: { select: { id: true, name: true } },
         workType: { select: { id: true, name: true } },
       },
       orderBy: { name: 'asc' },
-    });
+    } as any);
 
     if (employees.length === 0) {
       return {
@@ -629,8 +634,9 @@ export class DashboardService {
     );
 
     const empMap = new Map<string, any>();
-    employees.forEach((employee) => {
+    employees.forEach((employee: any) => {
       empMap.set(employee.id, {
+        id: employee.referenceId || employee.id,
         employeeId: employee.id,
         employeeName: employee.name || '',
         organizationId: employee.organizationId || '',
@@ -706,7 +712,7 @@ export class DashboardService {
       else if (emp.totalBlocks > 10 || emp.zoneViolations > 2 || complianceRate < 80) riskLevel = '보통';
 
       return {
-        id: emp.employeeId,
+        id: emp.id || emp.employeeId,
         employeeId: emp.employeeId,
         employeeName: emp.employeeName,
         organizationId: emp.organizationId,
@@ -739,8 +745,7 @@ export class DashboardService {
    */
   async getEmployeeReportDetail(employeeId: string, scopeOrganizationIds?: string[]) {
     // 1. 직원 기본 정보 (항상 존재해야 상세페이지 표시)
-    const employee = await this.prisma.employee.findUnique({
-      where: { id: employeeId },
+    const employee = await findEmployeeByIdentifier(this.prisma, employeeId, {
       include: {
         organization: { select: { id: true, name: true } },
         site: { select: { id: true, name: true } },
@@ -759,13 +764,13 @@ export class DashboardService {
 
     // 2. 일별 통계 (EmployeeDailyStat, 30일)
     const dailyStats = await this.prisma.employeeDailyStat.findMany({
-      where: { employeeId, date: { gte: startDate30 } },
+      where: { employeeId: employee.id, date: { gte: startDate30 } },
       orderBy: { date: 'asc' },
     });
 
     // 3. 제어 로그 (ControlLog, 30일) — 실제 이벤트 데이터
     const controlLogs = await this.prisma.controlLog.findMany({
-      where: { employeeId, timestamp: { gte: startDate30 } },
+      where: { employeeId: employee.id, timestamp: { gte: startDate30 } },
       include: {
         zone: { select: { id: true, name: true, type: true } },
         policy: { select: { id: true, name: true } },
@@ -812,7 +817,7 @@ export class DashboardService {
     const [zoneVisitSessions, workSessions, appUsageSessions] = await Promise.all([
       this.prisma.zoneVisitSession.findMany({
         where: {
-          employeeId,
+          employeeId: employee.id,
           enteredAt: { gte: startDate30 },
         },
         include: {
@@ -821,7 +826,7 @@ export class DashboardService {
       }),
       this.prisma.workSession.findMany({
         where: {
-          employeeId,
+          employeeId: employee.id,
           startedAt: { gte: startDate30 },
           endedAt: { not: null },
         },
@@ -834,7 +839,7 @@ export class DashboardService {
       }),
       this.prisma.appUsageSession.findMany({
         where: {
-          employeeId,
+          employeeId: employee.id,
           startedAt: { gte: startDate30 },
         },
         select: {
@@ -1009,7 +1014,7 @@ export class DashboardService {
 
     const locationLogs = await this.prisma.deviceLocation.findMany({
       where: {
-        device: { employeeId },
+        device: { employeeId: employee.id },
         timestamp: { gte: startDate30 },
       },
       select: { timestamp: true },
@@ -1057,7 +1062,7 @@ export class DashboardService {
         where: {
           workTypeId: employee.workTypeId,
           date: { gte: startDate30 },
-          employeeId: { not: employeeId },
+          employeeId: { not: employee.id },
         },
         _avg: { totalBlocks: true },
         _count: { employeeId: true },
@@ -1071,7 +1076,7 @@ export class DashboardService {
       where: {
         organizationId: employee.organizationId,
         date: { gte: startDate30 },
-        employeeId: { not: employeeId },
+        employeeId: { not: employee.id },
       },
       _avg: { totalBlocks: true },
     });
@@ -1202,7 +1207,7 @@ export class DashboardService {
       .slice(0, 50);
 
     return {
-      id: employee.id,
+      id: employee.referenceId || employee.id,
       employeeId: employee.id,
       employeeName: employee.name,
       organizationId: employee.organizationId,

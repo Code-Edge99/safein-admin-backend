@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { AuditAction, DeviceOS, EmployeeStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { resolveEmployeePrimaryIds } from '../../common/utils/employee-identifier.util';
 import { toControlPolicyDetailDto, toControlPolicyResponseDto } from './control-policies.mapper';
 import { readStageConfig } from '../../common/config/stage.config';
 import {
@@ -97,6 +98,7 @@ export class ControlPoliciesService {
       employeeIds,
       ...rest
     } = createDto;
+    const resolvedEmployeeIds = await resolveEmployeePrimaryIds(this.prisma, employeeIds);
 
     this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
 
@@ -165,7 +167,7 @@ export class ControlPoliciesService {
           : undefined,
         targetEmployees: employeeIds?.length
           ? {
-              create: employeeIds.map((employeeId) => ({ employeeId })),
+              create: resolvedEmployeeIds.map((employeeId) => ({ employeeId })),
             }
           : undefined,
       } as any,
@@ -641,10 +643,11 @@ export class ControlPoliciesService {
 
       // Update target employees
       if (employeeIds !== undefined) {
+        const resolvedEmployeeIds = await resolveEmployeePrimaryIds(tx, employeeIds);
         await tx.controlPolicyEmployee.deleteMany({ where: { policyId: id } });
-        if (employeeIds.length > 0) {
+        if (resolvedEmployeeIds.length > 0) {
           await tx.controlPolicyEmployee.createMany({
-            data: employeeIds.map((employeeId) => ({ policyId: id, employeeId })),
+            data: resolvedEmployeeIds.map((employeeId) => ({ policyId: id, employeeId })),
           });
         }
       }
@@ -1294,13 +1297,15 @@ export class ControlPoliciesService {
       throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
     }
 
+    const resolvedEmployeeIds = await resolveEmployeePrimaryIds(this.prisma, employeeIds);
+
     await this.validatePolicyRelations(this.prisma, policy.organizationId, { employeeIds });
 
     await this.prisma.$transaction(async (tx) => {
       await tx.controlPolicyEmployee.deleteMany({ where: { policyId } });
-      if (employeeIds.length > 0) {
+      if (resolvedEmployeeIds.length > 0) {
         await tx.controlPolicyEmployee.createMany({
-          data: employeeIds.map((employeeId) => ({ policyId, employeeId })),
+          data: resolvedEmployeeIds.map((employeeId) => ({ policyId, employeeId })),
         });
       }
     });
@@ -1530,7 +1535,12 @@ export class ControlPoliciesService {
       }
     }
 
-    const uniqueEmployeeIds = this.normalizeIds(employeeIds);
+    const rawEmployeeIds = this.normalizeIds(employeeIds);
+    const uniqueEmployeeIds = await resolveEmployeePrimaryIds(tx, rawEmployeeIds);
+    if (rawEmployeeIds.length > 0 && uniqueEmployeeIds.length !== rawEmployeeIds.length) {
+      throw new BadRequestException('직원 ID가 유효하지 않거나 정책 조직과 일치하지 않습니다.');
+    }
+
     if (uniqueEmployeeIds.length > 0) {
       const employeeCount = await tx.employee.count({
         where: { id: { in: uniqueEmployeeIds }, organizationId },

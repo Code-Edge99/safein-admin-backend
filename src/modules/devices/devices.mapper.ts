@@ -4,7 +4,7 @@ export function toDeviceResponseDto(device: any): DeviceResponseDto {
   return {
     id: device.id,
     deviceId: device.deviceId,
-    employeeId: device.employeeId,
+    employeeId: device.employee?.referenceId || device.employeeId,
     employeeName: device.employee?.name,
     organizationId: device.organizationId,
     organizationName: device.organization?.name,

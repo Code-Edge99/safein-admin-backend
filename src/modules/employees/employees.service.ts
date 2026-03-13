@@ -14,6 +14,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResponse } from '../../common/dto';
 import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { findEmployeeByIdentifier, normalizePhoneEmployeeId, resolveEmployeePrimaryIds } from '../../common/utils/employee-identifier.util';
 import { toEmployeeResponseDto } from './employees.mapper';
 import { readStageConfig } from '../../common/config/stage.config';
 import {
@@ -68,7 +69,7 @@ export class EmployeesService {
   }
 
   private normalizeEmployeeId(value?: string | null): string {
-    return (value ?? '').replace(/\D/g, '').trim();
+    return normalizePhoneEmployeeId(value);
   }
 
   private normalizeOptionalText(value?: string | null): string | null {
@@ -229,6 +230,7 @@ export class EmployeesService {
     // 검색어 필터
     if (filter.search) {
       where.OR = [
+        { referenceId: { contains: filter.search, mode: 'insensitive' } },
         { id: { contains: filter.search, mode: 'insensitive' } },
         { name: { contains: filter.search, mode: 'insensitive' } },
         { email: { contains: filter.search, mode: 'insensitive' } },
@@ -271,8 +273,7 @@ export class EmployeesService {
   }
 
   async findOne(employeeId: string, scopeOrganizationIds?: string[]): Promise<EmployeeDetailDto> {
-    const employee = await this.prisma.employee.findUnique({
-      where: { id: employeeId },
+    const employee = await findEmployeeByIdentifier(this.prisma, employeeId, {
       include: {
         organization: true,
         site: true,
@@ -315,7 +316,7 @@ export class EmployeesService {
 
     return {
       ...this.toResponseDto(employee),
-      devices: employee.devices.map(d => ({
+      devices: employee.devices.map((d: any) => ({
         id: d.id,
         deviceId: d.deviceId,
         model: d.model || '',
@@ -323,7 +324,7 @@ export class EmployeesService {
         status: d.status,
         lastCommunication: d.lastCommunication || undefined,
       })),
-      exclusions: employee.exclusions.map(e => ({
+      exclusions: employee.exclusions.map((e: any) => ({
         id: e.id,
         startDate: e.startDate,
         endDate: e.endDate || undefined,
@@ -338,10 +339,10 @@ export class EmployeesService {
     dto: UpdateEmployeeDto,
     scopeOrganizationIds?: string[],
   ): Promise<EmployeeResponseDto> {
-    const previousEmployee = await this.prisma.employee.findUnique({
-      where: { id: employeeId },
+    const previousEmployee = await findEmployeeByIdentifier(this.prisma, employeeId, {
       select: {
         id: true,
+        referenceId: true,
         status: true,
         organizationId: true,
         siteId: true,
@@ -398,14 +399,15 @@ export class EmployeesService {
     let employee;
     try {
       employee = await this.prisma.$transaction(async (tx) => {
-        let workingEmployeeId = employeeId;
+        let workingEmployeeId = previousEmployee.id;
 
-        if (requestedEmployeeId && requestedEmployeeId !== employeeId) {
+        if (requestedEmployeeId && requestedEmployeeId !== previousEmployee.id) {
           workingEmployeeId = await this.reassignEmployeeId(
             tx,
-            employeeId,
+            previousEmployee.id,
             requestedEmployeeId,
             Boolean(dto.confirmIdReassignment),
+            previousEmployee.referenceId,
           );
         }
 
@@ -463,8 +465,7 @@ export class EmployeesService {
   }
 
   async remove(employeeId: string, scopeOrganizationIds?: string[]): Promise<void> {
-    const employee = await this.prisma.employee.findUnique({
-      where: { id: employeeId },
+    const employee = await findEmployeeByIdentifier(this.prisma, employeeId, {
       select: {
         id: true,
         name: true,
@@ -589,6 +590,8 @@ export class EmployeesService {
     dto: BulkAssignWorkTypeDto,
     scopeOrganizationIds?: string[],
   ): Promise<{ updated: number }> {
+    const resolvedEmployeeIds = await resolveEmployeePrimaryIds(this.prisma, dto.employeeIds);
+
     // 근무 유형 존재 여부 확인
     const workType = await this.prisma.workType.findUnique({
       where: { id: dto.workTypeId },
@@ -599,7 +602,7 @@ export class EmployeesService {
 
     const result = await this.prisma.employee.updateMany({
       where: {
-        id: { in: dto.employeeIds },
+        id: { in: resolvedEmployeeIds },
         ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
       },
       data: { workTypeId: dto.workTypeId },
@@ -612,6 +615,8 @@ export class EmployeesService {
     dto: BulkMoveOrganizationDto,
     scopeOrganizationIds?: string[],
   ): Promise<{ updated: number }> {
+    const resolvedEmployeeIds = await resolveEmployeePrimaryIds(this.prisma, dto.employeeIds);
+
     this.ensureOrganizationInScope(dto.targetOrganizationId, scopeOrganizationIds);
 
     // 대상 조직 존재 여부 확인
@@ -625,7 +630,7 @@ export class EmployeesService {
     const result = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.employee.updateMany({
         where: {
-          id: { in: dto.employeeIds },
+          id: { in: resolvedEmployeeIds },
           ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
         },
         data: { organizationId: dto.targetOrganizationId },
@@ -659,11 +664,12 @@ export class EmployeesService {
     status: EmployeeStatusEnum,
     scopeOrganizationIds?: string[],
   ): Promise<{ updated: number }> {
+    const resolvedEmployeeIds = await resolveEmployeePrimaryIds(this.prisma, employeeIds);
     const normalizedStatus = status as EmployeeStatus;
 
     const targetEmployees = await this.prisma.employee.findMany({
       where: {
-        id: { in: employeeIds },
+        id: { in: resolvedEmployeeIds },
         ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
       },
       select: {
@@ -680,7 +686,7 @@ export class EmployeesService {
 
     const result = await this.prisma.employee.updateMany({
       where: {
-        id: { in: employeeIds },
+        id: { in: resolvedEmployeeIds },
         ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
       },
       data: { status: normalizedStatus },
@@ -755,7 +761,7 @@ export class EmployeesService {
     deviceId: string,
     scopeOrganizationIds?: string[],
   ): Promise<EmployeeResponseDto> {
-    const employee = await this.prisma.employee.findUnique({ where: { id: employeeId } });
+    const employee = await findEmployeeByIdentifier(this.prisma, employeeId);
     if (!employee) throw new NotFoundException('직원을 찾을 수 없습니다.');
     this.assertNotDeletedStatus(employee.status);
     this.assertOrganizationInScope(employee.organizationId, scopeOrganizationIds);
@@ -768,29 +774,29 @@ export class EmployeesService {
 
     await this.prisma.device.update({
       where: { id: deviceId },
-      data: { employeeId, organizationId: employee.organizationId, deviceStatus: 'IN_USE' },
+      data: { employeeId: employee.id, organizationId: employee.organizationId, deviceStatus: 'IN_USE' },
     });
 
     const updated = await this.prisma.employee.findUnique({
-      where: { id: employeeId },
+      where: { id: employee.id },
       include: { organization: true, site: true, workType: true },
     });
     return this.toResponseDto(updated);
   }
 
   async unassignDevice(employeeId: string, scopeOrganizationIds?: string[]): Promise<EmployeeResponseDto> {
-    const employee = await this.prisma.employee.findUnique({ where: { id: employeeId } });
+    const employee = await findEmployeeByIdentifier(this.prisma, employeeId);
     if (!employee) throw new NotFoundException('직원을 찾을 수 없습니다.');
     this.assertNotDeletedStatus(employee.status);
     this.assertOrganizationInScope(employee.organizationId, scopeOrganizationIds);
 
     await this.prisma.device.updateMany({
-      where: { employeeId },
+      where: { employeeId: employee.id },
       data: { employeeId: null, deviceStatus: 'UNASSIGNED' },
     });
 
     const updated = await this.prisma.employee.findUnique({
-      where: { id: employeeId },
+      where: { id: employee.id },
       include: { organization: true, site: true, workType: true },
     });
     return this.toResponseDto(updated);
@@ -801,7 +807,7 @@ export class EmployeesService {
     dto: EmployeeMdmManualUnblockDto,
     scopeOrganizationIds?: string[],
   ) {
-    const employee = await this.prisma.employee.findUnique({ where: { id: employeeId } });
+    const employee = await findEmployeeByIdentifier(this.prisma, employeeId);
     if (!employee) {
       throw new NotFoundException('직원을 찾을 수 없습니다.');
     }
@@ -816,7 +822,7 @@ export class EmployeesService {
     const device = await this.prisma.device.findFirst({
       where: {
         deviceId: normalizedDeviceId,
-        employeeId,
+        employeeId: employee.id,
       },
       select: {
         id: true,
@@ -836,7 +842,7 @@ export class EmployeesService {
 
     return {
       ok: true,
-      employeeId,
+      employeeId: employee.id,
       deviceId: device.deviceId,
       appBackendResponse,
     };
@@ -869,6 +875,7 @@ export class EmployeesService {
     currentEmployeeId: string,
     requestedEmployeeId: string,
     confirmed: boolean,
+    preservedReferenceId: string,
   ): Promise<string> {
     const existingTarget = await tx.employee.findUnique({
       where: { id: requestedEmployeeId },
@@ -892,6 +899,7 @@ export class EmployeesService {
     await tx.employee.create({
       data: {
         id: requestedEmployeeId,
+        referenceId: preservedReferenceId,
         name: '임시',
         organizationId: (await tx.employee.findUniqueOrThrow({ where: { id: currentEmployeeId }, select: { organizationId: true } })).organizationId,
       },
@@ -908,15 +916,27 @@ export class EmployeesService {
     employeeId: string,
     reason: string,
   ): Promise<void> {
+    const source = await tx.employee.findUnique({ where: { id: employeeId } });
+    if (!source) {
+      return;
+    }
+
     const reviewEmployeeId = this.buildPhoneReviewEmployeeId(employeeId);
 
     await tx.employee.create({
       data: {
         id: reviewEmployeeId,
-        name: '아이디 재검증 필요 사용자',
-        organizationId: (await tx.employee.findUniqueOrThrow({ where: { id: employeeId }, select: { organizationId: true } })).organizationId,
+        referenceId: source.referenceId,
+        name: source.name,
+        organizationId: source.organizationId,
+        siteId: source.siteId,
+        workTypeId: source.workTypeId,
+        position: source.position,
+        role: source.role,
         status: 'PHONE_INFO_REVIEW' as EmployeeStatus,
-        memo: reason,
+        email: source.email,
+        memo: [source.memo, reason].filter(Boolean).join(' | '),
+        hireDate: source.hireDate,
       },
     });
 

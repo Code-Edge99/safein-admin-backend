@@ -140,6 +140,9 @@ export class UpdateEmployeeDto extends PartialType(CreateEmployeeDto) {
 }
 
 export class EmployeeResponseDto {
+  @ApiProperty({ description: '직원 내부 식별자' })
+  id: string;
+
   @ApiProperty({ description: '직원 ID' })
   employeeId: string;
 

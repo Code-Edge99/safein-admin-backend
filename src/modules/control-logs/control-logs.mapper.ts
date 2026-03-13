@@ -20,7 +20,8 @@ export function toControlLogResponseDto(log: any): ControlLogResponseDto {
     behaviorSpeed: log.behaviorSpeed,
     employee: log.employee
       ? {
-          id: log.employee.id,
+          id: log.employee.referenceId || log.employee.id,
+          employeeId: log.employee.id,
           name: log.employee.name,
           organizationId: log.employee.organizationId || undefined,
           organizationName: log.employee.organization?.name || undefined,

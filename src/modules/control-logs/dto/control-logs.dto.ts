@@ -118,6 +118,17 @@ export class ControlLogResponseDto {
   @ApiPropertyOptional({ description: '사유' })
   reason?: string;
 
+  @ApiPropertyOptional({ description: '직원 정보' })
+  employee?: {
+    id: string;
+    employeeId?: string;
+    name: string;
+    organizationId?: string;
+    organizationName?: string;
+    siteId?: string;
+    siteName?: string;
+  };
+
   @ApiPropertyOptional({ description: '앱 이름' })
   appName?: string;
 
@@ -132,16 +143,6 @@ export class ControlLogResponseDto {
 
   @ApiPropertyOptional({ description: '속도' })
   behaviorSpeed?: number;
-
-  @ApiPropertyOptional({ description: '직원 정보' })
-  employee?: {
-    id: string;
-    name: string;
-    organizationId?: string;
-    organizationName?: string;
-    siteId?: string;
-    siteName?: string;
-  };
 
   @ApiPropertyOptional({ description: '디바이스 정보' })
   device?: {

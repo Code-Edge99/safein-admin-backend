@@ -9,6 +9,7 @@ import { Prisma, DeviceOS, DeviceStatus, DeviceOperationStatus } from '@prisma/c
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResponse } from '../../common/dto';
 import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { findEmployeeByIdentifier, resolveEmployeePrimaryId } from '../../common/utils/employee-identifier.util';
 import { toDeviceResponseDto } from './devices.mapper';
 import { decryptLocation, encryptLocation } from '../../common/security/location-crypto';
 import {
@@ -37,11 +38,15 @@ export class DevicesService {
   }
 
   async create(dto: CreateDeviceDto, scopeOrganizationIds?: string[]): Promise<DeviceResponseDto> {
+    const resolvedEmployeeId = dto.employeeId
+      ? await resolveEmployeePrimaryId(this.prisma, dto.employeeId)
+      : null;
+
     // 동일 deviceId는 허용하되, 같은 소유 문맥(직원 또는 미할당) 내 중복은 방지
     const existing = await this.prisma.device.findFirst({
       where: {
         deviceId: dto.deviceId,
-        employeeId: dto.employeeId ?? null,
+        employeeId: resolvedEmployeeId ?? null,
       },
       select: { id: true },
     });
@@ -52,9 +57,7 @@ export class DevicesService {
 
     // 직원 존재 여부 확인
     if (dto.employeeId) {
-      const employee = await this.prisma.employee.findUnique({
-        where: { id: dto.employeeId },
-      });
+      const employee = await findEmployeeByIdentifier(this.prisma, dto.employeeId);
       if (!employee) {
         throw new NotFoundException('직원을 찾을 수 없습니다.');
       }
@@ -75,7 +78,7 @@ export class DevicesService {
     const device = await this.prisma.device.create({
       data: {
         deviceId: dto.deviceId,
-        employeeId: dto.employeeId,
+        employeeId: resolvedEmployeeId,
         organizationId: dto.organizationId,
         os: dto.os as DeviceOS,
         osVersion: dto.osVersion,
@@ -134,7 +137,8 @@ export class DevicesService {
 
     // 직원 필터
     if (filter.employeeId) {
-      where.employeeId = filter.employeeId;
+      const resolvedEmployeeId = await resolveEmployeePrimaryId(this.prisma, filter.employeeId);
+      where.employeeId = resolvedEmployeeId || '__missing_employee__';
     }
 
     // 미할당만
@@ -220,11 +224,13 @@ export class DevicesService {
   async update(id: string, dto: UpdateDeviceDto, scopeOrganizationIds?: string[]): Promise<DeviceResponseDto> {
     await this.findOne(id, scopeOrganizationIds); // 존재 여부 확인
 
+    const resolvedEmployeeId = dto.employeeId !== undefined
+      ? await resolveEmployeePrimaryId(this.prisma, dto.employeeId)
+      : undefined;
+
     // 직원 존재 여부 확인
     if (dto.employeeId) {
-      const employee = await this.prisma.employee.findUnique({
-        where: { id: dto.employeeId },
-      });
+      const employee = await findEmployeeByIdentifier(this.prisma, dto.employeeId);
       if (!employee) {
         throw new NotFoundException('직원을 찾을 수 없습니다.');
       }
@@ -236,7 +242,7 @@ export class DevicesService {
     const device = await this.prisma.device.update({
       where: { id },
       data: {
-        employeeId: dto.employeeId,
+        employeeId: resolvedEmployeeId,
         organizationId: dto.organizationId,
         os: dto.os as DeviceOS | undefined,
         osVersion: dto.osVersion,
@@ -271,9 +277,7 @@ export class DevicesService {
     }
     this.assertDeviceInScope(device, scopeOrganizationIds);
 
-    const employee = await this.prisma.employee.findUnique({
-      where: { id: dto.employeeId },
-    });
+    const employee = await findEmployeeByIdentifier(this.prisma, dto.employeeId);
 
     if (!employee) {
       throw new NotFoundException('직원을 찾을 수 없습니다.');
@@ -283,7 +287,7 @@ export class DevicesService {
     const updatedDevice = await this.prisma.device.update({
       where: { id },
       data: {
-        employeeId: dto.employeeId,
+        employeeId: employee.id,
         organizationId: employee.organizationId,
         deviceStatus: DeviceOperationStatus.IN_USE,
       },

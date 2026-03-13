@@ -2,6 +2,7 @@ import { EmployeeResponseDto } from './dto';
 
 export function toEmployeeResponseDto(employee: any): EmployeeResponseDto {
   return {
+    id: employee.referenceId || employee.id,
     employeeId: employee.id,
     name: employee.name,
     organizationId: employee.organizationId,

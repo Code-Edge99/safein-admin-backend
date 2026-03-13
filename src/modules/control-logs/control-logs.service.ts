@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { PrismaService } from '../../prisma/prisma.service';
 import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
 import { decryptLocation, encryptLocation } from '../../common/security/location-crypto';
+import { resolveEmployeePrimaryId } from '../../common/utils/employee-identifier.util';
 import { toControlLogResponseDto } from './control-logs.mapper';
 import {
   CreateControlLogDto,
@@ -271,7 +272,8 @@ export class ControlLogsService {
     const where: any = {};
 
     if (employeeId) {
-      where.employeeId = employeeId;
+      const resolvedEmployeeId = await resolveEmployeePrimaryId(this.prisma, employeeId);
+      where.employeeId = resolvedEmployeeId || '__missing_employee__';
     }
 
     if (deviceId) {
@@ -332,6 +334,7 @@ export class ControlLogsService {
           employee: {
             select: {
               id: true,
+              referenceId: true,
               name: true,
               organizationId: true,
               organization: { select: { id: true, name: true } },
