@@ -15,6 +15,9 @@ import { PrismaService } from '@/prisma/prisma.service';
 export class RequestLoggingInterceptor implements NestInterceptor {
   private readonly logger = new Logger(RequestLoggingInterceptor.name);
   constructor(private readonly prisma: PrismaService) {}
+  private readonly maxSerializedLength = 400;
+  private readonly maxObjectDepth = 4;
+  private readonly maxArrayLength = 20;
 
   private readonly sensitiveQueryKeys = [
     'token',
@@ -27,6 +30,20 @@ export class RequestLoggingInterceptor implements NestInterceptor {
     'secret',
   ];
 
+  private readonly sensitiveBodyKeys = [
+    'password',
+    'passwordHash',
+    'token',
+    'refreshToken',
+    'accessToken',
+    'authorization',
+    'secret',
+    'credential',
+    'apikey',
+    'apiKey',
+    'privateKey',
+  ];
+
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const http = context.switchToHttp();
     const request = http.getRequest<Request>();
@@ -37,13 +54,13 @@ export class RequestLoggingInterceptor implements NestInterceptor {
 
     return next.handle().pipe(
       tap({
-        next: () => {
+        next: (responseBody) => {
           const durationMs = Date.now() - startedAt;
           const statusCode = response.statusCode;
           this.logger.log(
             `${request.method} ${safeUrl} ${statusCode} ${durationMs}ms`,
           );
-          void this.persistAuditLog(request, safeUrl, statusCode, durationMs);
+          void this.persistAuditLog(request, safeUrl, statusCode, durationMs, undefined, responseBody);
         },
         error: (error) => {
           const durationMs = Date.now() - startedAt;
@@ -115,6 +132,7 @@ export class RequestLoggingInterceptor implements NestInterceptor {
     statusCode: number,
     durationMs: number,
     error?: unknown,
+    responseBody?: unknown,
   ): Promise<void> {
     if (!this.shouldPersist(request.method, statusCode, safeUrl)) {
       return;
@@ -126,6 +144,25 @@ export class RequestLoggingInterceptor implements NestInterceptor {
       ? user.organizationId
       : null;
     const { resourceType, resourceId } = this.resolveResource(safeUrl);
+    const userAgent = request.headers['user-agent'];
+    const normalizedUserAgent = Array.isArray(userAgent)
+      ? userAgent.join(', ')
+      : userAgent || null;
+    const query = this.sanitizeValue(request.query || {}, 0);
+    const requestBody = this.sanitizeValue(request.body || {}, 0);
+    const actor = user
+      ? this.sanitizeValue(
+          {
+            id: user.id,
+            username: user.username,
+            name: user.name,
+            role: user.role,
+            organizationId: user.organizationId,
+          },
+          0,
+        )
+      : null;
+    const responseSummary = this.sanitizeResponseBody(responseBody);
 
     const errorMessage = error instanceof Error
       ? error.message
@@ -144,9 +181,15 @@ export class RequestLoggingInterceptor implements NestInterceptor {
           resourceName: `${request.method.toUpperCase()} ${safeUrl}`,
           ipAddress: request.ip,
           changesAfter: {
+            method: request.method.toUpperCase(),
+            path: safeUrl,
             statusCode,
             durationMs,
-            userAgent: request.headers['user-agent'] || null,
+            userAgent: normalizedUserAgent,
+            query,
+            requestBody,
+            response: responseSummary,
+            actor,
             errorMessage: errorMessage || null,
           },
         },
@@ -175,5 +218,73 @@ export class RequestLoggingInterceptor implements NestInterceptor {
     } catch {
       return rawUrl;
     }
+  }
+
+  private sanitizeValue(value: unknown, depth: number): any {
+    if (value == null) {
+      return value;
+    }
+
+    if (depth >= this.maxObjectDepth) {
+      return '[truncated-depth]';
+    }
+
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+
+    if (Array.isArray(value)) {
+      const truncated = value
+        .slice(0, this.maxArrayLength)
+        .map((item) => this.sanitizeValue(item, depth + 1));
+      if (value.length > this.maxArrayLength) {
+        truncated.push(`[truncated-items:${value.length - this.maxArrayLength}]`);
+      }
+      return truncated;
+    }
+
+    if (typeof value === 'object') {
+      const entries = Object.entries(value as Record<string, unknown>);
+      const result: Record<string, any> = {};
+      for (const [key, raw] of entries) {
+        const lowerKey = key.toLowerCase();
+        if (this.sensitiveBodyKeys.some((sensitiveKey) => lowerKey.includes(sensitiveKey.toLowerCase()))) {
+          result[key] = '***';
+          continue;
+        }
+        result[key] = this.sanitizeValue(raw, depth + 1);
+      }
+      return result;
+    }
+
+    if (typeof value === 'string') {
+      return value.length > this.maxSerializedLength
+        ? `${value.slice(0, this.maxSerializedLength)}...`
+        : value;
+    }
+
+    return value;
+  }
+
+  private sanitizeResponseBody(responseBody: unknown): any {
+    if (!responseBody || typeof responseBody !== 'object') {
+      return null;
+    }
+
+    const body = responseBody as Record<string, unknown>;
+    const payload = (body.data && typeof body.data === 'object')
+      ? (body.data as Record<string, unknown>)
+      : body;
+
+    return this.sanitizeValue(
+      {
+        id: payload.id,
+        createdAt: payload.createdAt,
+        updatedAt: payload.updatedAt,
+        createdById: payload.createdById,
+        updatedById: payload.updatedById,
+      },
+      0,
+    );
   }
 }
