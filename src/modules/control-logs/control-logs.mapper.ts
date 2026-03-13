@@ -1,5 +1,6 @@
 import { ControlLogResponseDto } from './dto';
 import { decryptLocation } from '../../common/security/location-crypto';
+import { preferKstTimestamp } from '../../common/utils/kst-time.util';
 
 export function toControlLogResponseDto(log: any): ControlLogResponseDto {
   const location = decryptLocation(log);
@@ -8,7 +9,7 @@ export function toControlLogResponseDto(log: any): ControlLogResponseDto {
     id: log.id,
     type: log.type,
     action: log.action,
-    timestamp: log.timestamp,
+    timestamp: preferKstTimestamp(log.timestampKst, log.timestamp) || '',
     originalTimestamp: log.originalTimestamp || undefined,
     latitude: location?.latitude,
     longitude: location?.longitude,

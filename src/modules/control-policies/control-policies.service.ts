@@ -1489,6 +1489,7 @@ export class ControlPoliciesService {
         where: {
           id: { in: uniqueZoneIds },
           organizationId: { in: allowedPolicySourceOrganizationIds },
+          deletedAt: null,
         },
       });
       if (zoneCount !== uniqueZoneIds.length) {

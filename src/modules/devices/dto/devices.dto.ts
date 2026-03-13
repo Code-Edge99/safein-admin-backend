@@ -189,7 +189,7 @@ export class DeviceDetailDto extends DeviceResponseDto {
   lastLocation?: {
     latitude: number;
     longitude: number;
-    timestamp: Date;
+    timestamp: string;
   };
 }
 

@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { PrismaService } from '../../prisma/prisma.service';
 import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
 import { decryptLocation, encryptLocation } from '../../common/security/location-crypto';
+import { formatKstDateKey, formatKstTimestampString, getKstDaysAgoStart } from '../../common/utils/kst-time.util';
 import { resolveEmployeePrimaryId } from '../../common/utils/employee-identifier.util';
 import { toControlLogResponseDto } from './control-logs.mapper';
 import {
@@ -193,6 +194,7 @@ export class ControlLogsService {
 
   async create(createDto: CreateControlLogDto): Promise<ControlLogResponseDto> {
     const resolvedDevice = await this.resolveDeviceContext(createDto.deviceId);
+    const eventTimestamp = new Date(createDto.timestamp);
     const encryptedLocation = createDto.latitude !== undefined && createDto.longitude !== undefined
       ? encryptLocation({ latitude: createDto.latitude, longitude: createDto.longitude })
       : {
@@ -212,7 +214,8 @@ export class ControlLogsService {
         type: createDto.type as any,
         action: createDto.action as any,
         originalTimestamp: createDto.timestamp,
-        timestamp: new Date(createDto.timestamp),
+        timestamp: eventTimestamp,
+        timestampKst: formatKstTimestampString(eventTimestamp),
         ...encryptedLocation,
         reason: createDto.reason,
         appName: createDto.appName,
@@ -457,8 +460,7 @@ export class ControlLogsService {
     });
 
     // Get daily stats for last 7 days
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const sevenDaysAgo = getKstDaysAgoStart(6);
 
     const dailyLogs = await this.prisma.controlLog.findMany({
       where: {
@@ -470,7 +472,7 @@ export class ControlLogsService {
 
     const dailyMap = new Map<string, number>();
     dailyLogs.forEach((log) => {
-      const dateStr = log.timestamp.toISOString().split('T')[0];
+      const dateStr = formatKstDateKey(log.timestamp);
       dailyMap.set(dateStr, (dailyMap.get(dateStr) || 0) + 1);
     });
 
@@ -478,7 +480,7 @@ export class ControlLogsService {
     for (let i = 6; i >= 0; i--) {
       const date = new Date();
       date.setDate(date.getDate() - i);
-      const dateStr = date.toISOString().split('T')[0];
+      const dateStr = formatKstDateKey(date);
       dailyStats.push({
         date: dateStr,
         count: dailyMap.get(dateStr) || 0,

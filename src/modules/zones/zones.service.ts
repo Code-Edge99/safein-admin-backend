@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { preferKstTimestamp } from '../../common/utils/kst-time.util';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
 import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
 import { ControlPoliciesService } from '../control-policies/control-policies.service';
@@ -90,7 +91,7 @@ export class ZonesService {
     const { search, type, organizationId, workTypeId, isActive, page = 1, limit = 20 } = filter;
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    const where: any = { deletedAt: null };
 
     if (search) {
       where.name = { contains: search, mode: 'insensitive' };
@@ -143,8 +144,8 @@ export class ZonesService {
   }
 
   async findOne(id: string, scopeOrganizationIds?: string[]): Promise<ZoneResponseDto> {
-    const zone = await this.prisma.zone.findUnique({
-      where: { id },
+    const zone = await this.prisma.zone.findFirst({
+      where: { id, deletedAt: null },
       include: {
         organization: {
           select: { id: true, name: true },
@@ -174,6 +175,7 @@ export class ZonesService {
       where: {
         organizationId,
         isActive: true,
+        deletedAt: null,
       },
       include: {
         organization: {
@@ -200,8 +202,8 @@ export class ZonesService {
 
     const updateData: any = { ...rest };
 
-    const currentZone = await this.prisma.zone.findUnique({
-      where: { id },
+    const currentZone = await this.prisma.zone.findFirst({
+      where: { id, deletedAt: null },
       select: { shape: true, coordinates: true, radius: true },
     });
 
@@ -274,8 +276,8 @@ export class ZonesService {
   }
 
   async remove(id: string, scopeOrganizationIds?: string[]): Promise<void> {
-    const zone = await this.prisma.zone.findUnique({
-      where: { id },
+    const zone = await this.prisma.zone.findFirst({
+      where: { id, deletedAt: null },
       include: {
         _count: {
           select: {
@@ -293,10 +295,6 @@ export class ZonesService {
 
     this.assertZoneInScope(zone, scopeOrganizationIds);
 
-    if (zone._count.dailyStats > 0 || zone._count.zoneVisitSessions > 0) {
-      throw new BadRequestException('이력 데이터가 있는 구역은 삭제할 수 없습니다. 비활성화로 관리해주세요.');
-    }
-
     let impactedPolicyIds: string[] = [];
     await this.prisma.$transaction(async (tx) => {
       const impacted = await tx.controlPolicyZone.findMany({
@@ -306,7 +304,13 @@ export class ZonesService {
       impactedPolicyIds = impacted.map((item: any) => item.policyId);
 
       await tx.controlPolicyZone.deleteMany({ where: { zoneId: id } });
-      await tx.zone.delete({ where: { id } });
+      await tx.zone.update({
+        where: { id },
+        data: {
+          isActive: false,
+          deletedAt: new Date(),
+        },
+      });
 
       await deactivatePoliciesWithoutConditions(
         tx,
@@ -378,17 +382,24 @@ export class ZonesService {
   async getZoneStats(scopeOrganizationIds?: string[]): Promise<ZoneStatsDto> {
     const [totalZones, activeZones, byTypeResult] = await Promise.all([
       this.prisma.zone.count({
-        where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
+        where: {
+          deletedAt: null,
+          ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+        },
       }),
       this.prisma.zone.count({
         where: {
           isActive: true,
+          deletedAt: null,
           ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
         },
       }),
       this.prisma.zone.groupBy({
         by: ['type'],
-        where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
+        where: {
+          deletedAt: null,
+          ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+        },
         _count: { type: true },
       }),
     ]);
@@ -416,8 +427,8 @@ export class ZonesService {
     uniqueEmployees: number;
     lastViolationAt: string | null;
   }> {
-    const zone = await this.prisma.zone.findUnique({
-      where: { id },
+    const zone = await this.prisma.zone.findFirst({
+      where: { id, deletedAt: null },
       select: { id: true, organizationId: true },
     });
 
@@ -477,7 +488,7 @@ export class ZonesService {
       this.prisma.controlLog.findFirst({
         where: blockedWhere,
         orderBy: { timestamp: 'desc' },
-        select: { timestamp: true },
+        select: { timestamp: true, timestampKst: true },
       }),
     ]);
 
@@ -487,7 +498,7 @@ export class ZonesService {
       monthlyBlocks,
       monthlyEntries,
       uniqueEmployees: uniqueEmployees.length,
-      lastViolationAt: lastViolation?.timestamp?.toISOString() ?? null,
+      lastViolationAt: preferKstTimestamp(lastViolation?.timestampKst, lastViolation?.timestamp) ?? null,
     };
   }
 

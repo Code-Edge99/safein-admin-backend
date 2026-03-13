@@ -2,6 +2,14 @@ import { ForbiddenException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
 import { decryptLocation } from '../../common/security/location-crypto';
+import {
+  formatKstDateKey,
+  formatKstMonthDay,
+  getKstDaysAgoStart,
+  getKstMonthStart,
+  getKstStartOfDay,
+  preferKstTimestamp,
+} from '../../common/utils/kst-time.util';
 import { findEmployeeByIdentifier, resolveEmployeePrimaryId } from '../../common/utils/employee-identifier.util';
 import { buildSiteReportItem, SiteReportTrendPoint } from './dashboard.mapper';
 
@@ -154,14 +162,10 @@ export class DashboardService {
   async getStats(scopeOrganizationIds?: string[]) {
     const now = new Date();
     const onlineThreshold = new Date(now.getTime() - 15 * 60 * 1000);
-    const todayStart = new Date(now);
-    todayStart.setHours(0, 0, 0, 0);
-
-    const yesterdayStart = new Date(todayStart);
-    yesterdayStart.setDate(yesterdayStart.getDate() - 1);
-
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const todayStart = getKstStartOfDay(now);
+    const yesterdayStart = getKstDaysAgoStart(1, now);
+    const monthStart = getKstMonthStart(now);
+    const previousMonthStart = getKstMonthStart(now, -1);
     const controlLogScopeCondition = this.buildControlLogOrganizationScopeCondition(scopeOrganizationIds);
 
     const [
@@ -221,12 +225,13 @@ export class DashboardService {
       this.prisma.zone.count({
         where: {
           isActive: true,
+          deletedAt: null,
           ...(scopeOrganizationIds
             ? {
                 organizationId: { in: scopeOrganizationIds },
               }
             : {}),
-        },
+        } as any,
       }),
       this.prisma.controlLog.count({
         where: {
@@ -310,12 +315,12 @@ export class DashboardService {
   async getHourlyData(organizationId?: string, date?: string, scopeOrganizationIds?: string[]) {
     let targetDate: Date;
     if (date) {
-      targetDate = new Date(date);
+      const parsedDate = new Date(date);
+      targetDate = Number.isNaN(parsedDate.getTime()) ? getKstStartOfDay(new Date()) : getKstStartOfDay(parsedDate);
     } else {
       // 오늘 데이터가 없으면 어제 데이터를 시도
-      targetDate = new Date();
+      targetDate = getKstStartOfDay(new Date());
     }
-    targetDate.setHours(0, 0, 0, 0);
 
     this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
 
@@ -338,9 +343,7 @@ export class DashboardService {
 
     // 오늘 데이터가 없으면 어제 데이터 조회
     if (stats.length === 0 && !date) {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      yesterday.setHours(0, 0, 0, 0);
+      const yesterday = new Date(targetDate.getTime() - (24 * 60 * 60 * 1000));
       where.date = yesterday;
       stats = await this.prisma.hourlyBlockStat.findMany({
         where,
@@ -530,9 +533,7 @@ export class DashboardService {
     days = 30,
     scopeOrganizationIds?: string[],
   ) {
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
-    startDate.setHours(0, 0, 0, 0);
+    const startDate = getKstDaysAgoStart(days);
 
     this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
 
@@ -565,9 +566,7 @@ export class DashboardService {
     const limit = filter.limit || 20;
     const skip = (page - 1) * limit;
 
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
-    startDate.setHours(0, 0, 0, 0);
+    const startDate = getKstDaysAgoStart(days);
 
     this.ensureOrganizationInScope(filter.organizationId, filter.scopeOrganizationIds);
 
@@ -758,9 +757,7 @@ export class DashboardService {
     this.ensureOrganizationInScope(employee.organizationId, scopeOrganizationIds);
 
     const now = new Date();
-    const startDate30 = new Date();
-    startDate30.setDate(startDate30.getDate() - 30);
-    startDate30.setHours(0, 0, 0, 0);
+    const startDate30 = getKstDaysAgoStart(30, now);
 
     // 2. 일별 통계 (EmployeeDailyStat, 30일)
     const dailyStats = await this.prisma.employeeDailyStat.findMany({
@@ -769,7 +766,7 @@ export class DashboardService {
     });
 
     // 3. 제어 로그 (ControlLog, 30일) — 실제 이벤트 데이터
-    const controlLogs = await this.prisma.controlLog.findMany({
+    const controlLogs: any[] = await this.prisma.controlLog.findMany({
       where: { employeeId: employee.id, timestamp: { gte: startDate30 } },
       include: {
         zone: { select: { id: true, name: true, type: true } },
@@ -814,7 +811,7 @@ export class DashboardService {
       }
     });
 
-    const [zoneVisitSessions, workSessions, appUsageSessions] = await Promise.all([
+    const [zoneVisitSessions, workSessions, appUsageSessions]: [any[], any[], any[]] = await Promise.all([
       this.prisma.zoneVisitSession.findMany({
         where: {
           employeeId: employee.id,
@@ -833,10 +830,12 @@ export class DashboardService {
         select: {
           id: true,
           startedAt: true,
+          startedAtKst: true,
           endedAt: true,
+          endedAtKst: true,
           durationSeconds: true,
         },
-      }),
+      } as any),
       this.prisma.appUsageSession.findMany({
         where: {
           employeeId: employee.id,
@@ -847,9 +846,11 @@ export class DashboardService {
           packageName: true,
           appName: true,
           startedAt: true,
+          startedAtKst: true,
           endedAt: true,
+          endedAtKst: true,
         },
-      }),
+      } as any),
     ]);
 
     const appliedPolicy = await this.resolveAppliedPolicyForEmployee(
@@ -1023,7 +1024,7 @@ export class DashboardService {
 
     const dayRangeMap = new Map<string, { min: number; max: number }>();
     locationLogs.forEach((entry) => {
-      const key = entry.timestamp.toISOString().split('T')[0];
+      const key = formatKstDateKey(entry.timestamp);
       const timestamp = entry.timestamp.getTime();
       const existing = dayRangeMap.get(key);
       if (!existing) {
@@ -1087,7 +1088,7 @@ export class DashboardService {
 
     // ── 추이 데이터 (일별) ──
     const trendData = dailyStats.map((s) => ({
-      date: s.date.toISOString().split('T')[0].slice(5), // MM-DD
+      date: formatKstMonthDay(s.date),
       앱제어: s.appControlBlocks,
       행동차단: s.behaviorBlocks,
     }));
@@ -1100,7 +1101,7 @@ export class DashboardService {
         id: l.id,
         type: l.type === 'app_control' ? '앱 제어 위반' : '행동 감지',
         action: l.action === 'blocked' ? '차단' : '허용',
-        timestamp: l.timestamp.toISOString(),
+        timestamp: preferKstTimestamp(l.timestampKst, l.timestamp),
         zoneId: l.zone?.id || l.zoneId || null,
         zoneName: l.zone?.name || null,
         location:
@@ -1121,7 +1122,7 @@ export class DashboardService {
     const recentActivity = [
       ...controlLogs.map((log) => ({
         id: `control-${log.id}`,
-        timestamp: log.timestamp.toISOString(),
+        timestamp: preferKstTimestamp(log.timestampKst, log.timestamp),
         actionLabel: log.action === 'blocked' ? '위반 차단' : '정책 허용',
         category: 'control',
         zoneId: log.zone?.id || log.zoneId || null,
@@ -1136,7 +1137,7 @@ export class DashboardService {
         const events: Array<any> = [
           {
             id: `zone-enter-${session.id}`,
-            timestamp: session.enteredAt.toISOString(),
+            timestamp: preferKstTimestamp(session.enteredAtKst, session.enteredAt),
             actionLabel: '구역 진입',
             category: 'zone',
             description: `${session.zone?.name || '미지정'} 진입`,
@@ -1146,7 +1147,7 @@ export class DashboardService {
         if (session.exitedAt) {
           events.push({
             id: `zone-exit-${session.id}`,
-            timestamp: session.exitedAt.toISOString(),
+            timestamp: preferKstTimestamp(session.exitedAtKst, session.exitedAt),
             actionLabel: '구역 이탈',
             category: 'zone',
             description: `${session.zone?.name || '미지정'} 이탈`,
@@ -1159,7 +1160,7 @@ export class DashboardService {
         const events: Array<any> = [
           {
             id: `work-start-${index}-${session.startedAt?.toISOString?.() || index}`,
-            timestamp: session.startedAt.toISOString(),
+            timestamp: preferKstTimestamp(session.startedAtKst, session.startedAt),
             actionLabel: '근무 시작',
             category: 'work',
             description: '근무 세션 시작',
@@ -1169,7 +1170,7 @@ export class DashboardService {
         if (session.endedAt) {
           events.push({
             id: `work-end-${index}-${session.endedAt.toISOString()}`,
-            timestamp: session.endedAt.toISOString(),
+            timestamp: preferKstTimestamp(session.endedAtKst, session.endedAt),
             actionLabel: '근무 종료',
             category: 'work',
             description: '근무 세션 종료',
@@ -1183,7 +1184,7 @@ export class DashboardService {
         const events: Array<any> = [
           {
             id: `app-foreground-${session.id}`,
-            timestamp: session.startedAt.toISOString(),
+            timestamp: preferKstTimestamp(session.startedAtKst, session.startedAt),
             actionLabel: '앱 전경 진입',
             category: 'app',
             description: `${appLabel} 실행`,
@@ -1193,7 +1194,7 @@ export class DashboardService {
         if (session.endedAt) {
           events.push({
             id: `app-background-${session.id}`,
-            timestamp: session.endedAt.toISOString(),
+            timestamp: preferKstTimestamp(session.endedAtKst, session.endedAt),
             actionLabel: '앱 종료/백그라운드',
             category: 'app',
             description: `${appLabel} 종료`,
@@ -1224,7 +1225,7 @@ export class DashboardService {
       complianceRate,
       riskLevel,
       zoneViolations,
-      lastViolation: controlLogs[0]?.timestamp?.toISOString() || null,
+      lastViolation: preferKstTimestamp(controlLogs[0]?.timestampKst, controlLogs[0]?.timestamp) || null,
 
       insights: {
         topViolationApps,
@@ -1271,7 +1272,7 @@ export class DashboardService {
             include: {
               zones: {
                 include: {
-                  zone: { select: { id: true, name: true, type: true, description: true } },
+                  zone: { select: { id: true, name: true, type: true, description: true, isActive: true, deletedAt: true } },
                 },
               },
               timePolicies: {
@@ -1302,7 +1303,7 @@ export class DashboardService {
             include: {
               zones: {
                 include: {
-                  zone: { select: { id: true, name: true, type: true, description: true } },
+                  zone: { select: { id: true, name: true, type: true, description: true, isActive: true, deletedAt: true } },
                 },
               },
               timePolicies: {
@@ -1357,7 +1358,9 @@ export class DashboardService {
         startTime: this.formatPolicyTime(item.timePolicy?.startTime),
         endTime: this.formatPolicyTime(item.timePolicy?.endTime),
       })),
-      zones: (selectedPolicy.zones || []).map((item: any) => item.zone),
+      zones: (selectedPolicy.zones || [])
+        .map((item: any) => item.zone)
+        .filter((zone: any) => zone?.isActive && !zone?.deletedAt),
       behaviorConditions: (selectedPolicy.behaviors || []).map((item: any) => item.behaviorCondition),
     };
   }
@@ -1391,14 +1394,9 @@ export class DashboardService {
 
   async getSiteReports(scopeOrganizationIds?: string[]) {
     const endDate = new Date();
-    const currentStartDate = new Date(endDate.getTime() - 7 * 86400000);
-    currentStartDate.setHours(0, 0, 0, 0);
-
-    const trendStartDate = new Date(endDate.getTime() - 29 * 86400000);
-    trendStartDate.setHours(0, 0, 0, 0);
-
-    const prevWeekStartDate = new Date(currentStartDate.getTime() - 7 * 86400000);
-    prevWeekStartDate.setHours(0, 0, 0, 0);
+    const currentStartDate = getKstDaysAgoStart(7, endDate);
+    const trendStartDate = getKstDaysAgoStart(29, endDate);
+    const prevWeekStartDate = getKstDaysAgoStart(14, endDate);
 
     // 회사(root) 제외 모든 조직 조회 (현장, 부서, 팀, 현장조 등)
     const sites = await this.prisma.organization.findMany({
@@ -1538,7 +1536,7 @@ export class DashboardService {
     const trendDates: string[] = [];
     for (let day = 0; day < 30; day++) {
       const date = new Date(trendStartDate.getTime() + day * 86400000);
-      trendDates.push(date.toISOString().split('T')[0]);
+      trendDates.push(formatKstDateKey(date));
     }
 
     const result = [];
@@ -1588,7 +1586,7 @@ export class DashboardService {
 
       const dailyStatMap = new Map<string, { allowed: number; behavior: number }>();
       trendStats.forEach((item) => {
-        const key = item.date.toISOString().split('T')[0];
+        const key = formatKstDateKey(item.date);
         const existing = dailyStatMap.get(key) || { allowed: 0, behavior: 0 };
         dailyStatMap.set(key, {
           allowed: existing.allowed + item.appControlBlocks,

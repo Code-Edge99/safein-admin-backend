@@ -12,6 +12,7 @@ import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../
 import { findEmployeeByIdentifier, resolveEmployeePrimaryId } from '../../common/utils/employee-identifier.util';
 import { toDeviceResponseDto } from './devices.mapper';
 import { decryptLocation, encryptLocation } from '../../common/security/location-crypto';
+import { formatKstTimestampString, preferKstTimestamp } from '../../common/utils/kst-time.util';
 import {
   CreateDeviceDto,
   UpdateDeviceDto,
@@ -193,7 +194,7 @@ export class DevicesService {
       lastLocation: lastLocation ? {
         latitude: lastLocation.latitude,
         longitude: lastLocation.longitude,
-        timestamp: device.locations[0].timestamp,
+        timestamp: preferKstTimestamp(device.locations[0].timestampKst, device.locations[0].timestamp) || '',
       } : undefined,
     };
   }
@@ -340,19 +341,22 @@ export class DevicesService {
       longitude: dto.longitude,
     });
 
+    const now = new Date();
+
     await this.prisma.deviceLocation.create({
       data: {
         deviceId: id,
         ...encryptedLocation,
         accuracy: dto.accuracy,
-        timestamp: new Date(),
+        timestamp: now,
+        timestampKst: formatKstTimestampString(now),
       },
     });
 
     // 마지막 통신 시간 업데이트
     await this.prisma.device.update({
       where: { id },
-      data: { lastCommunication: new Date() },
+      data: { lastCommunication: now },
     });
   }
 
