@@ -1,7 +1,9 @@
 import {
+  Body,
   Controller,
   Get,
   Param,
+  Post,
   Query,
   Req,
   UseGuards,
@@ -11,6 +13,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard';
 import { DashboardService } from './dashboard.service';
 import { AuthenticatedAdminRequest } from '../../common/types/authenticated-request.type';
+import { ReaggregateDayDto } from './dto/reaggregate-day.dto';
 
 @ApiTags('대시보드')
 @Controller('dashboard')
@@ -35,6 +38,31 @@ export class DashboardController {
     return this.dashboardService.getHourlyData(
       organizationId,
       date,
+      req.organizationScopeIds ?? undefined,
+    );
+  }
+
+  @Get('data-freshness')
+  @ApiOperation({ summary: '로그/통계 신선도 상태' })
+  getDataFreshness(
+    @Req() req: AuthenticatedAdminRequest,
+    @Query('organizationId') organizationId?: string,
+  ) {
+    return this.dashboardService.getDataFreshness(
+      organizationId,
+      req.organizationScopeIds ?? undefined,
+    );
+  }
+
+  @Post('reaggregate-day')
+  @ApiOperation({ summary: '조직/일자 통계 재집계 실행' })
+  reaggregateDay(
+    @Req() req: AuthenticatedAdminRequest,
+    @Body() dto: ReaggregateDayDto,
+  ) {
+    return this.dashboardService.reaggregateDay(
+      dto,
+      req.user?.id ?? null,
       req.organizationScopeIds ?? undefined,
     );
   }
