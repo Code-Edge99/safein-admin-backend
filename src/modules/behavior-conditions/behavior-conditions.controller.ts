@@ -96,14 +96,6 @@ export class BehaviorConditionsController {
     return this.behaviorConditionsService.update(id, updateDto, req.organizationScopeIds ?? undefined);
   }
 
-  @Patch(':id/toggle-active')
-  @ApiOperation({ summary: '행동 조건 활성/비활성 토글' })
-  @ApiParam({ name: 'id', description: '조건 ID' })
-  @ApiResponse({ status: 200, description: '상태 변경 성공', type: BehaviorConditionResponseDto })
-  async toggleActive(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<BehaviorConditionResponseDto> {
-    return this.behaviorConditionsService.toggleActive(id, req.organizationScopeIds ?? undefined);
-  }
-
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: '행동 조건 삭제' })

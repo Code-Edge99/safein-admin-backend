@@ -24,11 +24,6 @@ export enum DayOfWeek {
   SUNDAY = 'SUNDAY',
 }
 
-export enum TimePolicyStatus {
-  ACTIVE = 'ACTIVE',
-  INACTIVE = 'INACTIVE',
-}
-
 export class TimeSlotDto {
   @ApiProperty({ description: '시작 시간 (HH:MM 형식)', example: '09:00' })
   @IsString()
@@ -147,10 +142,6 @@ export class CreateTimePolicyDto {
   @IsOptional()
   allowOutsideHours?: boolean;
 
-  @ApiPropertyOptional({ description: '상태', enum: TimePolicyStatus, default: TimePolicyStatus.ACTIVE })
-  @IsEnum(TimePolicyStatus)
-  @IsOptional()
-  status?: TimePolicyStatus;
 }
 
 export class UpdateTimePolicyDto extends PartialType(CreateTimePolicyDto) {}
@@ -173,9 +164,6 @@ export class TimePolicyResponseDto {
 
   @ApiProperty({ description: '시간대 외 제어 허용' })
   allowOutsideHours: boolean;
-
-  @ApiProperty({ description: '상태' })
-  status: string;
 
   @ApiPropertyOptional({ description: '조직 정보' })
   organization?: {
@@ -217,11 +205,6 @@ export class TimePolicyFilterDto {
   @IsString()
   @IsOptional()
   workTypeId?: string;
-
-  @ApiPropertyOptional({ description: '상태', enum: TimePolicyStatus })
-  @IsEnum(TimePolicyStatus)
-  @IsOptional()
-  status?: TimePolicyStatus;
 
   @ApiPropertyOptional({ description: '페이지 번호', default: 1 })
   @IsNumber()

@@ -1613,7 +1613,7 @@ export class DashboardService {
             include: {
               zones: {
                 include: {
-                  zone: { select: { id: true, name: true, type: true, description: true, isActive: true, deletedAt: true } },
+                  zone: { select: { id: true, name: true, type: true, description: true, deletedAt: true } },
                 },
               },
               timePolicies: {
@@ -1644,7 +1644,7 @@ export class DashboardService {
             include: {
               zones: {
                 include: {
-                  zone: { select: { id: true, name: true, type: true, description: true, isActive: true, deletedAt: true } },
+                  zone: { select: { id: true, name: true, type: true, description: true, deletedAt: true } },
                 },
               },
               timePolicies: {
@@ -1668,7 +1668,7 @@ export class DashboardService {
 
     const assignedPolicyIds = new Set(assignedPolicies.map((item) => item.policyId));
     const mergedPolicies = [
-      ...assignedPolicies.map((item) => item.policy),
+      ...(assignedPolicies as Array<{ policy: any }>).map((item) => item.policy),
       ...(workTypePolicy ? [workTypePolicy] : []),
     ];
 
