@@ -248,14 +248,13 @@ export class DashboardService {
       }),
       this.prisma.zone.count({
         where: {
-          isActive: true,
           deletedAt: null,
           ...(scopeOrganizationIds
             ? {
                 organizationId: { in: scopeOrganizationIds },
               }
             : {}),
-        } as any,
+        },
       }),
       this.prisma.controlLog.count({
         where: {
