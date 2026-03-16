@@ -7,7 +7,6 @@ import {
   IsNumber,
   IsArray,
   ValidateNested,
-  IsBoolean,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -99,10 +98,6 @@ export class CreateZoneDto {
   @IsOptional()
   groupId?: string;
 
-  @ApiPropertyOptional({ description: '활성 상태', default: true })
-  @IsBoolean()
-  @IsOptional()
-  isActive?: boolean;
 }
 
 export class UpdateZoneDto extends PartialType(CreateZoneDto) {}
@@ -150,9 +145,6 @@ export class ZoneResponseDto {
   @ApiPropertyOptional({ description: '그룹 ID' })
   groupId?: string;
 
-  @ApiProperty({ description: '활성 상태' })
-  isActive: boolean;
-
   @ApiPropertyOptional({ description: '조직 정보' })
   organization?: {
     id: string;
@@ -192,10 +184,6 @@ export class ZoneFilterDto {
   @IsString()
   @IsOptional()
   workTypeId?: string;
-
-  @ApiPropertyOptional({ description: '활성 상태' })
-  @IsOptional()
-  isActive?: boolean;
 
   @ApiPropertyOptional({ description: '페이지 번호', default: 1 })
   @IsNumber()

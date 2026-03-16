@@ -107,14 +107,6 @@ export class ZonesController {
     return this.zonesService.update(id, updateZoneDto, req.organizationScopeIds ?? undefined);
   }
 
-  @Patch(':id/toggle-active')
-  @ApiOperation({ summary: '구역 활성/비활성 토글' })
-  @ApiParam({ name: 'id', description: '구역 ID' })
-  @ApiResponse({ status: 200, description: '상태 변경 성공', type: ZoneResponseDto })
-  async toggleActive(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<ZoneResponseDto> {
-    return this.zonesService.toggleActive(id, req.organizationScopeIds ?? undefined);
-  }
-
   @Post(':id/check-point')
   @ApiOperation({ summary: '좌표가 구역 내 포함 여부 확인' })
   @ApiParam({ name: 'id', description: '구역 ID' })

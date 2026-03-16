@@ -74,7 +74,6 @@ export class TimePoliciesService {
         days,
         organizationId,
         workTypeId,
-        isActive: rest.status !== 'INACTIVE',
         ...(normalizedExcludePeriods.length > 0 && {
           excludePeriods: {
             create: normalizedExcludePeriods.map((ep) => ({
@@ -103,7 +102,7 @@ export class TimePoliciesService {
     filter: TimePolicyFilterDto,
     scopeOrganizationIds?: string[],
   ): Promise<TimePolicyListResponseDto> {
-    const { search, organizationId, workTypeId, status, page = 1, limit = 20 } = filter;
+    const { search, organizationId, workTypeId, page = 1, limit = 20 } = filter;
     const skip = (page - 1) * limit;
 
     const where: any = {};
@@ -121,10 +120,6 @@ export class TimePoliciesService {
 
     if (workTypeId) {
       where.workTypeId = workTypeId;
-    }
-
-    if (status) {
-      where.isActive = status === 'ACTIVE';
     }
 
     const [policies, total] = await Promise.all([
@@ -187,7 +182,6 @@ export class TimePoliciesService {
     const policies = await this.prisma.timePolicy.findMany({
       where: {
         organizationId,
-        isActive: true,
       },
       include: {
         organization: {
@@ -213,7 +207,6 @@ export class TimePoliciesService {
     const {
       organizationId,
       workTypeId,
-      status,
       excludePeriods,
       timeSlots,
       startTime,
@@ -257,10 +250,6 @@ export class TimePoliciesService {
       updateData.startTime = this.parseTimeToDate(normalizedSlot.startTime);
       updateData.endTime = this.parseTimeToDate(normalizedSlot.endTime);
       updateData.days = normalizedSlot.days;
-    }
-
-    if (status !== undefined) {
-      updateData.isActive = status === 'ACTIVE';
     }
 
     // excludePeriods가 있으면 기존 것 모두 삭제 후 새로 생성
@@ -345,49 +334,13 @@ export class TimePoliciesService {
     await this.controlPoliciesService.notifyPoliciesChanged(impactedPolicyIds, 'update');
   }
 
-  async toggleActive(id: string, scopeOrganizationIds?: string[]): Promise<TimePolicyResponseDto> {
-    const policy = await this.prisma.timePolicy.findUnique({
-      where: { id },
-    });
-
-    if (!policy) {
-      throw new NotFoundException('시간 정책을 찾을 수 없습니다.');
-    }
-
-    this.assertPolicyInScope(policy, scopeOrganizationIds);
-
-    const updated = await this.prisma.timePolicy.update({
-      where: { id },
-      data: { isActive: !policy.isActive },
-      include: {
-        organization: {
-          select: { id: true, name: true },
-        },
-        workType: {
-          select: { id: true, name: true },
-        },
-      },
-    });
-
-    const impactedPolicies = await this.prisma.controlPolicyTimePolicy.findMany({
-      where: { timePolicyId: id },
-      select: { policyId: true },
-    });
-    await this.controlPoliciesService.notifyPoliciesChanged(
-      impactedPolicies.map((item) => item.policyId),
-      'update',
-    );
-
-    return this.toResponseDto(updated);
-  }
-
   async isTimeActive(policyId: string, checkTime?: Date, scopeOrganizationIds?: string[]): Promise<boolean> {
     const policy = await this.prisma.timePolicy.findUnique({
       where: { id: policyId },
       include: { excludePeriods: true },
     });
 
-    if (!policy || !policy.isActive) {
+    if (!policy) {
       return false;
     }
 
@@ -433,15 +386,9 @@ export class TimePoliciesService {
   }
 
   async getStats(scopeOrganizationIds?: string[]): Promise<TimePolicyStatsDto> {
-    const [totalPolicies, activePolicies, byOrgResult] = await Promise.all([
+    const [totalPolicies, byOrgResult] = await Promise.all([
       this.prisma.timePolicy.count({
         where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
-      }),
-      this.prisma.timePolicy.count({
-        where: {
-          isActive: true,
-          ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
-        },
       }),
       this.prisma.timePolicy.groupBy({
         by: ['organizationId'],
@@ -467,7 +414,7 @@ export class TimePoliciesService {
 
     return {
       totalPolicies,
-      activePolicies,
+      activePolicies: totalPolicies,
       byOrganization,
     };
   }

@@ -88,7 +88,7 @@ export class ZonesService {
   }
 
   async findAll(filter: ZoneFilterDto, scopeOrganizationIds?: string[]): Promise<ZoneListResponseDto> {
-    const { search, type, organizationId, workTypeId, isActive, page = 1, limit = 20 } = filter;
+    const { search, type, organizationId, workTypeId, page = 1, limit = 20 } = filter;
     const skip = (page - 1) * limit;
 
     const where: any = { deletedAt: null };
@@ -110,10 +110,6 @@ export class ZonesService {
 
     if (workTypeId) {
       where.workTypeId = workTypeId;
-    }
-
-    if (isActive !== undefined) {
-      where.isActive = isActive;
     }
 
     const [zones, total] = await Promise.all([
@@ -174,7 +170,6 @@ export class ZonesService {
     const zones = await this.prisma.zone.findMany({
       where: {
         organizationId,
-        isActive: true,
         deletedAt: null,
       },
       include: {
@@ -307,7 +302,6 @@ export class ZonesService {
       await tx.zone.update({
         where: { id },
         data: {
-          isActive: false,
           deletedAt: new Date(),
         },
       });
@@ -319,34 +313,6 @@ export class ZonesService {
     });
 
     await this.controlPoliciesService.notifyPoliciesChanged(impactedPolicyIds, 'update');
-  }
-
-  async toggleActive(id: string, scopeOrganizationIds?: string[]): Promise<ZoneResponseDto> {
-    const zone = await this.findOne(id, scopeOrganizationIds);
-
-    const updated = await this.prisma.zone.update({
-      where: { id },
-      data: { isActive: !zone.isActive },
-      include: {
-        organization: {
-          select: { id: true, name: true },
-        },
-        workType: {
-          select: { id: true, name: true },
-        },
-      },
-    });
-
-    const impactedPolicies = await this.prisma.controlPolicyZone.findMany({
-      where: { zoneId: id },
-      select: { policyId: true },
-    });
-    await this.controlPoliciesService.notifyPoliciesChanged(
-      impactedPolicies.map((item) => item.policyId),
-      'update',
-    );
-
-    return this.toResponseDto(updated);
   }
 
   async checkPointInZone(
@@ -380,16 +346,9 @@ export class ZonesService {
   }
 
   async getZoneStats(scopeOrganizationIds?: string[]): Promise<ZoneStatsDto> {
-    const [totalZones, activeZones, byTypeResult] = await Promise.all([
+    const [totalZones, byTypeResult] = await Promise.all([
       this.prisma.zone.count({
         where: {
-          deletedAt: null,
-          ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
-        },
-      }),
-      this.prisma.zone.count({
-        where: {
-          isActive: true,
           deletedAt: null,
           ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
         },
@@ -411,7 +370,7 @@ export class ZonesService {
 
     return {
       totalZones,
-      activeZones,
+      activeZones: totalZones,
       byType,
     };
   }

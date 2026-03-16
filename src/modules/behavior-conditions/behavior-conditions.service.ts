@@ -94,7 +94,6 @@ export class BehaviorConditionsService {
       search,
       organizationId,
       workTypeId,
-      isActive,
       enableDistanceCondition,
       enableStepsCondition,
       enableSpeedCondition,
@@ -130,10 +129,6 @@ export class BehaviorConditionsService {
 
     if (workTypeId) {
       where.workTypeId = workTypeId;
-    }
-
-    if (isActive !== undefined) {
-      where.isActive = isActive;
     }
 
     const [conditions, total] = await Promise.all([
@@ -188,7 +183,6 @@ export class BehaviorConditionsService {
     const conditions = await this.prisma.behaviorCondition.findMany({
       where: {
         organizationId,
-        isActive: true,
       },
       include: {
         organization: { select: { id: true, name: true } },
@@ -307,47 +301,10 @@ export class BehaviorConditionsService {
     await this.controlPoliciesService.notifyPoliciesChanged(impactedPolicyIds, 'update');
   }
 
-  async toggleActive(id: string, scopeOrganizationIds?: string[]): Promise<BehaviorConditionResponseDto> {
-    const condition = await this.prisma.behaviorCondition.findUnique({ where: { id } });
-
-    if (!condition) {
-      throw new NotFoundException('행동 조건을 찾을 수 없습니다.');
-    }
-
-    this.assertConditionInScope(condition, scopeOrganizationIds);
-
-    const updated = await this.prisma.behaviorCondition.update({
-      where: { id },
-      data: { isActive: !condition.isActive },
-      include: {
-        organization: { select: { id: true, name: true } },
-        workType: { select: { id: true, name: true } },
-        _count: { select: { policyBehaviors: true } },
-      },
-    });
-
-    const impactedPolicies = await this.prisma.controlPolicyBehavior.findMany({
-      where: { behaviorConditionId: id },
-      select: { policyId: true },
-    });
-    await this.controlPoliciesService.notifyPoliciesChanged(
-      impactedPolicies.map((item) => item.policyId),
-      'update',
-    );
-
-    return this.toResponseDto(updated);
-  }
-
   async getStats(scopeOrganizationIds?: string[]): Promise<BehaviorConditionStatsDto> {
-    const [totalConditions, activeConditions, thresholdStats] = await Promise.all([
+    const [totalConditions, thresholdStats] = await Promise.all([
       this.prisma.behaviorCondition.count({
         where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
-      }),
-      this.prisma.behaviorCondition.count({
-        where: {
-          isActive: true,
-          ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
-        },
       }),
       this.prisma.behaviorCondition.findMany({
         where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
@@ -366,7 +323,7 @@ export class BehaviorConditionsService {
 
     return {
       totalConditions,
-      activeConditions,
+      activeConditions: totalConditions,
       byType,
     };
   }

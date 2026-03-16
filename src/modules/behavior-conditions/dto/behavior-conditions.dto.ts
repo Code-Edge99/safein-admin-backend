@@ -63,10 +63,6 @@ export class CreateBehaviorConditionDto {
   @IsOptional()
   workTypeId?: string;
 
-  @ApiPropertyOptional({ description: '활성 상태', default: true })
-  @IsBoolean()
-  @IsOptional()
-  isActive?: boolean;
 }
 
 export class UpdateBehaviorConditionDto extends PartialType(CreateBehaviorConditionDto) {}
@@ -98,9 +94,6 @@ export class BehaviorConditionResponseDto {
 
   @ApiPropertyOptional({ description: '설명' })
   description?: string;
-
-  @ApiProperty({ description: '활성 상태' })
-  isActive: boolean;
 
   @ApiPropertyOptional({ description: '조직 정보' })
   organization?: {
@@ -157,10 +150,6 @@ export class BehaviorConditionFilterDto {
   @IsString()
   @IsOptional()
   workTypeId?: string;
-
-  @ApiPropertyOptional({ description: '활성 상태' })
-  @IsOptional()
-  isActive?: boolean;
 
   @ApiPropertyOptional({ description: '페이지 번호', default: 1 })
   @IsNumber()

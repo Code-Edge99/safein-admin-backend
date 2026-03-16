@@ -1,10 +1,12 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import { AuditAction } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
 import { decryptLocation } from '../../common/security/location-crypto';
 import {
   formatKstDateKey,
   formatKstMonthDay,
+  formatKstTimestampString,
   getKstDaysAgoStart,
   getKstMonthStart,
   getKstStartOfDay,
@@ -12,9 +14,12 @@ import {
 } from '../../common/utils/kst-time.util';
 import { findEmployeeByIdentifier, resolveEmployeePrimaryId } from '../../common/utils/employee-identifier.util';
 import { buildSiteReportItem, SiteReportTrendPoint } from './dashboard.mapper';
+import { ReaggregateDayDto } from './dto/reaggregate-day.dto';
 
 @Injectable()
 export class DashboardService {
+  private readonly logger = new Logger(DashboardService.name);
+
   constructor(private prisma: PrismaService) {}
 
   private static readonly COMPLIANCE_WEIGHTS = {
@@ -22,6 +27,25 @@ export class DashboardService {
     behavior: 1.2,
   } as const;
   private static readonly COMPLIANCE_DAILY_PENALTY = 3;
+  private static readonly KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+  private parseKstDateInput(dateText: string): Date {
+    const raw = String(dateText || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      throw new BadRequestException('date는 YYYY-MM-DD 형식이어야 합니다.');
+    }
+
+    const parsed = new Date(`${raw}T00:00:00+09:00`);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException('date가 유효하지 않습니다.');
+    }
+
+    return getKstStartOfDay(parsed);
+  }
+
+  private getKstHourFromUtc(value: Date): number {
+    return new Date(value.getTime() + DashboardService.KST_OFFSET_MS).getUTCHours();
+  }
 
   private isPackageNameLike(value?: string | null): boolean {
     if (!value) return false;
@@ -224,14 +248,13 @@ export class DashboardService {
       }),
       this.prisma.zone.count({
         where: {
-          isActive: true,
           deletedAt: null,
           ...(scopeOrganizationIds
             ? {
                 organizationId: { in: scopeOrganizationIds },
               }
             : {}),
-        } as any,
+        },
       }),
       this.prisma.controlLog.count({
         where: {
@@ -403,6 +426,323 @@ export class DashboardService {
     }
 
     return result;
+  }
+
+  async getDataFreshness(organizationId?: string, scopeOrganizationIds?: string[]) {
+    this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
+
+    const targetOrganizationIds = organizationId
+      ? await this.collectDescendantOrganizationIds(organizationId, scopeOrganizationIds)
+      : scopeOrganizationIds;
+
+    const controlLogScopeCondition = targetOrganizationIds
+      ? this.buildControlLogOrganizationIdsCondition(targetOrganizationIds)
+      : this.buildControlLogOrganizationScopeCondition(scopeOrganizationIds, organizationId);
+
+    const [latestRawLog, latestHourlyStat] = await Promise.all([
+      this.prisma.controlLog.findFirst({
+        where: controlLogScopeCondition ? { AND: [controlLogScopeCondition] } : undefined,
+        orderBy: { timestamp: 'desc' },
+        select: {
+          timestamp: true,
+          timestampKst: true,
+        },
+      }),
+      this.prisma.hourlyBlockStat.findFirst({
+        where: targetOrganizationIds
+          ? { organizationId: { in: targetOrganizationIds } }
+          : undefined,
+        orderBy: [{ date: 'desc' }, { hour: 'desc' }, { createdAt: 'desc' }],
+        select: {
+          date: true,
+          hour: true,
+        },
+      }),
+    ]);
+
+    const latestAggregatedAt = latestHourlyStat
+      ? new Date(latestHourlyStat.date.getTime() + latestHourlyStat.hour * 60 * 60 * 1000)
+      : null;
+
+    const lagMinutes = latestRawLog && latestAggregatedAt
+      ? Math.max(0, Math.floor((latestRawLog.timestamp.getTime() - latestAggregatedAt.getTime()) / 60000))
+      : null;
+
+    let status: 'no_raw_data' | 'aggregating' | 'healthy' | 'delayed' | 'recovery';
+    let statusLabel: string;
+
+    if (!latestRawLog) {
+      status = 'no_raw_data';
+      statusLabel = '원천 로그 없음';
+    } else if (!latestAggregatedAt) {
+      status = 'aggregating';
+      statusLabel = '초기 집계 중';
+    } else if ((lagMinutes ?? 0) <= 5) {
+      status = 'healthy';
+      statusLabel = '정상';
+    } else if ((lagMinutes ?? 0) <= 30) {
+      status = 'delayed';
+      statusLabel = '집계 지연';
+    } else {
+      status = 'recovery';
+      statusLabel = '보정/복구 필요';
+    }
+
+    return {
+      sourceOfTruth: 'ControlLog/AuditLog',
+      derivedData: 'OrganizationDailyStat/HourlyBlockStat',
+      message: '통계는 최신 이벤트 반영 지연 또는 보정 중일 수 있음(원천 로그 우선)',
+      sla: {
+        systemLogs: '실시간(수초~수분)',
+        dashboardStats: '준실시간(1~5분)',
+        policyChanges: '실시간',
+      },
+      status,
+      statusLabel,
+      aggregationLagMinutes: lagMinutes,
+      lastRawEventAt: latestRawLog
+        ? (latestRawLog.timestampKst || formatKstTimestampString(latestRawLog.timestamp))
+        : null,
+      lastAggregatedAt: latestAggregatedAt ? formatKstTimestampString(latestAggregatedAt) : null,
+      timezone: 'KST',
+    };
+  }
+
+  async reaggregateDay(
+    dto: ReaggregateDayDto,
+    accountId: string | null,
+    scopeOrganizationIds?: string[],
+  ) {
+    const targetDate = this.parseKstDateInput(dto.date);
+    const nextDate = new Date(targetDate.getTime() + 24 * 60 * 60 * 1000);
+
+    const targetOrganizationIds = dto.organizationId
+      ? await this.collectDescendantOrganizationIds(dto.organizationId, scopeOrganizationIds)
+      : scopeOrganizationIds;
+
+    if (!targetOrganizationIds || targetOrganizationIds.length === 0) {
+      throw new BadRequestException('재집계 대상 조직이 없습니다. organizationId를 지정하거나 권한 범위를 확인해주세요.');
+    }
+
+    const results: any[] = [];
+
+    for (const organizationId of targetOrganizationIds) {
+      const controlLogScopeCondition = this.buildControlLogOrganizationIdsCondition([organizationId]);
+      const logs = await this.prisma.controlLog.findMany({
+        where: {
+          timestamp: { gte: targetDate, lt: nextDate },
+          ...(controlLogScopeCondition ? { AND: [controlLogScopeCondition] } : {}),
+        },
+        select: {
+          timestamp: true,
+          type: true,
+          action: true,
+        },
+      });
+
+      const previousDaily = await this.prisma.organizationDailyStat.findUnique({
+        where: {
+          organizationId_date: {
+            organizationId,
+            date: targetDate,
+          },
+        },
+      });
+
+      const previousHourly = await this.prisma.hourlyBlockStat.findMany({
+        where: {
+          organizationId,
+          date: targetDate,
+        },
+        orderBy: { hour: 'asc' },
+      });
+
+      const hourlyMap = new Map<number, {
+        totalEvents: number;
+        allowedEvents: number;
+        totalBlocks: number;
+        behaviorBlocks: number;
+        appControlBlocks: number;
+      }>();
+
+      for (let hour = 0; hour < 24; hour += 1) {
+        hourlyMap.set(hour, {
+          totalEvents: 0,
+          allowedEvents: 0,
+          totalBlocks: 0,
+          behaviorBlocks: 0,
+          appControlBlocks: 0,
+        });
+      }
+
+      let totalEvents = 0;
+      let allowedEvents = 0;
+      let totalBlocks = 0;
+      let behaviorBlocks = 0;
+      let appControlBlocks = 0;
+
+      for (const log of logs) {
+        const isBlocked = log.action === 'blocked';
+        const isAllowed = log.action === 'allowed';
+        const isBehavior = log.type === 'behavior';
+        const isAppControl = log.type === 'app_control';
+
+        totalEvents += 1;
+        if (isAllowed) {
+          allowedEvents += 1;
+        }
+        if (isBlocked) {
+          totalBlocks += 1;
+        }
+        if (isBlocked && isBehavior) {
+          behaviorBlocks += 1;
+        }
+        if (isBlocked && isAppControl) {
+          appControlBlocks += 1;
+        }
+
+        const hour = this.getKstHourFromUtc(log.timestamp);
+        const bucket = hourlyMap.get(hour)!;
+        bucket.totalEvents += 1;
+        if (isAllowed) {
+          bucket.allowedEvents += 1;
+        }
+        if (isBlocked) {
+          bucket.totalBlocks += 1;
+        }
+        if (isBlocked && isBehavior) {
+          bucket.behaviorBlocks += 1;
+        }
+        if (isBlocked && isAppControl) {
+          bucket.appControlBlocks += 1;
+        }
+      }
+
+      const [totalEmployees, activeDevices] = await Promise.all([
+        this.prisma.employee.count({ where: { organizationId, status: 'ACTIVE' } }),
+        this.prisma.device.count({ where: { organizationId, status: 'NORMAL' } }),
+      ]);
+
+      const complianceRate = totalEvents > 0
+        ? Number(((allowedEvents / totalEvents) * 100).toFixed(2))
+        : 100;
+
+      await this.prisma.$transaction(async (tx) => {
+        await tx.organizationDailyStat.upsert({
+          where: {
+            organizationId_date: {
+              organizationId,
+              date: targetDate,
+            },
+          },
+          update: {
+            totalEmployees,
+            activeDevices,
+            totalEvents,
+            allowedEvents,
+            totalBlocks,
+            behaviorBlocks,
+            appControlBlocks,
+            complianceRate,
+          },
+          create: {
+            organizationId,
+            date: targetDate,
+            totalEmployees,
+            activeDevices,
+            totalEvents,
+            allowedEvents,
+            totalBlocks,
+            behaviorBlocks,
+            appControlBlocks,
+            complianceRate,
+          },
+        });
+
+        await tx.hourlyBlockStat.deleteMany({
+          where: {
+            organizationId,
+            date: targetDate,
+          },
+        });
+
+        await tx.hourlyBlockStat.createMany({
+          data: Array.from(hourlyMap.entries()).map(([hour, value]) => ({
+            organizationId,
+            date: targetDate,
+            hour,
+            totalEvents: value.totalEvents,
+            allowedEvents: value.allowedEvents,
+            totalBlocks: value.totalBlocks,
+            behaviorBlocks: value.behaviorBlocks,
+            appControlBlocks: value.appControlBlocks,
+          })),
+        });
+
+        await tx.auditLog.create({
+          data: {
+            accountId,
+            organizationId,
+            action: AuditAction.UPDATE,
+            resourceType: 'stats_reaggregation',
+            resourceId: `${organizationId}:${formatKstDateKey(targetDate)}`,
+            resourceName: '조직/일자 통계 재집계',
+            changesBefore: {
+              daily: previousDaily
+                ? {
+                    totalEvents: previousDaily.totalEvents,
+                    allowedEvents: previousDaily.allowedEvents,
+                    totalBlocks: previousDaily.totalBlocks,
+                    behaviorBlocks: previousDaily.behaviorBlocks,
+                    appControlBlocks: previousDaily.appControlBlocks,
+                    complianceRate: previousDaily.complianceRate,
+                  }
+                : null,
+              hourlyTotalBlocks: previousHourly.reduce((sum, row) => sum + row.totalBlocks, 0),
+            },
+            changesAfter: {
+              daily: {
+                totalEvents,
+                allowedEvents,
+                totalBlocks,
+                behaviorBlocks,
+                appControlBlocks,
+                complianceRate,
+              },
+              hourlyTotalBlocks: Array.from(hourlyMap.values()).reduce((sum, row) => sum + row.totalBlocks, 0),
+              meta: {
+                reaggregatedAt: new Date().toISOString(),
+                timezone: 'KST',
+                sourceOfTruth: 'ControlLog',
+              },
+            },
+          },
+        });
+      });
+
+      results.push({
+        organizationId,
+        date: formatKstDateKey(targetDate),
+        totalEvents,
+        totalBlocks,
+        allowedEvents,
+        behaviorBlocks,
+        appControlBlocks,
+        complianceRate,
+      });
+    }
+
+    this.logger.log(
+      `통계 재집계 완료(date=${dto.date}, organizations=${results.length})`,
+    );
+
+    return {
+      success: true,
+      sourceOfTruth: 'ControlLog',
+      derivedTargets: ['OrganizationDailyStat', 'HourlyBlockStat'],
+      date: dto.date,
+      results,
+    };
   }
 
   async getZoneViolationData(startDate?: string, endDate?: string, scopeOrganizationIds?: string[]) {
@@ -1272,7 +1612,7 @@ export class DashboardService {
             include: {
               zones: {
                 include: {
-                  zone: { select: { id: true, name: true, type: true, description: true, isActive: true, deletedAt: true } },
+                  zone: { select: { id: true, name: true, type: true, description: true, deletedAt: true } },
                 },
               },
               timePolicies: {
@@ -1303,7 +1643,7 @@ export class DashboardService {
             include: {
               zones: {
                 include: {
-                  zone: { select: { id: true, name: true, type: true, description: true, isActive: true, deletedAt: true } },
+                  zone: { select: { id: true, name: true, type: true, description: true, deletedAt: true } },
                 },
               },
               timePolicies: {
@@ -1327,7 +1667,7 @@ export class DashboardService {
 
     const assignedPolicyIds = new Set(assignedPolicies.map((item) => item.policyId));
     const mergedPolicies = [
-      ...assignedPolicies.map((item) => item.policy),
+      ...(assignedPolicies as Array<{ policy: any }>).map((item) => item.policy),
       ...(workTypePolicy ? [workTypePolicy] : []),
     ];
 
