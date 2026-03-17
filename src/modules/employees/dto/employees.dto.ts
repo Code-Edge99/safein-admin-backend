@@ -190,6 +190,9 @@ export class EmployeeResponseDto {
 
   @ApiProperty({ description: '수정일시' })
   updatedAt: Date;
+
+  @ApiPropertyOptional({ description: 'MDM 인증 대기 중인 UDID (iOS)' })
+  pendingMdmUdid?: string;
 }
 
 export class EmployeeDetailDto extends EmployeeResponseDto {

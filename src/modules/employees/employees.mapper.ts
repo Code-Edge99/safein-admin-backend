@@ -19,5 +19,6 @@ export function toEmployeeResponseDto(employee: any): EmployeeResponseDto {
     memo: employee.memo,
     createdAt: employee.createdAt,
     updatedAt: employee.updatedAt,
+    pendingMdmUdid: employee.pendingMdmUdid ?? undefined,
   };
 }
