@@ -84,6 +84,21 @@ export class PermissionsService {
   constructor(private prisma: PrismaService) {}
 
   private async syncPermissionCatalog() {
+    const existingPermissions = await this.prisma.permission.findMany({
+      where: {
+        code: {
+          in: PERMISSION_CATALOG.map((permission) => permission.code),
+        },
+      },
+      select: {
+        code: true,
+      },
+    });
+
+    const existingPermissionCodes = new Set(
+      existingPermissions.map((permission) => permission.code),
+    );
+
     const synced = await this.prisma.$transaction(
       PERMISSION_CATALOG.map((permission) =>
         this.prisma.permission.upsert({
@@ -111,32 +126,15 @@ export class PermissionsService {
       map.set(permission.code, permission);
     });
 
-    const rolePermissionRows = await this.prisma.rolePermission.findMany({
-      where: {
-        permissionId: {
-          in: synced.map((permission) => permission.id),
-        },
-      },
-      select: {
-        role: true,
-        permissionId: true,
-      },
-    });
-
-    const existingRolePermissionSet = new Set(
-      rolePermissionRows.map((row) => `${row.role}:${row.permissionId}`),
-    );
-
     const missingDefaults: Array<{ role: any; permissionId: string }> = [];
 
     for (const permission of synced) {
+      if (existingPermissionCodes.has(permission.code)) {
+        continue;
+      }
+
       for (const role of ['SUPER_ADMIN', 'SITE_ADMIN', 'VIEWER'] as const) {
         if (!getDefaultEnabled(permission.code, role)) {
-          continue;
-        }
-
-        const key = `${role}:${permission.id}`;
-        if (existingRolePermissionSet.has(key)) {
           continue;
         }
 
