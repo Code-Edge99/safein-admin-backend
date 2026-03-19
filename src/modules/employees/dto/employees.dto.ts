@@ -110,6 +110,13 @@ export class CreateEmployeeDto {
   @IsOptional()
   @IsDateString()
   hireDate?: string;
+
+  @ApiPropertyOptional({ description: '초기 비밀번호 (앱 로그인 시 사용)', minLength: 8 })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^.{8,}$/, { message: '비밀번호는 최소 8자 이상이어야 합니다.' })
+  password?: string;
 }
 
 export class UpdateEmployeeDto extends PartialType(CreateEmployeeDto) {

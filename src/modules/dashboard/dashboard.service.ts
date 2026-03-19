@@ -623,9 +623,14 @@ export class DashboardService {
         this.prisma.device.count({ where: { organizationId, status: 'NORMAL' } }),
       ]);
 
-      const complianceRate = totalEvents > 0
-        ? Number(((allowedEvents / totalEvents) * 100).toFixed(2))
-        : 100;
+      // 화면 표시와 동일한 가중치 공식 사용 (단일 날짜 재집계이므로 activeDays=1)
+      const activeDays = totalBlocks > 0 || behaviorBlocks > 0 || appControlBlocks > 0 ? 1 : 0;
+      const complianceRate = this.calculateWeightedComplianceRate({
+        activeDays,
+        appControlBlocks,
+        behaviorBlocks,
+        rounded: false,
+      });
 
       await this.prisma.$transaction(async (tx) => {
         await tx.organizationDailyStat.upsert({
@@ -988,6 +993,7 @@ export class DashboardService {
         allowedAppBlocks: 0,
         zoneViolations: 0,
         topBlockedApp: null,
+        topBlockedAppFreq: new Map<string, number>(),
         dailyStats: [],
       });
     });
@@ -1006,8 +1012,21 @@ export class DashboardService {
       existing.allowedAppBlocks += stat.appControlBlocks;
       existing.zoneViolations += stat.zoneViolations;
       existing.dailyStats.push(stat);
-      if (!existing.topBlockedApp && stat.topBlockedApp) {
-        existing.topBlockedApp = stat.topBlockedApp;
+      // 30일 누적 기준으로 가장 빈번한 앱을 선택하기 위해 빈도 집계
+      if (stat.topBlockedApp) {
+        existing.topBlockedAppFreq.set(
+          stat.topBlockedApp,
+          (existing.topBlockedAppFreq.get(stat.topBlockedApp) || 0) + 1,
+        );
+      }
+    });
+
+    // 빈도 집계 결과로 topBlockedApp 결정
+    empMap.forEach((emp: any) => {
+      const freq = emp.topBlockedAppFreq as Map<string, number>;
+      if (freq.size > 0) {
+        emp.topBlockedApp = Array.from(freq.entries())
+          .sort((a, b) => b[1] - a[1])[0][0];
       }
     });
 
@@ -1019,9 +1038,12 @@ export class DashboardService {
     });
 
     const total = aggregated.length;
+    // 상세 페이지와 동일하게 실제 날짜 기준으로 7일/14일 범위 계산
+    const now7Ago = getKstDaysAgoStart(7);
+    const now14Ago = getKstDaysAgoStart(14);
     const paged = aggregated.slice(skip, skip + limit).map((emp) => {
-      const recentStats = emp.dailyStats.slice(0, 7);
-      const olderStats = emp.dailyStats.slice(7, 14);
+      const recentStats = emp.dailyStats.filter((s: any) => s.date >= now7Ago);
+      const olderStats = emp.dailyStats.filter((s: any) => s.date >= now14Ago && s.date < now7Ago);
       const recentTotal = recentStats.reduce((sum: number, s: any) => sum + s.totalBlocks, 0);
       const olderTotal = olderStats.reduce((sum: number, s: any) => sum + s.totalBlocks, 0);
 
@@ -1060,7 +1082,8 @@ export class DashboardService {
         totalBlocks: emp.totalBlocks,
         last7DaysBlocks: recentTotal,
         trend,
-        blockedAppsCount: emp.allowedAppBlocks,
+        // topBlockedAppFreq에 고유 패키지명이 집계됨 → 상세 페이지의 uniqueAppCount와 기준 통일
+        blockedAppsCount: emp.topBlockedAppFreq.size,
         topBlockedApp: packageNameToAppName.get(emp.topBlockedApp || '') || emp.topBlockedApp || '-',
         complianceRate,
         riskLevel,
@@ -1898,6 +1921,7 @@ export class DashboardService {
           || stat.totalBlocks > 0
           || stat.behaviorBlocks > 0
           || stat.appControlBlocks > 0
+          || (stat as any).zoneViolations > 0
         );
       }).length;
       const complianceRate = this.calculateWeightedComplianceRate({

@@ -204,6 +204,20 @@ export class EmployeesService {
       throw error;
     }
 
+    // 초기 비밀번호가 제공된 경우 EmployeeAccount 생성
+    if (dto.password) {
+      const passwordHash = await bcrypt.hash(dto.password, 10);
+      await this.prisma.employeeAccount.upsert({
+        where: { employeeId: employee.id },
+        update: { passwordHash, isActive: true },
+        create: {
+          employeeId: employee.id,
+          passwordHash,
+          isActive: true,
+        },
+      });
+    }
+
     return this.toResponseDto(employee);
   }
 
