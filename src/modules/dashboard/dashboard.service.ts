@@ -1755,11 +1755,14 @@ export class DashboardService {
     return `${hours}:${minutes}`;
   }
 
-  async getSiteReports(scopeOrganizationIds?: string[]) {
+  async getSiteReports(days = 7, scopeOrganizationIds?: string[]) {
     const endDate = new Date();
-    const currentStartDate = getKstDaysAgoStart(7, endDate);
+    const safeDays = Number.isFinite(days)
+      ? Math.min(Math.max(Math.trunc(days), 1), 30)
+      : 7;
+    const currentStartDate = getKstDaysAgoStart(safeDays - 1, endDate);
     const trendStartDate = getKstDaysAgoStart(29, endDate);
-    const prevWeekStartDate = getKstDaysAgoStart(14, endDate);
+    const previousRangeStartDate = getKstDaysAgoStart((safeDays * 2) - 1, endDate);
 
     // 회사(root) 제외 모든 조직 조회 (현장, 부서, 팀, 현장조 등)
     const sites = await this.prisma.organization.findMany({
@@ -1823,7 +1826,7 @@ export class DashboardService {
       this.prisma.organizationDailyStat.findMany({
         where: {
           organizationId: { in: relevantOrganizationIds },
-          date: { gte: prevWeekStartDate, lte: endDate },
+          date: { gte: previousRangeStartDate, lte: endDate },
         },
         orderBy: { date: 'asc' },
       }),
@@ -1850,15 +1853,39 @@ export class DashboardService {
         where: {
           action: 'blocked',
           timestamp: { gte: currentStartDate, lte: endDate },
-          organizationId: { in: relevantOrganizationIds },
+          OR: [
+            { organizationId: { in: relevantOrganizationIds } },
+            {
+              AND: [
+                { organizationId: null },
+                { device: { organizationId: { in: relevantOrganizationIds } } },
+              ],
+            },
+          ],
         },
         select: {
           organizationId: true,
+          timestamp: true,
+          type: true,
           appName: true,
           zoneId: true,
+          device: {
+            select: {
+              organizationId: true,
+            },
+          },
           zone: { select: { name: true } },
           policy: {
             select: {
+              behaviors: {
+                select: {
+                  behaviorCondition: {
+                    select: {
+                      name: true,
+                    },
+                  },
+                },
+              },
               _count: {
                 select: {
                   timePolicies: true,
@@ -1887,13 +1914,14 @@ export class DashboardService {
 
     const rawLogsByOrg = new Map<string, typeof rawLogs>();
     for (const log of rawLogs) {
-      if (!log.organizationId) {
+      const effectiveOrganizationId = log.organizationId || log.device?.organizationId;
+      if (!effectiveOrganizationId) {
         continue;
       }
 
-      const bucket = rawLogsByOrg.get(log.organizationId) || [];
+      const bucket = rawLogsByOrg.get(effectiveOrganizationId) || [];
       bucket.push(log);
-      rawLogsByOrg.set(log.organizationId, bucket);
+      rawLogsByOrg.set(effectiveOrganizationId, bucket);
     }
 
     const trendDates: string[] = [];
@@ -1909,44 +1937,8 @@ export class DashboardService {
       const orgStats = subtreeIds.flatMap((subtreeId) => dailyStatsByOrg.get(subtreeId) || []);
       const trendStats = orgStats.filter((s) => s.date >= trendStartDate);
 
-      const currentStats = trendStats.filter((s) => s.date >= currentStartDate);
-
-      const totalViolations = currentStats.reduce((sum, s) => sum + s.totalBlocks, 0);
-      const behaviorBlocks = currentStats.reduce((sum, s) => sum + s.behaviorBlocks, 0);
-      const allowedAppBlocks = currentStats.reduce((sum, s) => sum + s.appControlBlocks, 0);
-      const activeDays = currentStats.filter((stat) => {
-        const statTotalEvents = (stat as any).totalEvents ?? stat.totalBlocks;
-        return (
-          statTotalEvents > 0
-          || stat.totalBlocks > 0
-          || stat.behaviorBlocks > 0
-          || stat.appControlBlocks > 0
-          || (stat as any).zoneViolations > 0
-        );
-      }).length;
-      const complianceRate = this.calculateWeightedComplianceRate({
-        activeDays,
-        appControlBlocks: allowedAppBlocks,
-        behaviorBlocks,
-        rounded: false,
-      });
-
-      const prevStats = orgStats.filter((s) => s.date >= prevWeekStartDate && s.date < currentStartDate);
+      const prevStats = orgStats.filter((s) => s.date >= previousRangeStartDate && s.date < currentStartDate);
       const prevTotal = prevStats.reduce((sum, s) => sum + s.totalBlocks, 0);
-
-      const hourlyStats = subtreeIds.flatMap((subtreeId) => hourlyStatsByOrg.get(subtreeId) || []);
-
-      let peakHour = '09:00';
-      let peakBlocks = 0;
-      const hourlyAgg = new Map<number, number>();
-      hourlyStats.forEach((h) => {
-        const cur = (hourlyAgg.get(h.hour) || 0) + h.totalBlocks;
-        hourlyAgg.set(h.hour, cur);
-        if (cur > peakBlocks) {
-          peakBlocks = cur;
-          peakHour = `${String(h.hour).padStart(2, '0')}:00`;
-        }
-      });
 
       const dailyStatMap = new Map<string, { allowed: number; behavior: number }>();
       trendStats.forEach((item) => {
@@ -1964,12 +1956,32 @@ export class DashboardService {
       )).length;
 
       const subtreeLogs = subtreeIds.flatMap((subtreeId) => rawLogsByOrg.get(subtreeId) || []);
+      const currentDailyLogMap = new Map<string, { allowed: number; behavior: number }>();
+      const currentHourlyAgg = new Map<number, number>();
       const appCounts = new Map<string, number>();
+      const behaviorConditionCounts = new Map<string, number>();
       const zoneCounts = new Map<string, number>();
       let timeConditionBlocks = 0;
       let zoneConditionBlocks = 0;
+      let allowedAppBlocks = 0;
+      let behaviorBlocks = 0;
 
       subtreeLogs.forEach((log) => {
+        const dateKey = formatKstDateKey(log.timestamp);
+        const dailyBucket = currentDailyLogMap.get(dateKey) || { allowed: 0, behavior: 0 };
+        const hour = this.getKstHourFromUtc(log.timestamp);
+        currentHourlyAgg.set(hour, (currentHourlyAgg.get(hour) || 0) + 1);
+
+        if (log.type === 'behavior') {
+          behaviorBlocks += 1;
+          dailyBucket.behavior += 1;
+        } else if (log.type === 'app_control') {
+          allowedAppBlocks += 1;
+          dailyBucket.allowed += 1;
+        }
+
+        currentDailyLogMap.set(dateKey, dailyBucket);
+
         const appName = String(log.appName || '').trim();
         if (appName.length > 0) {
           appCounts.set(appName, (appCounts.get(appName) || 0) + 1);
@@ -1978,6 +1990,19 @@ export class DashboardService {
         const zoneName = String(log.zone?.name || '').trim();
         if (zoneName.length > 0) {
           zoneCounts.set(zoneName, (zoneCounts.get(zoneName) || 0) + 1);
+        }
+
+        if (log.type === 'behavior') {
+          const behaviorConditions = log.policy?.behaviors || [];
+          behaviorConditions.forEach((behavior) => {
+            const behaviorName = String(behavior.behaviorCondition?.name || '').trim();
+            if (behaviorName.length > 0) {
+              behaviorConditionCounts.set(
+                behaviorName,
+                (behaviorConditionCounts.get(behaviorName) || 0) + 1,
+              );
+            }
+          });
         }
 
         if ((log.policy?._count?.timePolicies || 0) > 0) {
@@ -1989,10 +2014,37 @@ export class DashboardService {
         }
       });
 
+      currentDailyLogMap.forEach((value, key) => {
+        dailyStatMap.set(key, value);
+      });
+
+      const totalViolations = allowedAppBlocks + behaviorBlocks;
+      const activeDays = currentDailyLogMap.size;
+      const complianceRate = this.calculateWeightedComplianceRate({
+        activeDays,
+        appControlBlocks: allowedAppBlocks,
+        behaviorBlocks,
+        rounded: false,
+      });
+
+      let peakHour = '09:00';
+      let peakBlocks = 0;
+      currentHourlyAgg.forEach((count, hour) => {
+        if (count > peakBlocks) {
+          peakBlocks = count;
+          peakHour = `${String(hour).padStart(2, '0')}:00`;
+        }
+      });
+
       const topApps = [...appCounts.entries()]
         .sort((left, right) => right[1] - left[1])
         .slice(0, 5)
         .map(([name, blocks]) => ({ name, blocks, iconUrl: '' }));
+
+      const topBehaviorConditions = [...behaviorConditionCounts.entries()]
+        .sort((left, right) => right[1] - left[1])
+        .slice(0, 5)
+        .map(([name, blocks]) => ({ name, blocks }));
 
       const zoneStats = [...zoneCounts.entries()]
         .sort((left, right) => right[1] - left[1])
@@ -2019,6 +2071,7 @@ export class DashboardService {
         trendDates,
         trendMap,
         topApps,
+        topBehaviorConditions,
         zoneStats,
         timeConditionBlocks,
         zoneConditionBlocks,

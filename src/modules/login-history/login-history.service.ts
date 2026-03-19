@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { parseDateInputAsUtc } from '../../common/utils/kst-time.util';
 import { toLoginHistoryResponseDto } from './login-history.mapper';
 
 @Injectable()
@@ -37,8 +38,8 @@ export class LoginHistoryService {
 
     if (filter.startDate || filter.endDate) {
       where.loginTime = {};
-      if (filter.startDate) where.loginTime.gte = new Date(filter.startDate);
-      if (filter.endDate) where.loginTime.lte = new Date(filter.endDate);
+      if (filter.startDate) where.loginTime.gte = parseDateInputAsUtc(filter.startDate, 'start');
+      if (filter.endDate) where.loginTime.lte = parseDateInputAsUtc(filter.endDate, 'end');
     }
 
     if (filter.search) {

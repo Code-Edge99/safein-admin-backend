@@ -15,6 +15,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResponse } from '../../common/dto';
 import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
 import { findEmployeeByIdentifier, normalizePhoneEmployeeId, resolveEmployeePrimaryIds } from '../../common/utils/employee-identifier.util';
+import { parseDateInputAsUtc } from '../../common/utils/kst-time.util';
 import { toEmployeeResponseDto } from './employees.mapper';
 import { readStageConfig } from '../../common/config/stage.config';
 import {
@@ -191,7 +192,7 @@ export class EmployeesService {
           memo: normalizedMemo,
           workTypeId: dto.workTypeId,
           status: (dto.status as EmployeeStatus) || EmployeeStatus.ACTIVE,
-          hireDate: dto.hireDate ? new Date(dto.hireDate) : undefined,
+          hireDate: dto.hireDate ? parseDateInputAsUtc(dto.hireDate, 'start') : undefined,
         } as any,
         include: {
           organization: true,
@@ -437,7 +438,7 @@ export class EmployeesService {
             memo: normalizedMemo,
             workTypeId: dto.workTypeId,
             status: dto.status as EmployeeStatus | undefined,
-            hireDate: dto.hireDate ? new Date(dto.hireDate) : undefined,
+            hireDate: dto.hireDate ? parseDateInputAsUtc(dto.hireDate, 'start') : undefined,
           } as any,
           include: {
             organization: true,

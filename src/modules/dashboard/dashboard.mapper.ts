@@ -23,6 +23,7 @@ export function buildSiteReportItem(params: {
   trendDates: string[];
   trendMap: Map<string, SiteReportTrendPoint>;
   topApps?: Array<{ name: string; blocks: number; iconUrl: string }>;
+  topBehaviorConditions?: Array<{ name: string; blocks: number }>;
   zoneStats?: Array<{ zone: string; blocks: number }>;
   timeConditionBlocks?: number;
   zoneConditionBlocks?: number;
@@ -45,6 +46,7 @@ export function buildSiteReportItem(params: {
   allowedAppTrend: number[];
   behaviorTrend: number[];
   topApps: Array<{ name: string; blocks: number; iconUrl: string }>;
+  topBehaviorConditions: Array<{ name: string; blocks: number }>;
   zoneStats: Array<{ zone: string; blocks: number }>;
   timeConditionBlocks: number;
   zoneConditionBlocks: number;
@@ -61,6 +63,7 @@ export function buildSiteReportItem(params: {
     trendDates,
     trendMap,
     topApps = [],
+    topBehaviorConditions = [],
     zoneStats = [],
     timeConditionBlocks = 0,
     zoneConditionBlocks = 0,
@@ -98,6 +101,7 @@ export function buildSiteReportItem(params: {
     allowedAppTrend,
     behaviorTrend,
     topApps,
+    topBehaviorConditions,
     zoneStats,
     timeConditionBlocks,
     zoneConditionBlocks,

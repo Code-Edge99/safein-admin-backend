@@ -67,3 +67,17 @@ export function preferKstTimestamp(storedValue: string | null | undefined, fallb
 
   return formatKstTimestampString(fallbackValue);
 }
+
+export function parseDateInputAsUtc(input: string, boundary: 'start' | 'end' = 'start'): Date {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(input)) {
+    const time = boundary === 'start' ? '00:00:00.000' : '23:59:59.999';
+    return new Date(`${input}T${time}+09:00`);
+  }
+
+  const parsed = new Date(input);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid date input: ${input}`);
+  }
+
+  return parsed;
+}

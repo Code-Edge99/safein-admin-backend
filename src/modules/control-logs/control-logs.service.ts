@@ -2,7 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { PrismaService } from '../../prisma/prisma.service';
 import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
 import { decryptLocation, encryptLocation } from '../../common/security/location-crypto';
-import { formatKstDateKey, formatKstTimestampString, getKstDaysAgoStart } from '../../common/utils/kst-time.util';
+import { formatKstDateKey, formatKstTimestampString, getKstDaysAgoStart, parseDateInputAsUtc } from '../../common/utils/kst-time.util';
 import { resolveEmployeePrimaryId } from '../../common/utils/employee-identifier.util';
 import { toControlLogResponseDto } from './control-logs.mapper';
 import {
@@ -302,10 +302,10 @@ export class ControlLogsService {
     if (startDate || endDate) {
       where.timestamp = {};
       if (startDate) {
-        where.timestamp.gte = new Date(startDate);
+        where.timestamp.gte = parseDateInputAsUtc(startDate, 'start');
       }
       if (endDate) {
-        where.timestamp.lte = new Date(endDate);
+        where.timestamp.lte = parseDateInputAsUtc(endDate, 'end');
       }
     }
 
@@ -434,10 +434,10 @@ export class ControlLogsService {
     if (startDate || endDate) {
       where.timestamp = {};
       if (startDate) {
-        where.timestamp.gte = new Date(startDate);
+        where.timestamp.gte = parseDateInputAsUtc(startDate, 'start');
       }
       if (endDate) {
-        where.timestamp.lte = new Date(endDate);
+        where.timestamp.lte = parseDateInputAsUtc(endDate, 'end');
       }
     }
 

@@ -126,7 +126,13 @@ export class DashboardController {
 
   @Get('site-reports')
   @ApiOperation({ summary: '현장 리포트' })
-  getSiteReports(@Req() req: AuthenticatedAdminRequest) {
-    return this.dashboardService.getSiteReports(req.organizationScopeIds ?? undefined);
+  getSiteReports(
+    @Req() req: AuthenticatedAdminRequest,
+    @Query('days') days?: number,
+  ) {
+    return this.dashboardService.getSiteReports(
+      days ? Number(days) : undefined,
+      req.organizationScopeIds ?? undefined,
+    );
   }
 }

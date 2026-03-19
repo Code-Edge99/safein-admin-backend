@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { parseDateInputAsUtc } from '../../common/utils/kst-time.util';
 import { toAuditLogResponseDto } from './audit-logs.mapper';
 
 @Injectable()
@@ -47,8 +48,8 @@ export class AuditLogsService {
 
     if (filter.startDate || filter.endDate) {
       where.timestamp = {};
-      if (filter.startDate) where.timestamp.gte = new Date(filter.startDate);
-      if (filter.endDate) where.timestamp.lte = new Date(filter.endDate);
+      if (filter.startDate) where.timestamp.gte = parseDateInputAsUtc(filter.startDate, 'start');
+      if (filter.endDate) where.timestamp.lte = parseDateInputAsUtc(filter.endDate, 'end');
     }
 
     if (filter.search) {
