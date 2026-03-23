@@ -919,17 +919,25 @@ export class EmployeesService {
       );
     }
 
+    const currentEmployee = await tx.employee.findUniqueOrThrow({
+      where: { id: currentEmployeeId },
+      select: { organizationId: true },
+    });
+
     await tx.employee.create({
       data: {
         id: requestedEmployeeId,
-        referenceId: preservedReferenceId,
         name: '임시',
-        organizationId: (await tx.employee.findUniqueOrThrow({ where: { id: currentEmployeeId }, select: { organizationId: true } })).organizationId,
+        organizationId: currentEmployee.organizationId,
       },
     });
 
     await this.repointEmployeeReferences(tx, currentEmployeeId, requestedEmployeeId);
     await tx.employee.delete({ where: { id: currentEmployeeId } });
+    await tx.employee.update({
+      where: { id: requestedEmployeeId },
+      data: { referenceId: preservedReferenceId },
+    });
 
     return requestedEmployeeId;
   }
@@ -949,7 +957,6 @@ export class EmployeesService {
     await tx.employee.create({
       data: {
         id: reviewEmployeeId,
-        referenceId: source.referenceId,
         name: source.name,
         organizationId: source.organizationId,
         siteId: source.siteId,
@@ -965,6 +972,10 @@ export class EmployeesService {
 
     await this.repointEmployeeReferences(tx, employeeId, reviewEmployeeId);
     await tx.employee.delete({ where: { id: employeeId } });
+    await tx.employee.update({
+      where: { id: reviewEmployeeId },
+      data: { referenceId: source.referenceId },
+    });
   }
 
   private async repointEmployeeReferences(
