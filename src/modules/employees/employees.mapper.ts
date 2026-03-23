@@ -7,8 +7,6 @@ export function toEmployeeResponseDto(employee: any): EmployeeResponseDto {
     name: employee.name,
     organizationId: employee.organizationId,
     organizationName: employee.organization?.name,
-    siteId: employee.siteId,
-    siteName: employee.site?.name,
     position: employee.position,
     role: employee.role,
     email: employee.email,

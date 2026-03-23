@@ -1884,13 +1884,11 @@ export class DashboardService {
         where: {
           OR: [
             { organizationId: { in: relevantOrganizationIds } },
-            { siteId: { in: relevantOrganizationIds } },
           ],
         },
         select: {
           id: true,
           organizationId: true,
-          siteId: true,
         },
       }),
       this.prisma.controlLog.findMany({
@@ -1996,7 +1994,6 @@ export class DashboardService {
 
       const employeeCount = employees.filter((employee) => (
         subtreeIdSet.has(employee.organizationId)
-        || (employee.siteId ? subtreeIdSet.has(employee.siteId) : false)
       )).length;
 
       const subtreeLogs = subtreeIds.flatMap((subtreeId) => rawLogsByOrg.get(subtreeId) || []);

@@ -65,12 +65,6 @@ export class CreateEmployeeDto {
   @IsNotEmpty()
   organizationId: string;
 
-  @ApiProperty({ description: '현장 ID' })
-  @Transform(({ value }) => normalizeOptionalText(value))
-  @IsString()
-  @IsNotEmpty()
-  siteId: string;
-
   @ApiPropertyOptional({ description: '직급/직책' })
   @IsOptional()
   @Transform(({ value }) => normalizeOptionalText(value))
@@ -161,12 +155,6 @@ export class EmployeeResponseDto {
 
   @ApiPropertyOptional({ description: '조직명' })
   organizationName?: string;
-
-  @ApiProperty({ description: '현장 ID' })
-  siteId: string;
-
-  @ApiPropertyOptional({ description: '현장명' })
-  siteName?: string;
 
   @ApiPropertyOptional({ description: '직급/직책' })
   position?: string;
@@ -262,11 +250,6 @@ export class EmployeeFilterDto extends BaseFilterDto {
   @IsOptional()
   @IsEnum(EmployeeStatusEnum)
   status?: EmployeeStatusEnum;
-
-  @ApiPropertyOptional({ description: '현장 ID' })
-  @IsOptional()
-  @IsString()
-  siteId?: string;
 }
 
 export class BulkEmployeeActionDto {

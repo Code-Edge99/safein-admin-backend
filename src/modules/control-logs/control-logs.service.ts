@@ -231,8 +231,6 @@ export class ControlLogsService {
             name: true,
             organizationId: true,
             organization: { select: { id: true, name: true } },
-            siteId: true,
-            site: { select: { id: true, name: true } },
           },
         },
         device: {
@@ -341,8 +339,6 @@ export class ControlLogsService {
               name: true,
               organizationId: true,
               organization: { select: { id: true, name: true } },
-              siteId: true,
-              site: { select: { id: true, name: true } },
             },
           },
           device: {
