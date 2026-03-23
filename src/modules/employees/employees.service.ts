@@ -114,6 +114,10 @@ export class EmployeesService {
       throw new NotFoundException('현장을 찾을 수 없습니다.');
     }
 
+    if (site.type !== 'site' && site.type !== 'field') {
+      throw new BadRequestException('현장은 사업장 또는 현장 타입만 선택할 수 있습니다.');
+    }
+
     let currentOrganization: { id: string; parentId: string | null; type: string } | null = organization;
     let belongsToSite = false;
 
@@ -438,7 +442,11 @@ export class EmployeesService {
             memo: normalizedMemo,
             workTypeId: dto.workTypeId,
             status: dto.status as EmployeeStatus | undefined,
-            hireDate: dto.hireDate ? parseDateInputAsUtc(dto.hireDate, 'start') : undefined,
+            hireDate: dto.hireDate
+              ? parseDateInputAsUtc(dto.hireDate, 'start')
+              : dto.hireDate === null
+                ? null
+                : undefined,
           } as any,
           include: {
             organization: true,

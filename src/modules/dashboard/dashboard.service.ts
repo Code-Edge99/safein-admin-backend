@@ -47,9 +47,100 @@ export class DashboardService {
     return new Date(value.getTime() + DashboardService.KST_OFFSET_MS).getUTCHours();
   }
 
-  private isPackageNameLike(value?: string | null): boolean {
-    if (!value) return false;
-    return /^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)+$/.test(value);
+  private async buildPackageNameToAppNameMap(packageNames: string[]): Promise<Map<string, string>> {
+    const uniquePackageNames = Array.from(new Set(packageNames.filter((value) => !!value)));
+    if (uniquePackageNames.length === 0) {
+      return new Map<string, string>();
+    }
+
+    const [allowedApps, installedApps]: Array<Array<{ packageName: string; name?: string; appName?: string }>> = await Promise.all([
+      this.prisma.allowedApp.findMany({
+        where: { packageName: { in: uniquePackageNames } },
+        select: { packageName: true, name: true },
+      }),
+      this.prisma.installedApp.findMany({
+        where: { packageName: { in: uniquePackageNames } },
+        select: { packageName: true, appName: true, lastDetectedAt: true },
+        orderBy: { lastDetectedAt: 'desc' },
+      }),
+    ]);
+
+    const packageNameToAppName = new Map<string, string>();
+    installedApps.forEach((app) => {
+      if (!packageNameToAppName.has(app.packageName) && app.appName) {
+        packageNameToAppName.set(app.packageName, app.appName);
+      }
+    });
+    allowedApps.forEach((app) => {
+      if (!packageNameToAppName.has(app.packageName) && app.name) {
+        packageNameToAppName.set(app.packageName, app.name);
+      }
+    });
+
+    return packageNameToAppName;
+  }
+
+  private resolveControlLogAppLabel(
+    log: { packageName?: string | null; appName?: string | null },
+    packageNameToAppName: Map<string, string>,
+  ): string | null {
+    if (log.appName) {
+      return log.appName;
+    }
+
+    if (log.packageName) {
+      return packageNameToAppName.get(log.packageName) || log.packageName;
+    }
+
+    return null;
+  }
+
+  private summarizeBlockedApps<T extends { employeeId?: string | null; packageName?: string | null; appName?: string | null; type?: string | null; action?: string | null }>(
+    logs: T[],
+    packageNameToAppName: Map<string, string>,
+  ) {
+    const employeeAppCounts = new Map<string, Map<string, number>>();
+
+    logs.forEach((log) => {
+      if (log.type !== 'app_control' || log.action !== 'blocked' || !log.employeeId) {
+        return;
+      }
+
+      const appLabel = this.resolveControlLogAppLabel(log, packageNameToAppName);
+      if (!appLabel) {
+        return;
+      }
+
+      const appCounts = employeeAppCounts.get(log.employeeId) || new Map<string, number>();
+      appCounts.set(appLabel, (appCounts.get(appLabel) || 0) + 1);
+      employeeAppCounts.set(log.employeeId, appCounts);
+    });
+
+    const summaries = new Map<string, {
+      blockedAppsCount: number;
+      topBlockedApp: string;
+      topViolationApps: Array<{ name: string; count: number }>;
+    }>();
+
+    employeeAppCounts.forEach((appCounts, employeeId) => {
+      const sortedApps = Array.from(appCounts.entries())
+        .sort((left, right) => {
+          if (right[1] !== left[1]) {
+            return right[1] - left[1];
+          }
+
+          return left[0].localeCompare(right[0], 'ko');
+        })
+        .map(([name, count]) => ({ name, count }));
+
+      summaries.set(employeeId, {
+        blockedAppsCount: appCounts.size,
+        topBlockedApp: sortedApps[0]?.name || '-',
+        topViolationApps: sortedApps.slice(0, 3),
+      });
+    });
+
+    return summaries;
   }
 
   private calculateWeightedComplianceRate(params: {
@@ -956,26 +1047,29 @@ export class DashboardService {
       orderBy: { date: 'desc' },
     });
 
-    const topBlockedPackageNames = Array.from(
-      new Set(
-        rawStats
-          .map((stat) => stat.topBlockedApp)
-          .filter((name): name is string => this.isPackageNameLike(name)),
-      ),
+    const appControlLogs = await this.prisma.controlLog.findMany({
+      where: {
+        employeeId: { in: employeeIds },
+        timestamp: { gte: startDate },
+        type: 'app_control',
+        action: 'blocked',
+      },
+      select: {
+        employeeId: true,
+        packageName: true,
+        appName: true,
+        type: true,
+        action: true,
+      },
+    });
+
+    const packageNameToAppName = await this.buildPackageNameToAppNameMap(
+      appControlLogs
+        .map((log) => log.packageName)
+        .filter((name): name is string => !!name),
     );
 
-    const allowedApps = topBlockedPackageNames.length > 0
-      ? await this.prisma.allowedApp.findMany({
-          where: { packageName: { in: topBlockedPackageNames } },
-          select: { packageName: true, name: true },
-        })
-      : [];
-
-    const packageNameToAppName = new Map(
-      allowedApps
-        .filter((app) => !!app.name)
-        .map((app) => [app.packageName, app.name]),
-    );
+    const blockedAppSummaries = this.summarizeBlockedApps(appControlLogs, packageNameToAppName);
 
     const empMap = new Map<string, any>();
     employees.forEach((employee: any) => {
@@ -992,8 +1086,6 @@ export class DashboardService {
         behaviorBlocks: 0,
         allowedAppBlocks: 0,
         zoneViolations: 0,
-        topBlockedApp: null,
-        topBlockedAppFreq: new Map<string, number>(),
         dailyStats: [],
       });
     });
@@ -1012,22 +1104,6 @@ export class DashboardService {
       existing.allowedAppBlocks += stat.appControlBlocks;
       existing.zoneViolations += stat.zoneViolations;
       existing.dailyStats.push(stat);
-      // 30일 누적 기준으로 가장 빈번한 앱을 선택하기 위해 빈도 집계
-      if (stat.topBlockedApp) {
-        existing.topBlockedAppFreq.set(
-          stat.topBlockedApp,
-          (existing.topBlockedAppFreq.get(stat.topBlockedApp) || 0) + 1,
-        );
-      }
-    });
-
-    // 빈도 집계 결과로 topBlockedApp 결정
-    empMap.forEach((emp: any) => {
-      const freq = emp.topBlockedAppFreq as Map<string, number>;
-      if (freq.size > 0) {
-        emp.topBlockedApp = Array.from(freq.entries())
-          .sort((a, b) => b[1] - a[1])[0][0];
-      }
     });
 
     const aggregated = Array.from(empMap.values()).sort((a, b) => {
@@ -1072,6 +1148,8 @@ export class DashboardService {
       if (emp.totalBlocks > 20 || emp.zoneViolations > 5 || complianceRate < 60) riskLevel = '높음';
       else if (emp.totalBlocks > 10 || emp.zoneViolations > 2 || complianceRate < 80) riskLevel = '보통';
 
+      const blockedAppSummary = blockedAppSummaries.get(emp.employeeId);
+
       return {
         id: emp.id || emp.employeeId,
         employeeId: emp.employeeId,
@@ -1082,9 +1160,8 @@ export class DashboardService {
         totalBlocks: emp.totalBlocks,
         last7DaysBlocks: recentTotal,
         trend,
-        // topBlockedAppFreq에 고유 패키지명이 집계됨 → 상세 페이지의 uniqueAppCount와 기준 통일
-        blockedAppsCount: emp.topBlockedAppFreq.size,
-        topBlockedApp: packageNameToAppName.get(emp.topBlockedApp || '') || emp.topBlockedApp || '-',
+        blockedAppsCount: blockedAppSummary?.blockedAppsCount || 0,
+        topBlockedApp: blockedAppSummary?.topBlockedApp || '-',
         complianceRate,
         riskLevel,
         lastViolation: emp.dailyStats[0]?.date || null,
@@ -1138,41 +1215,11 @@ export class DashboardService {
       orderBy: { timestamp: 'desc' },
     });
 
-    const controlLogPackageNames = Array.from(
-      new Set(
-        controlLogs
-          .map((log) => log.packageName)
-          .filter((packageName): packageName is string => !!packageName),
-      ),
+    const packageNameToAppName = await this.buildPackageNameToAppNameMap(
+      controlLogs
+        .map((log) => log.packageName)
+        .filter((packageName): packageName is string => !!packageName),
     );
-
-    const [allowedApps, installedApps]: Array<Array<{ packageName: string; name?: string; appName?: string }>> = await Promise.all([
-      controlLogPackageNames.length > 0
-        ? this.prisma.allowedApp.findMany({
-            where: { packageName: { in: controlLogPackageNames } },
-            select: { packageName: true, name: true },
-          })
-        : Promise.resolve([]),
-      controlLogPackageNames.length > 0
-        ? this.prisma.installedApp.findMany({
-            where: { packageName: { in: controlLogPackageNames } },
-            select: { packageName: true, appName: true, lastDetectedAt: true },
-            orderBy: { lastDetectedAt: 'desc' },
-          })
-        : Promise.resolve([]),
-    ]);
-
-    const packageNameToAppName = new Map<string, string>();
-    installedApps.forEach((app) => {
-      if (!packageNameToAppName.has(app.packageName) && app.appName) {
-        packageNameToAppName.set(app.packageName, app.appName);
-      }
-    });
-    allowedApps.forEach((app) => {
-      if (!packageNameToAppName.has(app.packageName) && app.name) {
-        packageNameToAppName.set(app.packageName, app.name);
-      }
-    });
 
     const [zoneVisitSessions, workSessions, appUsageSessions]: [any[], any[], any[]] = await Promise.all([
       this.prisma.zoneVisitSession.findMany({
@@ -1240,10 +1287,8 @@ export class DashboardService {
     }).length;
 
     // 최근 7일 vs 이전 7일 비교
-    const day7Ago = new Date();
-    day7Ago.setDate(day7Ago.getDate() - 7);
-    const day14Ago = new Date();
-    day14Ago.setDate(day14Ago.getDate() - 14);
+    const day7Ago = getKstDaysAgoStart(7, now);
+    const day14Ago = getKstDaysAgoStart(14, now);
 
     const recentStats = dailyStats.filter((s) => s.date >= day7Ago);
     const olderStats = dailyStats.filter((s) => s.date >= day14Ago && s.date < day7Ago);
@@ -1269,21 +1314,20 @@ export class DashboardService {
       : 0;
 
     // ── 인사이트: 앱별 위반 Top 3 (ControlLog 기반) ──
-    const appCounts = new Map<string, number>();
-    controlLogs.forEach((log) => {
-      const appLabel = log.appName || (log.packageName ? packageNameToAppName.get(log.packageName) || log.packageName : null);
-      if (!appLabel) {
-        return;
-      }
-      appCounts.set(appLabel, (appCounts.get(appLabel) || 0) + 1);
-    });
-    const topViolationApps = Array.from(appCounts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3)
-      .map(([name, count]) => ({ name, count }));
+    const blockedAppSummary = this.summarizeBlockedApps(
+      controlLogs.map((log) => ({
+        employeeId: employee.id,
+        packageName: log.packageName,
+        appName: log.appName,
+        type: log.type,
+        action: log.action,
+      })),
+      packageNameToAppName,
+    ).get(employee.id);
 
-    const uniqueAppCount = appCounts.size;
-    const topBlockedApp = topViolationApps.length > 0 ? topViolationApps[0].name : '-';
+    const topViolationApps = blockedAppSummary?.topViolationApps || [];
+    const uniqueAppCount = blockedAppSummary?.blockedAppsCount || 0;
+    const topBlockedApp = blockedAppSummary?.topBlockedApp || '-';
 
     const zoneCounts = new Map<string, { name: string; count: number }>();
     zoneVisitSessions.forEach((session) => {

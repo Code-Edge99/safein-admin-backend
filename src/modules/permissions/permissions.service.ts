@@ -83,6 +83,53 @@ function getDefaultEnabled(code: string, role: 'SUPER_ADMIN' | 'SITE_ADMIN' | 'V
 export class PermissionsService {
   constructor(private prisma: PrismaService) {}
 
+  private isPermissionMetadataChanged(
+    existingPermission: {
+      category: string;
+      name: string;
+      description: string | null;
+      isActive: boolean;
+    },
+    catalogPermission: PermissionCatalogItem,
+  ) {
+    return existingPermission.category !== catalogPermission.category
+      || existingPermission.name !== catalogPermission.name
+      || (existingPermission.description ?? null) !== (catalogPermission.description ?? null)
+      || existingPermission.isActive !== true;
+  }
+
+  private async ensureCatalogPermission(catalogPermission: PermissionCatalogItem) {
+    const existingPermission = await this.prisma.permission.findUnique({
+      where: { code: catalogPermission.code },
+    });
+
+    if (!existingPermission) {
+      return this.prisma.permission.create({
+        data: {
+          category: catalogPermission.category,
+          name: catalogPermission.name,
+          code: catalogPermission.code,
+          description: catalogPermission.description,
+          isActive: true,
+        },
+      });
+    }
+
+    if (!this.isPermissionMetadataChanged(existingPermission, catalogPermission)) {
+      return existingPermission;
+    }
+
+    return this.prisma.permission.update({
+      where: { id: existingPermission.id },
+      data: {
+        category: catalogPermission.category,
+        name: catalogPermission.name,
+        description: catalogPermission.description,
+        isActive: true,
+      },
+    });
+  }
+
   private async syncPermissionCatalog() {
     const existingPermissions = await this.prisma.permission.findMany({
       where: {
@@ -90,36 +137,67 @@ export class PermissionsService {
           in: PERMISSION_CATALOG.map((permission) => permission.code),
         },
       },
-      select: {
-        code: true,
-      },
     });
+
+    const existingPermissionsByCode = new Map(
+      existingPermissions.map((permission) => [permission.code, permission]),
+    );
 
     const existingPermissionCodes = new Set(
       existingPermissions.map((permission) => permission.code),
     );
 
-    const synced = await this.prisma.$transaction(
-      PERMISSION_CATALOG.map((permission) =>
-        this.prisma.permission.upsert({
-          where: { code: permission.code },
-          update: {
-            category: permission.category,
-            name: permission.name,
-            code: permission.code,
-            description: permission.description,
-            isActive: true,
-          },
-          create: {
-            category: permission.category,
-            name: permission.name,
-            code: permission.code,
-            description: permission.description,
-            isActive: true,
-          },
-        }),
-      ),
+    const permissionsToCreate = PERMISSION_CATALOG.filter(
+      (permission) => !existingPermissionsByCode.has(permission.code),
     );
+
+    const permissionsToUpdate = PERMISSION_CATALOG.filter((permission) => {
+      const existingPermission = existingPermissionsByCode.get(permission.code);
+      if (!existingPermission) {
+        return false;
+      }
+
+      return this.isPermissionMetadataChanged(existingPermission, permission);
+    });
+
+    if (permissionsToCreate.length > 0) {
+      await this.prisma.permission.createMany({
+        data: permissionsToCreate.map((permission) => ({
+          category: permission.category,
+          name: permission.name,
+          code: permission.code,
+          description: permission.description,
+          isActive: true,
+        })),
+        skipDuplicates: true,
+      });
+    }
+
+    if (permissionsToUpdate.length > 0) {
+      await this.prisma.$transaction(
+        permissionsToUpdate.map((permission) =>
+          this.prisma.permission.update({
+            where: { code: permission.code },
+            data: {
+              category: permission.category,
+              name: permission.name,
+              description: permission.description,
+              isActive: true,
+            },
+          }),
+        ),
+      );
+    }
+
+    const synced = permissionsToCreate.length > 0 || permissionsToUpdate.length > 0
+      ? await this.prisma.permission.findMany({
+        where: {
+          code: {
+            in: PERMISSION_CATALOG.map((permission) => permission.code),
+          },
+        },
+      })
+      : existingPermissions;
 
     const map = new Map<string, (typeof synced)[number]>();
     synced.forEach((permission) => {
@@ -155,44 +233,12 @@ export class PermissionsService {
   private async resolvePermissionById(permissionId: string) {
     const catalogByLegacyId = PERMISSION_CATALOG_BY_LEGACY_ID.get(permissionId);
     if (catalogByLegacyId) {
-      return this.prisma.permission.upsert({
-        where: { code: catalogByLegacyId.code },
-        update: {
-          category: catalogByLegacyId.category,
-          name: catalogByLegacyId.name,
-          code: catalogByLegacyId.code,
-          description: catalogByLegacyId.description,
-          isActive: true,
-        },
-        create: {
-          category: catalogByLegacyId.category,
-          name: catalogByLegacyId.name,
-          code: catalogByLegacyId.code,
-          description: catalogByLegacyId.description,
-          isActive: true,
-        },
-      });
+      return this.ensureCatalogPermission(catalogByLegacyId);
     }
 
     const catalogByCode = PERMISSION_CATALOG_BY_CODE.get(permissionId);
     if (catalogByCode) {
-      return this.prisma.permission.upsert({
-        where: { code: catalogByCode.code },
-        update: {
-          category: catalogByCode.category,
-          name: catalogByCode.name,
-          code: catalogByCode.code,
-          description: catalogByCode.description,
-          isActive: true,
-        },
-        create: {
-          category: catalogByCode.category,
-          name: catalogByCode.name,
-          code: catalogByCode.code,
-          description: catalogByCode.description,
-          isActive: true,
-        },
-      });
+      return this.ensureCatalogPermission(catalogByCode);
     }
 
     const byId = await this.prisma.permission.findUnique({
@@ -266,37 +312,83 @@ export class PermissionsService {
     }
 
     const role = data.role as 'SUPER_ADMIN' | 'SITE_ADMIN' | 'VIEWER';
+    const existingRolePermission = await this.prisma.rolePermission.findUnique({
+      where: {
+        role_permissionId: {
+          role: role as any,
+          permissionId: permission.id,
+        },
+      },
+    });
+
+    if (data.enabled && existingRolePermission) {
+      return {
+        success: true,
+        changed: false,
+        lastModified: permission.updatedAt,
+        modifiedBy: '시스템',
+      };
+    }
+
+    if (!data.enabled && !existingRolePermission) {
+      return {
+        success: true,
+        changed: false,
+        lastModified: permission.updatedAt,
+        modifiedBy: '시스템',
+      };
+    }
+
+    const touchedAt = new Date();
 
     if (data.enabled) {
-      await this.prisma.rolePermission.upsert({
-        where: {
-          role_permissionId: {
+      await this.prisma.$transaction([
+        this.prisma.rolePermission.create({
+          data: {
             role: role as any,
             permissionId: permission.id,
           },
-        },
-        update: {},
-        create: {
-          role: role as any,
-          permissionId: permission.id,
-        },
-      });
+        }),
+        this.prisma.permission.update({
+          where: { id: permission.id },
+          data: { updatedAt: touchedAt },
+        }),
+      ]);
     } else {
-      await this.prisma.rolePermission.deleteMany({
-        where: {
-          role: role as any,
-          permissionId: permission.id,
-        },
-      });
+      await this.prisma.$transaction([
+        this.prisma.rolePermission.delete({
+          where: {
+            role_permissionId: {
+              role: role as any,
+              permissionId: permission.id,
+            },
+          },
+        }),
+        this.prisma.permission.update({
+          where: { id: permission.id },
+          data: { updatedAt: touchedAt },
+        }),
+      ]);
     }
 
-    return { success: true };
+    return {
+      success: true,
+      changed: true,
+      lastModified: touchedAt,
+      modifiedBy: '시스템',
+    };
   }
 
   async bulkUpdate(updates: Array<{ permissionId: string; role: string; enabled: boolean }>) {
+    let changedCount = 0;
+
     for (const update of updates) {
-      await this.update(update.permissionId, { role: update.role, enabled: update.enabled });
+      const result = await this.update(update.permissionId, { role: update.role, enabled: update.enabled });
+      if (result.changed) {
+        changedCount += 1;
+      }
     }
-    return { success: true, updated: updates.length };
+
+    return { success: true, updated: changedCount };
   }
 }
