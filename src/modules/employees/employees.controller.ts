@@ -25,6 +25,7 @@ import {
   EmployeeDetailDto,
   EmployeeFilterDto,
   EmployeeMdmManualUnblockDto,
+  EmployeeDeviceLogoutUntilNextLoginDto,
   BulkAssignWorkTypeDto,
   BulkMoveOrganizationDto,
   BulkEmployeeActionDto,
@@ -114,6 +115,18 @@ export class EmployeesController {
     @Body() dto: EmployeeMdmManualUnblockDto,
   ) {
     return this.employeesService.setMdmManualUnblock(employeeId, dto, req.organizationScopeIds ?? undefined);
+  }
+
+  @Post(':employeeId/devices/logout-until-next-login')
+  @ApiOperation({ summary: '직원 iOS 디바이스 강제 로그아웃 및 다음 로그인 전까지 정책 미적용' })
+  @ApiParam({ name: 'employeeId', description: '직원 ID' })
+  @ApiResponse({ status: 200, description: '강제 로그아웃 처리 성공' })
+  forceLogoutDeviceUntilNextLogin(
+    @Req() req: AuthenticatedAdminRequest,
+    @Param('employeeId') employeeId: string,
+    @Body() dto: EmployeeDeviceLogoutUntilNextLoginDto,
+  ) {
+    return this.employeesService.forceLogoutDeviceUntilNextLogin(employeeId, dto, req.organizationScopeIds ?? undefined);
   }
 
   @Delete(':employeeId')

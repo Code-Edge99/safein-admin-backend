@@ -282,3 +282,15 @@ export class EmployeeMdmManualUnblockDto {
   @IsString()
   reason?: string;
 }
+
+export class EmployeeDeviceLogoutUntilNextLoginDto {
+  @ApiProperty({ description: '공개 디바이스 ID (예: IOS-ABCDEF01)' })
+  @IsString()
+  @IsNotEmpty()
+  deviceId: string;
+
+  @ApiPropertyOptional({ description: '강제 로그아웃 사유' })
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}

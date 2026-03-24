@@ -28,6 +28,7 @@ import {
   EmployeeDetailDto,
   EmployeeFilterDto,
   EmployeeMdmManualUnblockDto,
+  EmployeeDeviceLogoutUntilNextLoginDto,
   BulkAssignWorkTypeDto,
   BulkMoveOrganizationDto,
   EmployeeStatusEnum,
@@ -795,6 +796,9 @@ export class EmployeesService {
         id: true,
         deviceId: true,
         employeeId: true,
+        os: true,
+        pushToken: true,
+        pushTokenStatus: true,
       },
     });
 
@@ -802,16 +806,145 @@ export class EmployeesService {
       throw new BadRequestException('해당 직원에게 할당된 디바이스를 찾을 수 없습니다.');
     }
 
-    const appBackendResponse = await this.callAppBackendMdmManualUnblock({
-      deviceId: device.deviceId,
-      reason: dto.reason,
+    const reason = dto.reason?.trim() || '관리자 요청: 다음 로그인 전까지 정책 미적용';
+    const now = new Date();
+
+    await this.prisma.device.update({
+      where: { id: device.id },
+      data: {
+        mdmManualUnblockUntilLogin: true,
+        mdmManualUnblockReason: reason,
+        mdmManualUnblockSetAt: now,
+      },
     });
+
+    const endpointUrl = `${this.getAppBackendBaseUrl()}/internal/push/fcm/send`;
+    const token = device.pushToken?.trim();
+    let pushDispatched = false;
+
+    if (token && device.pushTokenStatus !== PushTokenStatus.ERROR) {
+      try {
+        await this.sendPolicyChangedPush(endpointUrl, {
+          token,
+          os: device.os,
+          trigger: 'manual_unblock_until_login',
+          policyApplied: false,
+        });
+        pushDispatched = true;
+      } catch (error) {
+        if (error instanceof EmployeePolicyPushSendError && error.shouldMarkTokenAsError) {
+          await this.prisma.$executeRaw`
+            UPDATE devices
+            SET "pushTokenStatus" = 'ERROR',
+                "updatedAt" = NOW()
+            WHERE id = ${device.id}
+          `;
+        }
+
+        this.logger.warn(
+          `수동 해제 policy_changed 전송 실패(deviceId=${device.id}, employeeId=${employee.id}): ${String(error)}`,
+        );
+      }
+    }
+
+    let mdmDispatched = false;
+    let mdmDispatchError: string | null = null;
+
+    if (device.os === DeviceOS.iOS) {
+      try {
+        await this.callAppBackendSendBlockedAppsAllowAll({
+          deviceId: device.deviceId,
+        });
+        mdmDispatched = true;
+      } catch (error) {
+        mdmDispatchError = String(error);
+        this.logger.warn(
+          `수동 해제 iOS MDM 전체 허용 전송 실패(deviceId=${device.id}, employeeId=${employee.id}): ${mdmDispatchError}`,
+        );
+      }
+    }
 
     return {
       ok: true,
       employeeId: employee.id,
       deviceId: device.deviceId,
-      appBackendResponse,
+      reason,
+      policyBypassUntilNextLogin: true,
+      pushDispatched,
+      mdmDispatched,
+      ...(mdmDispatchError ? { mdmDispatchError } : {}),
+    };
+  }
+
+  async forceLogoutDeviceUntilNextLogin(
+    employeeId: string,
+    dto: EmployeeDeviceLogoutUntilNextLoginDto,
+    scopeOrganizationIds?: string[],
+  ) {
+    const employee = await findEmployeeByIdentifier(this.prisma, employeeId);
+    if (!employee) {
+      throw new NotFoundException('직원을 찾을 수 없습니다.');
+    }
+    this.assertNotDeletedStatus(employee.status);
+    this.assertOrganizationInScope(employee.organizationId, scopeOrganizationIds);
+
+    const normalizedDeviceId = dto.deviceId?.trim();
+    if (!normalizedDeviceId) {
+      throw new BadRequestException('deviceId는 필수입니다.');
+    }
+
+    const device = await this.prisma.device.findFirst({
+      where: {
+        deviceId: normalizedDeviceId,
+        employeeId: employee.id,
+      },
+      select: {
+        id: true,
+        deviceId: true,
+        os: true,
+      },
+    });
+
+    if (!device) {
+      throw new BadRequestException('해당 직원에게 할당된 디바이스를 찾을 수 없습니다.');
+    }
+
+    if (device.os !== DeviceOS.iOS) {
+      throw new BadRequestException('iOS 디바이스만 MDM 로그아웃 처리할 수 있습니다.');
+    }
+
+    const now = new Date();
+    const reason = dto.reason?.trim() || '관리자 요청: 다음 로그인 전까지 정책 미적용 및 로그아웃';
+
+    await this.prisma.$transaction([
+      this.prisma.device.update({
+        where: { id: device.id },
+        data: {
+          mdmManualUnblockUntilLogin: true,
+          mdmManualUnblockReason: reason,
+          mdmManualUnblockSetAt: now,
+          deviceStatus: DeviceOperationStatus.LOGGED_OUT,
+          deactivatedAt: now,
+          deactivatedReason: reason,
+        },
+      }),
+      this.prisma.deviceToken.updateMany({
+        where: { deviceId: device.id },
+        data: {
+          isValid: false,
+          refreshToken: null,
+          expiresAt: now,
+        },
+      }),
+    ]);
+
+    return {
+      ok: true,
+      employeeId: employee.id,
+      deviceId: device.deviceId,
+      reason,
+      policyBypassUntilNextLogin: true,
+      jwtExpired: true,
     };
   }
 
@@ -973,8 +1106,8 @@ export class EmployeesService {
       || this.configService.get<string>('MDM_ADMIN_INTERNAL_SECRET')?.trim();
   }
 
-  private async callAppBackendMdmManualUnblock(payload: { deviceId: string; reason?: string }) {
-    const endpointUrl = `${this.getAppBackendBaseUrl()}/mdm/admin/manual-unblock`;
+  private async callAppBackendSendBlockedAppsAllowAll(payload: { deviceId: string }) {
+    const endpointUrl = `${this.getAppBackendBaseUrl()}/mdm/send/blocked-apps`;
     const secret = this.getAppBackendMdmAdminSecret();
 
     const response = await fetch(endpointUrl, {
@@ -985,14 +1118,14 @@ export class EmployeesService {
       },
       body: JSON.stringify({
         deviceId: payload.deviceId,
-        ...(payload.reason?.trim() ? { reason: payload.reason.trim() } : {}),
+        blockedAppBundleIDs: [],
       }),
     });
 
     if (!response.ok) {
       const responseText = await response.text();
       throw new BadGatewayException(
-        `app-backend 수동 해제 호출 실패(status=${response.status}): ${responseText || 'empty response'}`,
+        `app-backend 차단앱 해제 호출 실패(status=${response.status}): ${responseText || 'empty response'}`,
       );
     }
 

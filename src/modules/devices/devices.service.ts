@@ -387,6 +387,11 @@ export class DevicesService {
   async remove(id: string, scopeOrganizationIds?: string[]): Promise<void> {
     const device = await this.prisma.device.findUnique({
       where: { id },
+      select: {
+        id: true,
+        udid: true,
+        organizationId: true,
+      },
     });
 
     if (!device) {
@@ -394,12 +399,29 @@ export class DevicesService {
     }
     this.assertDeviceInScope(device, scopeOrganizationIds);
 
-    // 관련 데이터 삭제
-    await this.prisma.$transaction([
+    const deleteOperations: Prisma.PrismaPromise<unknown>[] = [
+      this.prisma.controlLog.deleteMany({ where: { deviceId: id } }),
+      this.prisma.zoneVisitSession.deleteMany({ where: { deviceId: id } }),
+      this.prisma.appUsageSession.deleteMany({ where: { deviceId: id } }),
+      this.prisma.workSession.deleteMany({ where: { deviceId: id } }),
+      this.prisma.installedApp.deleteMany({ where: { deviceId: id } }),
+      this.prisma.mdmCommand.deleteMany({ where: { deviceId: id } }),
       this.prisma.deviceLocation.deleteMany({ where: { deviceId: id } }),
       this.prisma.deviceToken.deleteMany({ where: { deviceId: id } }),
       this.prisma.device.delete({ where: { id } }),
-    ]);
+    ];
+
+    if (device.udid) {
+      deleteOperations.unshift(
+        this.prisma.employee.updateMany({
+          where: { pendingMdmUdid: device.udid },
+          data: { pendingMdmUdid: null },
+        }),
+      );
+    }
+
+    // 관련 데이터 삭제
+    await this.prisma.$transaction(deleteOperations);
   }
 
   async getDeviceStats(organizationId?: string, scopeOrganizationIds?: string[]): Promise<{
