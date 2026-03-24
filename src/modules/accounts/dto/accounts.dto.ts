@@ -7,6 +7,7 @@ import {
   IsEnum,
   IsNumber,
   MinLength,
+  Matches,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { normalizeOptionalPhoneNumber } from '../../../common/utils/phone.util';
@@ -47,8 +48,8 @@ export class CreateAccountDto {
 
   @ApiPropertyOptional({ description: '전화번호' })
   @Transform(({ value }) => normalizeOptionalPhoneNumber(value))
-  @IsString()
   @IsOptional()
+  @Matches(/^01\d{8,9}$/, { message: '전화번호는 10~11자리 휴대폰 번호 형식이어야 합니다.' })
   phone?: string;
 
   @ApiProperty({ description: '역할', enum: AdminRoleEnum })

@@ -2,7 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
-import { JwtService } from '@nestjs/jwt';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
@@ -10,16 +10,11 @@ import { RequestLoggingInterceptor } from './common/interceptors/request-logging
 import { FIXED_ADMIN_UNLIMITED_TOKEN } from './modules/auth/auth.constants';
 import { readStageConfig, resolveRuntimeStage } from './common/config/stage.config';
 
-const MASTER_ADMIN_ACCOUNT_ID = 'acc-master-admin';
 const MASTER_ADMIN_USERNAME = 'master-admin';
 
 function createUnlimitedAdminToken(configService: ConfigService): string | null {
-  const jwtSecret = configService.get<string>('JWT_SECRET');
-  if (!jwtSecret) {
-    return null;
-  }
-
-  return FIXED_ADMIN_UNLIMITED_TOKEN;
+  const token = FIXED_ADMIN_UNLIMITED_TOKEN?.trim();
+  return token ? token : null;
 }
 
 async function bootstrap() {
@@ -37,6 +32,13 @@ async function bootstrap() {
   // Global prefix
   app.setGlobalPrefix('api');
 
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
+    }),
+  );
+
   // CORS
   const corsOrigin = readStageConfig(configService, 'CORS_ORIGIN', {
     local: 'http://localhost:5173',
@@ -47,14 +49,19 @@ async function bootstrap() {
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
+  const hasWildcard = parsedOrigins.some((origin) => origin === '*');
+
+  if (hasWildcard && parsedOrigins.length > 1) {
+    throw new Error('CORS_ORIGIN cannot include wildcard together with explicit origins.');
+  }
 
   app.enableCors({
-    origin: parsedOrigins.includes('*')
+    origin: hasWildcard
       ? true
       : parsedOrigins.length === 1
         ? parsedOrigins[0]
         : parsedOrigins,
-    credentials: !parsedOrigins.includes('*'),
+    credentials: !hasWildcard,
   });
 
   // Global filters / interceptors
@@ -89,7 +96,7 @@ async function bootstrap() {
       bearerFormat: 'JWT',
       description: unlimitedAdminToken
         ? `개발용 무제한 토큰 (만료 없음)\n${unlimitedAdminToken}`
-        : 'JWT_SECRET이 없어 무제한 토큰을 생성하지 못했습니다. 환경변수를 확인하세요.',
+        : '무제한 토큰이 비어있습니다. auth.constants 설정을 확인하세요.',
     })
     .build();
   const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);

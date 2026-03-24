@@ -16,6 +16,10 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   }
 
   private isFixedUnlimitedToken(request: any): boolean {
+    if (!FIXED_ADMIN_UNLIMITED_TOKEN) {
+      return false;
+    }
+
     const authHeader =
       request?.headers?.authorization ?? request?.headers?.Authorization;
 
@@ -23,8 +27,8 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       return false;
     }
 
-    const [type, token] = authHeader.split(' ');
-    return type === 'Bearer' && token === FIXED_ADMIN_UNLIMITED_TOKEN;
+    const [type, token] = authHeader.trim().split(/\s+/, 2);
+    return type?.toLowerCase() === 'bearer' && token === FIXED_ADMIN_UNLIMITED_TOKEN;
   }
 
   canActivate(

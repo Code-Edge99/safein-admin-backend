@@ -13,7 +13,10 @@ import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResponse } from '../../common/dto';
-import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import {
+  assertOrganizationInScopeOrThrow,
+  ensureOrganizationInScope,
+} from '../../common/utils/organization-scope.util';
 import { findEmployeeByIdentifier, normalizePhoneEmployeeId, resolveEmployeePrimaryIds } from '../../common/utils/employee-identifier.util';
 import { parseDateInputAsUtc } from '../../common/utils/kst-time.util';
 import { toEmployeeResponseDto } from './employees.mapper';

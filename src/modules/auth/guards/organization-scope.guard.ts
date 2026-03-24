@@ -26,7 +26,7 @@ export class OrganizationScopeGuard implements CanActivate {
     }
 
     if (!user.organizationId) {
-      throw new ForbiddenException('소속 현장 정보가 없는 계정은 접근할 수 없습니다.');
+      throw new ForbiddenException('소속 사업장 정보가 없는 계정은 접근할 수 없습니다.');
     }
 
     const rootOrganization = await this.prisma.organization.findUnique({
@@ -36,10 +36,6 @@ export class OrganizationScopeGuard implements CanActivate {
 
     if (!rootOrganization || !rootOrganization.isActive) {
       throw new ForbiddenException('유효하지 않은 현장 정보입니다.');
-    }
-
-    if (rootOrganization.type !== 'site') {
-      throw new ForbiddenException('비슈퍼관리자는 현장(site) 소속이어야 합니다.');
     }
 
     const scopeIds = await this.collectDescendantOrganizationIds(rootOrganization.id);

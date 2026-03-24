@@ -95,6 +95,25 @@ export class DashboardService {
     return null;
   }
 
+  private async getSelfAndAncestorOrganizationIds(organizationId: string): Promise<string[]> {
+    const organizations = await this.prisma.organization.findMany({
+      select: { id: true, parentId: true },
+    });
+
+    const organizationMap = new Map<string, { id: string; parentId: string | null }>(
+      organizations.map((organization) => [organization.id, organization]),
+    );
+
+    const result: string[] = [];
+    let currentId: string | null = organizationId;
+    while (currentId) {
+      result.push(currentId);
+      currentId = organizationMap.get(currentId)?.parentId ?? null;
+    }
+
+    return result;
+  }
+
   private summarizeBlockedApps<T extends { employeeId?: string | null; packageName?: string | null; appName?: string | null; type?: string | null; action?: string | null }>(
     logs: T[],
     packageNameToAppName: Map<string, string>,
@@ -1187,7 +1206,6 @@ export class DashboardService {
     const employee = await findEmployeeByIdentifier(this.prisma, employeeId, {
       include: {
         organization: { select: { id: true, name: true } },
-        site: { select: { id: true, name: true } },
         workType: { select: { id: true, name: true } },
       },
     });
@@ -1195,6 +1213,8 @@ export class DashboardService {
     if (!employee) return null;
 
     this.ensureOrganizationInScope(employee.organizationId, scopeOrganizationIds);
+
+    const policySourceOrganizationIds = await this.getSelfAndAncestorOrganizationIds(employee.organizationId);
 
     const now = new Date();
     const startDate30 = getKstDaysAgoStart(30, now);
@@ -1267,6 +1287,7 @@ export class DashboardService {
       employee.id,
       employee.organizationId,
       employee.workTypeId,
+      policySourceOrganizationIds,
     );
 
     // ── 집계: 통계 ──
@@ -1480,9 +1501,11 @@ export class DashboardService {
         vsWorkTypeAvg = Math.round(((totalBlocks / 30 - peerWtAvg) / peerWtAvg) * 100);
       }
     }
+    const siteScopeOrganizationIds = [employee.organizationId];
+
     const peerSiteStats = await this.prisma.employeeDailyStat.aggregate({
       where: {
-        organizationId: employee.organizationId,
+        organizationId: { in: siteScopeOrganizationIds },
         date: { gte: startDate30 },
         employeeId: { not: employee.id },
       },
@@ -1664,14 +1687,19 @@ export class DashboardService {
     employeeId: string,
     organizationId: string,
     workTypeId?: string | null,
+    policySourceOrganizationIds?: string[],
   ) {
+    const candidateOrganizationIds = policySourceOrganizationIds?.length
+      ? policySourceOrganizationIds
+      : [organizationId];
+
     const [assignedPolicies, workTypePolicy] = await Promise.all([
       this.prisma.controlPolicyEmployee.findMany({
         where: {
           employeeId,
           policy: {
             isActive: true,
-            organizationId,
+            organizationId: { in: candidateOrganizationIds },
           },
         },
         include: {
@@ -1703,7 +1731,7 @@ export class DashboardService {
       workTypeId
         ? this.prisma.controlPolicy.findFirst({
             where: {
-              organizationId,
+              organizationId: { in: candidateOrganizationIds },
               workTypeId,
               isActive: true,
             },

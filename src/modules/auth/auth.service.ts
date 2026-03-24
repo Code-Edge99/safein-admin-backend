@@ -190,9 +190,9 @@ export class AuthService {
 
     if (
       account.role !== AdminRole.SUPER_ADMIN &&
-      (!account.organization || !account.organization.isActive || account.organization.type !== 'site')
+      (!account.organization || !account.organization.isActive)
     ) {
-      throw new UnauthorizedException('비슈퍼관리자는 활성 현장(site) 정보가 필수입니다.');
+      throw new UnauthorizedException('비슈퍼관리자는 활성 현장 정보가 필수입니다.');
     }
 
     const isPasswordValid = await bcrypt.compare(password, account.passwordHash);
@@ -313,7 +313,7 @@ export class AuthService {
 
     if (
       account.role !== AdminRole.SUPER_ADMIN &&
-      (!account.organization || !account.organization.isActive || account.organization.type !== 'site')
+      (!account.organization || !account.organization.isActive)
     ) {
       return null;
     }

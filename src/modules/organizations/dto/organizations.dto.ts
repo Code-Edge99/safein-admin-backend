@@ -6,7 +6,6 @@ import { normalizeOptionalPhoneNumber } from '../../../common/utils/phone.util';
 export enum OrganizationType {
   COMPANY = 'company',
   SITE = 'site',
-  FIELD = 'field',
   DEPARTMENT = 'department',
   TEAM = 'team',
 }
@@ -41,12 +40,12 @@ export class CreateOrganizationDto {
   @IsString()
   description?: string;
 
-  @ApiPropertyOptional({ description: '현장 담당자명' })
+  @ApiPropertyOptional({ description: '조직 담당자명' })
   @IsOptional()
   @IsString()
   managerName?: string;
 
-  @ApiPropertyOptional({ description: '현장 담당자 연락처' })
+  @ApiPropertyOptional({ description: '조직 담당자 연락처' })
   @IsOptional()
   @Transform(({ value }) => normalizeOptionalPhoneNumber(value))
   @IsString()
@@ -87,10 +86,10 @@ export class OrganizationResponseDto {
   @ApiPropertyOptional({ description: '설명' })
   description?: string;
 
-  @ApiPropertyOptional({ description: '현장 담당자명' })
+  @ApiPropertyOptional({ description: '조직 담당자명' })
   managerName?: string;
 
-  @ApiPropertyOptional({ description: '현장 담당자 연락처' })
+  @ApiPropertyOptional({ description: '조직 담당자 연락처' })
   managerPhone?: string;
 
   @ApiPropertyOptional({ description: '비상 연락처' })
