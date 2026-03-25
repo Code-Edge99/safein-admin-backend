@@ -7,7 +7,7 @@ import {
   ForbiddenException,
   Logger,
 } from '@nestjs/common';
-import { Prisma, EmployeeStatus, DeviceOperationStatus, DeviceOS, PushTokenStatus } from '@prisma/client';
+import { Prisma, EmployeeStatus, DeviceOperationStatus, DeviceOS, PushTokenStatus, AuditAction } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
@@ -124,7 +124,11 @@ export class EmployeesService {
     }
   }
 
-  async create(dto: CreateEmployeeDto, scopeOrganizationIds?: string[]): Promise<EmployeeResponseDto> {
+  async create(
+    dto: CreateEmployeeDto,
+    scopeOrganizationIds?: string[],
+    actorUserId?: string,
+  ): Promise<EmployeeResponseDto> {
     const normalizedEmployeeId = this.normalizeEmployeeId(dto.employeeId);
     const normalizedName = dto.name?.trim();
     const normalizedPosition = this.normalizeOptionalText(dto.position);
@@ -161,6 +165,8 @@ export class EmployeesService {
           memo: normalizedMemo,
           workTypeId: dto.workTypeId,
           status: (dto.status as EmployeeStatus) || EmployeeStatus.ACTIVE,
+          createdById: actorUserId,
+          updatedById: actorUserId,
         } as any,
         include: {
           organization: true,
@@ -312,6 +318,7 @@ export class EmployeesService {
     employeeId: string,
     dto: UpdateEmployeeDto,
     scopeOrganizationIds?: string[],
+    actorUserId?: string,
   ): Promise<EmployeeResponseDto> {
     const previousEmployee = await findEmployeeByIdentifier(this.prisma, employeeId, {
       select: {
@@ -387,6 +394,7 @@ export class EmployeesService {
             memo: normalizedMemo,
             workTypeId: dto.workTypeId,
             status: dto.status as EmployeeStatus | undefined,
+            updatedById: actorUserId,
           } as any,
           include: {
             organization: true,
@@ -421,6 +429,23 @@ export class EmployeesService {
       && previousEmployee.status !== (dto.status as EmployeeStatus)
     ) {
       await this.notifyPolicyChangedForEmployees([employee.id], 'employee_status_non_active');
+    }
+
+    if (actorUserId) {
+      void this.prisma.auditLog.create({
+        data: {
+          accountId: actorUserId,
+          organizationId: employee.organizationId,
+          action: AuditAction.UPDATE,
+          resourceType: 'Employee',
+          resourceId: employee.id,
+          resourceName: employee.name,
+          changesAfter: {
+            employeeId: employee.id,
+            updatedById: actorUserId,
+          },
+        },
+      }).catch(() => undefined);
     }
 
     return this.toResponseDto(employee);

@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { AuditAction } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
 import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
@@ -16,7 +17,7 @@ import {
 
 @Injectable()
 export class AllowedAppPresetsService {
-  private readonly validPlatforms = ['android', 'ios', 'both'] as const;
+  private readonly validPlatforms = ['android', 'ios'] as const;
   private platformsNormalized = false;
 
   constructor(
@@ -38,9 +39,8 @@ export class AllowedAppPresetsService {
     assertOrganizationInScopeOrThrow(preset.organizationId, scopeOrganizationIds, '허용앱 프리셋을 찾을 수 없습니다.');
   }
 
-  private normalizePlatform(platform?: string): 'android' | 'ios' | 'both' {
+  private normalizePlatform(platform?: string): 'android' | 'ios' {
     if (platform === 'ios') return 'ios';
-    if (platform === 'both') return 'both';
     return 'android';
   }
 
@@ -54,19 +54,22 @@ export class AllowedAppPresetsService {
       }),
       this.prisma.allowedAppPreset.updateMany({
         where: { platform: { notIn: [...this.validPlatforms] } },
-        data: { platform: 'both' },
+        data: { platform: 'android' },
       }),
     ]);
 
     this.platformsNormalized = true;
   }
 
-  private async validateAppsExist(appIds: string[] | undefined): Promise<void> {
+  private async validateAppsExist(
+    appIds: string[] | undefined,
+    presetPlatform?: 'android' | 'ios',
+  ): Promise<void> {
     if (!appIds || appIds.length === 0) return;
 
     const apps = await this.prisma.allowedApp.findMany({
       where: { id: { in: appIds } },
-      select: { id: true, name: true, platform: true },
+      select: { id: true, name: true, packageName: true, platform: true },
     });
 
     const foundIds = new Set(apps.map((app) => app.id));
@@ -75,22 +78,37 @@ export class AllowedAppPresetsService {
       throw new NotFoundException(`존재하지 않는 허용앱이 포함되어 있습니다: ${missingIds.join(', ')}`);
     }
 
+    if (presetPlatform) {
+      const mismatchedApps = apps.filter((app) => this.normalizePlatform(app.platform) !== presetPlatform);
+      if (mismatchedApps.length > 0) {
+        throw new BadRequestException(
+          `프리셋 플랫폼(${presetPlatform})과 다른 앱이 포함되어 있습니다: ${mismatchedApps.map((app) => app.packageName).join(', ')}`,
+        );
+      }
+    }
+
   }
 
-  async create(dto: CreateAllowedAppPresetDto, scopeOrganizationIds?: string[]): Promise<AllowedAppPresetDetailDto> {
+  async create(
+    dto: CreateAllowedAppPresetDto,
+    scopeOrganizationIds?: string[],
+    actorUserId?: string,
+  ): Promise<AllowedAppPresetDetailDto> {
     await this.ensureValidPlatformData();
 
     this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
 
-    await this.validateAppsExist(dto.appIds);
+    await this.validateAppsExist(dto.appIds, this.normalizePlatform(dto.platform));
 
     const preset = await this.prisma.allowedAppPreset.create({
       data: {
         name: dto.name,
         description: dto.description,
-        platform: 'both',
+        platform: this.normalizePlatform(dto.platform),
         organizationId: dto.organizationId,
         workTypeId: dto.workTypeId,
+        createdById: actorUserId,
+        updatedById: actorUserId,
         items: dto.appIds?.length
           ? {
               create: dto.appIds.map((appId) => ({
@@ -141,6 +159,10 @@ export class AllowedAppPresetsService {
 
     if (filter.workTypeId) {
       where.workTypeId = filter.workTypeId;
+    }
+
+    if (filter.platform && filter.platform !== 'all') {
+      where.platform = this.normalizePlatform(filter.platform);
     }
 
     const [data, total] = await Promise.all([
@@ -206,13 +228,18 @@ export class AllowedAppPresetsService {
     id: string,
     dto: UpdateAllowedAppPresetDto,
     scopeOrganizationIds?: string[],
+    actorUserId?: string,
   ): Promise<AllowedAppPresetDetailDto> {
     await this.ensureValidPlatformData();
-    await this.findOne(id, scopeOrganizationIds);
+    const existingPreset = await this.findOne(id, scopeOrganizationIds);
 
     this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
 
-    await this.validateAppsExist(dto.appIds);
+    const targetPlatform = dto.platform === undefined
+      ? this.normalizePlatform(existingPreset.platform)
+      : this.normalizePlatform(dto.platform);
+
+    await this.validateAppsExist(dto.appIds, targetPlatform);
 
     // 앱 목록이 변경되는 경우 처리
     if (dto.appIds !== undefined) {
@@ -237,9 +264,10 @@ export class AllowedAppPresetsService {
       data: {
         name: dto.name,
         description: dto.description,
-        platform: 'both',
+        platform: dto.platform === undefined ? undefined : targetPlatform,
         organizationId: dto.organizationId,
         workTypeId: dto.workTypeId,
+        updatedById: actorUserId,
       },
       include: {
         organization: { select: { id: true, name: true } },
@@ -256,6 +284,23 @@ export class AllowedAppPresetsService {
     });
 
     await this.notifyPoliciesByPreset(id);
+
+    if (actorUserId) {
+      void this.prisma.auditLog.create({
+        data: {
+          accountId: actorUserId,
+          organizationId: preset.organization?.id ?? null,
+          action: AuditAction.UPDATE,
+          resourceType: 'AllowedAppPreset',
+          resourceId: preset.id,
+          resourceName: preset.name,
+          changesAfter: {
+            presetId: preset.id,
+            updatedById: actorUserId,
+          },
+        },
+      }).catch(() => undefined);
+    }
 
     return this.toDetailDto(preset);
   }
@@ -304,10 +349,11 @@ export class AllowedAppPresetsService {
     id: string,
     appIds: string[],
     scopeOrganizationIds?: string[],
+    actorUserId?: string,
   ): Promise<AllowedAppPresetDetailDto> {
     await this.ensureValidPlatformData();
     const preset = await this.findOne(id, scopeOrganizationIds);
-    await this.validateAppsExist(appIds);
+    await this.validateAppsExist(appIds, this.normalizePlatform(preset.platform));
 
     // 기존에 없는 앱만 추가
     const existingItems = await this.prisma.allowedAppPresetItem.findMany({
@@ -329,6 +375,24 @@ export class AllowedAppPresetsService {
 
     await this.notifyPoliciesByPreset(id);
 
+    if (actorUserId) {
+      void this.prisma.auditLog.create({
+        data: {
+          accountId: actorUserId,
+          organizationId: preset.organization?.id ?? null,
+          action: AuditAction.UPDATE,
+          resourceType: 'AllowedAppPreset',
+          resourceId: id,
+          resourceName: preset.name,
+          changesAfter: {
+            presetId: id,
+            addedAppIds: newAppIds,
+            updatedById: actorUserId,
+          },
+        },
+      }).catch(() => undefined);
+    }
+
     return this.findOne(id);
   }
 
@@ -336,10 +400,11 @@ export class AllowedAppPresetsService {
     id: string,
     appIds: string[],
     scopeOrganizationIds?: string[],
+    actorUserId?: string,
   ): Promise<AllowedAppPresetDetailDto> {
     await this.ensureValidPlatformData();
 
-    await this.findOne(id, scopeOrganizationIds);
+    const preset = await this.findOne(id, scopeOrganizationIds);
 
     await this.prisma.allowedAppPresetItem.deleteMany({
       where: {
@@ -349,6 +414,24 @@ export class AllowedAppPresetsService {
     });
 
     await this.notifyPoliciesByPreset(id);
+
+    if (actorUserId) {
+      void this.prisma.auditLog.create({
+        data: {
+          accountId: actorUserId,
+          organizationId: preset.organization?.id ?? null,
+          action: AuditAction.UPDATE,
+          resourceType: 'AllowedAppPreset',
+          resourceId: id,
+          resourceName: preset.name,
+          changesAfter: {
+            presetId: id,
+            removedAppIds: appIds,
+            updatedById: actorUserId,
+          },
+        },
+      }).catch(() => undefined);
+    }
 
     return this.findOne(id, scopeOrganizationIds);
   }
@@ -433,7 +516,7 @@ export class AllowedAppPresetsService {
   }
 
   private toResponseDto(preset: any): AllowedAppPresetResponseDto {
-    return toAllowedAppPresetResponseDto(preset);
+    return toAllowedAppPresetResponseDto(preset, (platform) => this.normalizePlatform(platform));
   }
 
   private toDetailDto(preset: any): AllowedAppPresetDetailDto {

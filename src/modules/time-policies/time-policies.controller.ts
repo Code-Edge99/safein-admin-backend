@@ -44,7 +44,7 @@ export class TimePoliciesController {
   @ApiOperation({ summary: '시간 정책 생성' })
   @ApiResponse({ status: 201, description: '정책 생성 성공', type: TimePolicyResponseDto })
   async create(@Req() req: AuthenticatedAdminRequest, @Body() createTimePolicyDto: CreateTimePolicyDto): Promise<TimePolicyResponseDto> {
-    return this.timePoliciesService.create(createTimePolicyDto, req.organizationScopeIds ?? undefined);
+    return this.timePoliciesService.create(createTimePolicyDto, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Get()
@@ -113,7 +113,7 @@ export class TimePoliciesController {
     @Param('id') id: string,
     @Body() updateTimePolicyDto: UpdateTimePolicyDto,
   ): Promise<TimePolicyResponseDto> {
-    return this.timePoliciesService.update(id, updateTimePolicyDto, req.organizationScopeIds ?? undefined);
+    return this.timePoliciesService.update(id, updateTimePolicyDto, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Delete(':id')

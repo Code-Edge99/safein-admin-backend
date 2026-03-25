@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { AuditAction } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
 import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
@@ -37,6 +38,7 @@ export class BehaviorConditionsService {
   async create(
     createDto: CreateBehaviorConditionDto,
     scopeOrganizationIds?: string[],
+    actorUserId?: string,
   ): Promise<BehaviorConditionResponseDto> {
     const {
       organizationId,
@@ -75,6 +77,8 @@ export class BehaviorConditionsService {
         ...thresholdData,
         organizationId,
         workTypeId,
+        createdById: actorUserId,
+        updatedById: actorUserId,
       },
       include: {
         organization: { select: { id: true, name: true } },
@@ -199,6 +203,7 @@ export class BehaviorConditionsService {
     id: string,
     updateDto: UpdateBehaviorConditionDto,
     scopeOrganizationIds?: string[],
+    actorUserId?: string,
   ): Promise<BehaviorConditionResponseDto> {
     const current = await this.prisma.behaviorCondition.findUnique({
       where: { id },
@@ -258,7 +263,10 @@ export class BehaviorConditionsService {
 
     const condition = await this.prisma.behaviorCondition.update({
       where: { id },
-      data: updateData,
+      data: {
+        ...updateData,
+        updatedById: actorUserId,
+      },
       include: {
         organization: { select: { id: true, name: true } },
         workType: { select: { id: true, name: true } },
@@ -274,6 +282,23 @@ export class BehaviorConditionsService {
       impactedPolicies.map((item) => item.policyId),
       'update',
     );
+
+    if (actorUserId) {
+      void this.prisma.auditLog.create({
+        data: {
+          accountId: actorUserId,
+          organizationId: condition.organizationId,
+          action: AuditAction.UPDATE,
+          resourceType: 'BehaviorCondition',
+          resourceId: condition.id,
+          resourceName: condition.name,
+          changesAfter: {
+            behaviorConditionId: condition.id,
+            updatedById: actorUserId,
+          },
+        },
+      }).catch(() => undefined);
+    }
 
     return this.toResponseDto(condition);
   }

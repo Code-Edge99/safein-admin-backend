@@ -46,7 +46,7 @@ export class ZonesController {
   @ApiOperation({ summary: '구역 생성' })
   @ApiResponse({ status: 201, description: '구역 생성 성공', type: ZoneResponseDto })
   async create(@Req() req: AuthenticatedAdminRequest, @Body() createZoneDto: CreateZoneDto): Promise<ZoneResponseDto> {
-    return this.zonesService.create(createZoneDto, req.organizationScopeIds ?? undefined);
+    return this.zonesService.create(createZoneDto, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Get()
@@ -104,7 +104,7 @@ export class ZonesController {
     @Param('id') id: string,
     @Body() updateZoneDto: UpdateZoneDto,
   ): Promise<ZoneResponseDto> {
-    return this.zonesService.update(id, updateZoneDto, req.organizationScopeIds ?? undefined);
+    return this.zonesService.update(id, updateZoneDto, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Post(':id/check-point')

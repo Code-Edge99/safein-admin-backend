@@ -8,6 +8,7 @@ import {
   Body,
   Param,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -29,6 +30,7 @@ import {
   RefreshAllowedAppIconsDto,
   RefreshAllowedAppIconsResponseDto,
 } from './dto';
+import { AuthenticatedAdminRequest } from '../../common/types/authenticated-request.type';
 
 @ApiTags('허용앱')
 @Controller('allowed-apps')
@@ -41,8 +43,8 @@ export class AllowedAppsController {
   @Post()
   @ApiOperation({ summary: '허용앱 등록' })
   @ApiResponse({ status: 201, type: AllowedAppResponseDto })
-  create(@Body() dto: CreateAllowedAppDto): Promise<AllowedAppResponseDto> {
-    return this.allowedAppsService.create(dto);
+  create(@Req() req: AuthenticatedAdminRequest, @Body() dto: CreateAllowedAppDto): Promise<AllowedAppResponseDto> {
+    return this.allowedAppsService.create(dto, req.user?.id);
   }
 
   @Get()
@@ -77,17 +79,18 @@ export class AllowedAppsController {
   @ApiOperation({ summary: '허용앱 수정' })
   @ApiResponse({ status: 200, type: AllowedAppResponseDto })
   update(
+    @Req() req: AuthenticatedAdminRequest,
     @Param('id') id: string,
     @Body() dto: UpdateAllowedAppDto,
   ): Promise<AllowedAppResponseDto> {
-    return this.allowedAppsService.update(id, dto);
+    return this.allowedAppsService.update(id, dto, req.user?.id);
   }
 
   @Patch(':id/toggle-global')
   @ApiOperation({ summary: '전역 허용앱 설정 토글' })
   @ApiResponse({ status: 200, type: AllowedAppResponseDto })
-  toggleGlobal(@Param('id') id: string): Promise<AllowedAppResponseDto> {
-    return this.allowedAppsService.toggleGlobal(id);
+  toggleGlobal(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<AllowedAppResponseDto> {
+    return this.allowedAppsService.toggleGlobal(id, req.user?.id);
   }
 
   @Post('refresh-icons')

@@ -87,6 +87,7 @@ export class ControlPoliciesService {
   async create(
     createDto: CreateControlPolicyDto,
     scopeOrganizationIds?: string[],
+    actorUserId?: string,
   ): Promise<ControlPolicyDetailDto> {
     const {
       organizationId,
@@ -145,6 +146,8 @@ export class ControlPoliciesService {
         ...rest,
         organizationId,
         workTypeId,
+        createdById: actorUserId,
+        updatedById: actorUserId,
         zones: zoneIds?.length
           ? {
               create: zoneIds.map((zoneId) => ({ zoneId })),
@@ -506,6 +509,7 @@ export class ControlPoliciesService {
     id: string,
     updateDto: UpdateControlPolicyDto,
     scopeOrganizationIds?: string[],
+    actorUserId?: string,
   ): Promise<ControlPolicyDetailDto> {
     await this.assertPolicyInScope(id, scopeOrganizationIds);
     await this.findOne(id, scopeOrganizationIds);
@@ -572,6 +576,8 @@ export class ControlPoliciesService {
       if (workTypeId) {
         updateData.workTypeId = workTypeId;
       }
+
+      updateData.updatedById = actorUserId;
 
       await tx.controlPolicy.update({
         where: { id },
@@ -683,6 +689,23 @@ export class ControlPoliciesService {
         workTypeId: updatedPolicy.workTypeId,
         trigger: updatedPolicy.isActive ? 'update' : 'deactivate',
       });
+
+      if (actorUserId) {
+        void this.prisma.auditLog.create({
+          data: {
+            accountId: actorUserId,
+            organizationId: updatedPolicy.organizationId,
+            action: AuditAction.UPDATE,
+            resourceType: 'ControlPolicy',
+            resourceId: updatedPolicy.id,
+            resourceName: '제어 정책 수정',
+            changesAfter: {
+              policyId: updatedPolicy.id,
+              updatedById: actorUserId,
+            },
+          },
+        }).catch(() => undefined);
+      }
     }
 
     return this.findOneDetail(id, scopeOrganizationIds);

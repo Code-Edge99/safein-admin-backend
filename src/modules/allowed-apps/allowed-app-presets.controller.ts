@@ -42,7 +42,7 @@ export class AllowedAppPresetsController {
   @ApiOperation({ summary: '허용앱 프리셋 생성' })
   @ApiResponse({ status: 201, type: AllowedAppPresetDetailDto })
   create(@Req() req: AuthenticatedAdminRequest, @Body() dto: CreateAllowedAppPresetDto): Promise<AllowedAppPresetDetailDto> {
-    return this.presetsService.create(dto, req.organizationScopeIds ?? undefined);
+    return this.presetsService.create(dto, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Get()
@@ -84,7 +84,7 @@ export class AllowedAppPresetsController {
     @Param('id') id: string,
     @Body() dto: UpdateAllowedAppPresetDto,
   ): Promise<AllowedAppPresetDetailDto> {
-    return this.presetsService.update(id, dto, req.organizationScopeIds ?? undefined);
+    return this.presetsService.update(id, dto, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Post(':id/apps')
@@ -95,7 +95,7 @@ export class AllowedAppPresetsController {
     @Param('id') id: string,
     @Body() dto: AssignAppsToPresetDto,
   ): Promise<AllowedAppPresetDetailDto> {
-    return this.presetsService.addApps(id, dto.appIds, req.organizationScopeIds ?? undefined);
+    return this.presetsService.addApps(id, dto.appIds, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Delete(':id/apps')
@@ -106,7 +106,7 @@ export class AllowedAppPresetsController {
     @Param('id') id: string,
     @Body() dto: AssignAppsToPresetDto,
   ): Promise<AllowedAppPresetDetailDto> {
-    return this.presetsService.removeApps(id, dto.appIds, req.organizationScopeIds ?? undefined);
+    return this.presetsService.removeApps(id, dto.appIds, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Delete(':id')

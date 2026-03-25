@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { AuditAction } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { preferKstTimestamp } from '../../common/utils/kst-time.util';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
@@ -33,7 +34,11 @@ export class ZonesService {
     assertOrganizationInScopeOrThrow(zone.organizationId, scopeOrganizationIds, '구역을 찾을 수 없습니다.');
   }
 
-  async create(createZoneDto: CreateZoneDto, scopeOrganizationIds?: string[]): Promise<ZoneResponseDto> {
+  async create(
+    createZoneDto: CreateZoneDto,
+    scopeOrganizationIds?: string[],
+    actorUserId?: string,
+  ): Promise<ZoneResponseDto> {
     const { coordinates, organizationId, workTypeId, type, shape, ...rest } = createZoneDto;
 
     this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
@@ -73,6 +78,8 @@ export class ZonesService {
         ...geometryMetadata,
         organizationId,
         workTypeId,
+        createdById: actorUserId,
+        updatedById: actorUserId,
       },
       include: {
         organization: {
@@ -190,6 +197,7 @@ export class ZonesService {
     id: string,
     updateZoneDto: UpdateZoneDto,
     scopeOrganizationIds?: string[],
+    actorUserId?: string,
   ): Promise<ZoneResponseDto> {
     await this.findOne(id, scopeOrganizationIds);
 
@@ -247,7 +255,10 @@ export class ZonesService {
 
     const zone = await this.prisma.zone.update({
       where: { id },
-      data: updateData,
+      data: {
+        ...updateData,
+        updatedById: actorUserId,
+      },
       include: {
         organization: {
           select: { id: true, name: true },
@@ -266,6 +277,23 @@ export class ZonesService {
       impactedPolicies.map((item) => item.policyId),
       'update',
     );
+
+    if (actorUserId) {
+      void this.prisma.auditLog.create({
+        data: {
+          accountId: actorUserId,
+          organizationId: zone.organizationId,
+          action: AuditAction.UPDATE,
+          resourceType: 'Zone',
+          resourceId: zone.id,
+          resourceName: zone.name,
+          changesAfter: {
+            zoneId: zone.id,
+            updatedById: actorUserId,
+          },
+        },
+      }).catch(() => undefined);
+    }
 
     return this.toResponseDto(zone);
   }

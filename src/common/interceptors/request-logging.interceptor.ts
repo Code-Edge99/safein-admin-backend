@@ -4,6 +4,7 @@ import {
   ExecutionContext,
   CallHandler,
   Logger,
+  HttpException,
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
@@ -64,7 +65,7 @@ export class RequestLoggingInterceptor implements NestInterceptor {
         },
         error: (error) => {
           const durationMs = Date.now() - startedAt;
-          const statusCode = response.statusCode || 500;
+          const statusCode = this.resolveErrorStatusCode(error, response.statusCode);
           this.logger.warn(
             `${request.method} ${safeUrl} ${statusCode} ${durationMs}ms`,
           );
@@ -72,6 +73,28 @@ export class RequestLoggingInterceptor implements NestInterceptor {
         },
       }),
     );
+  }
+
+  private resolveErrorStatusCode(error: unknown, fallbackStatusCode?: number): number {
+    if (error instanceof HttpException) {
+      return error.getStatus();
+    }
+
+    const status = (error as { status?: unknown })?.status;
+    if (typeof status === 'number' && Number.isFinite(status)) {
+      return status;
+    }
+
+    const statusCode = (error as { statusCode?: unknown })?.statusCode;
+    if (typeof statusCode === 'number' && Number.isFinite(statusCode)) {
+      return statusCode;
+    }
+
+    if (typeof fallbackStatusCode === 'number' && fallbackStatusCode >= 400) {
+      return fallbackStatusCode;
+    }
+
+    return 500;
   }
 
   private shouldPersist(method: string, statusCode: number, safeUrl: string): boolean {

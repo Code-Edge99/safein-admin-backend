@@ -201,6 +201,12 @@ export class CreateAllowedAppPresetDto {
   @IsOptional()
   workTypeId?: string;
 
+  @ApiPropertyOptional({ description: '프리셋 플랫폼 (android | ios)', default: 'android' })
+  @IsString()
+  @IsOptional()
+  @IsIn(['android', 'ios'])
+  platform?: string;
+
   @ApiPropertyOptional({ description: '앱 ID 목록' })
   @IsArray()
   @IsString({ each: true })
@@ -231,6 +237,9 @@ export class AllowedAppPresetResponseDto {
     id: string;
     name: string;
   };
+
+  @ApiProperty({ description: '플랫폼 (android | ios)' })
+  platform: string;
 
   @ApiProperty({ description: '포함된 앱 수' })
   appCount: number;
@@ -265,6 +274,12 @@ export class AllowedAppPresetFilterDto {
   @IsString()
   @IsOptional()
   workTypeId?: string;
+
+  @ApiPropertyOptional({ description: '플랫폼 필터 (android | ios | all)', default: 'all' })
+  @IsString()
+  @IsOptional()
+  @IsIn(['all', 'android', 'ios'])
+  platform?: string;
 
   @ApiPropertyOptional({ description: '페이지 번호', default: 1 })
   @IsNumber()

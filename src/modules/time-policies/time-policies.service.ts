@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { AuditAction } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
 import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
@@ -35,6 +36,7 @@ export class TimePoliciesService {
   async create(
     createTimePolicyDto: CreateTimePolicyDto,
     scopeOrganizationIds?: string[],
+    actorUserId?: string,
   ): Promise<TimePolicyResponseDto> {
     const { organizationId, workTypeId, excludePeriods, ...rest } = createTimePolicyDto;
 
@@ -74,6 +76,8 @@ export class TimePoliciesService {
         days,
         organizationId,
         workTypeId,
+        createdById: actorUserId,
+        updatedById: actorUserId,
         ...(normalizedExcludePeriods.length > 0 && {
           excludePeriods: {
             create: normalizedExcludePeriods.map((ep) => ({
@@ -201,6 +205,7 @@ export class TimePoliciesService {
     id: string,
     updateTimePolicyDto: UpdateTimePolicyDto,
     scopeOrganizationIds?: string[],
+    actorUserId?: string,
   ): Promise<TimePolicyResponseDto> {
     await this.findOne(id, scopeOrganizationIds);
 
@@ -272,7 +277,10 @@ export class TimePoliciesService {
 
     const policy = await this.prisma.timePolicy.update({
       where: { id },
-      data: updateData,
+      data: {
+        ...updateData,
+        updatedById: actorUserId,
+      },
       include: {
         organization: {
           select: { id: true, name: true },
@@ -292,6 +300,23 @@ export class TimePoliciesService {
       impactedPolicies.map((item) => item.policyId),
       'update',
     );
+
+    if (actorUserId) {
+      void this.prisma.auditLog.create({
+        data: {
+          accountId: actorUserId,
+          organizationId: policy.organizationId,
+          action: AuditAction.UPDATE,
+          resourceType: 'TimePolicy',
+          resourceId: policy.id,
+          resourceName: policy.name,
+          changesAfter: {
+            timePolicyId: policy.id,
+            updatedById: actorUserId,
+          },
+        },
+      }).catch(() => undefined);
+    }
 
     return this.toResponseDto(policy);
   }

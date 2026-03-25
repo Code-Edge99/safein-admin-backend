@@ -43,7 +43,7 @@ export class BehaviorConditionsController {
   @ApiOperation({ summary: '행동 조건 생성' })
   @ApiResponse({ status: 201, description: '조건 생성 성공', type: BehaviorConditionResponseDto })
   async create(@Req() req: AuthenticatedAdminRequest, @Body() createDto: CreateBehaviorConditionDto): Promise<BehaviorConditionResponseDto> {
-    return this.behaviorConditionsService.create(createDto, req.organizationScopeIds ?? undefined);
+    return this.behaviorConditionsService.create(createDto, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Get()
@@ -93,7 +93,7 @@ export class BehaviorConditionsController {
     @Param('id') id: string,
     @Body() updateDto: UpdateBehaviorConditionDto,
   ): Promise<BehaviorConditionResponseDto> {
-    return this.behaviorConditionsService.update(id, updateDto, req.organizationScopeIds ?? undefined);
+    return this.behaviorConditionsService.update(id, updateDto, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Delete(':id')

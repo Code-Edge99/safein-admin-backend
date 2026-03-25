@@ -49,7 +49,7 @@ export class ControlPoliciesController {
   @ApiOperation({ summary: '제어 정책 생성' })
   @ApiResponse({ status: 201, description: '정책 생성 성공', type: ControlPolicyDetailDto })
   async create(@Req() req: AuthenticatedAdminRequest, @Body() createDto: CreateControlPolicyDto): Promise<ControlPolicyDetailDto> {
-    return this.controlPoliciesService.create(createDto, req.organizationScopeIds ?? undefined);
+    return this.controlPoliciesService.create(createDto, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Get()
@@ -104,7 +104,7 @@ export class ControlPoliciesController {
     @Param('id') id: string,
     @Body() updateDto: UpdateControlPolicyDto,
   ): Promise<ControlPolicyDetailDto> {
-    return this.controlPoliciesService.update(id, updateDto, req.organizationScopeIds ?? undefined);
+    return this.controlPoliciesService.update(id, updateDto, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Patch(':id/toggle-active')

@@ -1,12 +1,16 @@
 import { AllowedAppPresetDetailDto, AllowedAppPresetResponseDto } from './dto';
 
-export function toAllowedAppPresetResponseDto(preset: any): AllowedAppPresetResponseDto {
+export function toAllowedAppPresetResponseDto(
+  preset: any,
+  normalizePlatform: (platform?: string) => 'android' | 'ios',
+): AllowedAppPresetResponseDto {
   return {
     id: preset.id,
     name: preset.name,
     description: preset.description,
     organization: preset.organization,
     workType: preset.workType,
+    platform: normalizePlatform(preset.platform),
     appCount: preset._count?.items || 0,
     policyCount: preset._count?.policyPresets || 0,
     createdAt: preset.createdAt,
@@ -16,10 +20,10 @@ export function toAllowedAppPresetResponseDto(preset: any): AllowedAppPresetResp
 
 export function toAllowedAppPresetDetailDto(
   preset: any,
-  normalizePlatform: (platform?: string) => 'android' | 'ios' | 'both',
+  normalizePlatform: (platform?: string) => 'android' | 'ios',
 ): AllowedAppPresetDetailDto {
   return {
-    ...toAllowedAppPresetResponseDto(preset),
+    ...toAllowedAppPresetResponseDto(preset, normalizePlatform),
     apps: preset.items?.map((item: any) => ({
       id: item.allowedApp.id,
       name: item.allowedApp.name,

@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { AuditAction, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toAllowedAppResponseDto } from './allowed-apps.mapper';
@@ -49,7 +49,7 @@ export class AllowedAppsService {
     this.platformsNormalized = true;
   }
 
-  async create(dto: CreateAllowedAppDto): Promise<AllowedAppResponseDto> {
+  async create(dto: CreateAllowedAppDto, actorUserId?: string): Promise<AllowedAppResponseDto> {
     await this.ensureValidPlatformData();
 
     const normalizedPackageName = this.normalizePackageName(dto.packageName);
@@ -71,6 +71,8 @@ export class AllowedAppsService {
         platform: this.normalizePlatform(dto.platform),
         iconUrl: dto.iconUrl,
         isGlobal: dto.isGlobal ?? false,
+        createdById: actorUserId,
+        updatedById: actorUserId,
       },
       include: {
         _count: {
@@ -179,12 +181,12 @@ export class AllowedAppsService {
     return this.toResponseDto(app);
   }
 
-  async update(id: string, dto: UpdateAllowedAppDto): Promise<AllowedAppResponseDto> {
+  async update(id: string, dto: UpdateAllowedAppDto, actorUserId?: string): Promise<AllowedAppResponseDto> {
     await this.ensureValidPlatformData();
 
     await this.findOne(id);
 
-    const updateData: UpdateAllowedAppDto = { ...dto };
+    const updateData: any = { ...dto };
     if (dto.platform !== undefined) {
       updateData.platform = this.normalizePlatform(dto.platform);
     }
@@ -210,7 +212,10 @@ export class AllowedAppsService {
 
     const app = await this.prisma.allowedApp.update({
       where: { id },
-      data: updateData,
+      data: {
+        ...updateData,
+        updatedById: actorUserId,
+      },
       include: {
         _count: {
           select: { presetItems: true },
@@ -219,6 +224,22 @@ export class AllowedAppsService {
     });
 
     await this.notifyPoliciesByAllowedApp(id);
+
+    if (actorUserId) {
+      void this.prisma.auditLog.create({
+        data: {
+          accountId: actorUserId,
+          action: AuditAction.UPDATE,
+          resourceType: 'AllowedApp',
+          resourceId: app.id,
+          resourceName: app.name,
+          changesAfter: {
+            allowedAppId: app.id,
+            updatedById: actorUserId,
+          },
+        },
+      }).catch(() => undefined);
+    }
 
     const installedCountMap = await this.getInstalledCountByApps([id]);
     return this.toResponseDto(app, installedCountMap.get(id) || 0);
@@ -375,14 +396,17 @@ export class AllowedAppsService {
     return result.map((r) => r.category).filter((c): c is string => c !== null);
   }
 
-  async toggleGlobal(id: string): Promise<AllowedAppResponseDto> {
+  async toggleGlobal(id: string, actorUserId?: string): Promise<AllowedAppResponseDto> {
     await this.ensureValidPlatformData();
 
     const app = await this.findOne(id);
 
     const updated = await this.prisma.allowedApp.update({
       where: { id },
-      data: { isGlobal: !app.isGlobal },
+      data: {
+        isGlobal: !app.isGlobal,
+        updatedById: actorUserId,
+      },
       include: {
         _count: {
           select: { presetItems: true },
@@ -391,6 +415,23 @@ export class AllowedAppsService {
     });
 
     await this.notifyPoliciesByAllowedApp(id);
+
+    if (actorUserId) {
+      void this.prisma.auditLog.create({
+        data: {
+          accountId: actorUserId,
+          action: AuditAction.UPDATE,
+          resourceType: 'AllowedApp',
+          resourceId: updated.id,
+          resourceName: updated.name,
+          changesAfter: {
+            allowedAppId: updated.id,
+            isGlobal: updated.isGlobal,
+            updatedById: actorUserId,
+          },
+        },
+      }).catch(() => undefined);
+    }
 
     const installedCountMap = await this.getInstalledCountByApps([id]);
     return this.toResponseDto(updated, installedCountMap.get(id) || 0);

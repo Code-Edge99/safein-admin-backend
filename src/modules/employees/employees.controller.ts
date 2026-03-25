@@ -47,7 +47,7 @@ export class EmployeesController {
   @ApiOperation({ summary: '직원 생성' })
   @ApiResponse({ status: 201, description: '직원 생성 성공', type: EmployeeResponseDto })
   create(@Req() req: AuthenticatedAdminRequest, @Body() createEmployeeDto: CreateEmployeeDto): Promise<EmployeeResponseDto> {
-    return this.employeesService.create(createEmployeeDto, req.organizationScopeIds ?? undefined);
+    return this.employeesService.create(createEmployeeDto, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Get()
@@ -82,7 +82,7 @@ export class EmployeesController {
     @Param('employeeId') employeeId: string,
     @Body() updateEmployeeDto: UpdateEmployeeDto,
   ): Promise<EmployeeResponseDto> {
-    return this.employeesService.update(employeeId, updateEmployeeDto, req.organizationScopeIds ?? undefined);
+    return this.employeesService.update(employeeId, updateEmployeeDto, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Patch(':employeeId/assign-device')
