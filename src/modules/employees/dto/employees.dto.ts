@@ -100,11 +100,6 @@ export class CreateEmployeeDto {
   @IsEnum(EmployeeStatusEnum)
   status?: EmployeeStatusEnum;
 
-  @ApiPropertyOptional({ description: '입사일' })
-  @IsOptional()
-  @IsDateString()
-  hireDate?: string;
-
   @ApiPropertyOptional({ description: '초기 비밀번호 (앱 로그인 시 사용)', minLength: 8 })
   @IsOptional()
   @IsString()
@@ -173,9 +168,6 @@ export class EmployeeResponseDto {
 
   @ApiProperty({ description: '상태' })
   status: string;
-
-  @ApiPropertyOptional({ description: '입사일' })
-  hireDate?: Date;
 
   @ApiPropertyOptional({ description: '메모' })
   memo?: string;

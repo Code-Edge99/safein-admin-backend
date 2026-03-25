@@ -13,7 +13,6 @@ export function toEmployeeResponseDto(employee: any): EmployeeResponseDto {
     workTypeId: employee.workTypeId,
     workTypeName: employee.workType?.name,
     status: employee.status,
-    hireDate: employee.hireDate,
     memo: employee.memo,
     createdAt: employee.createdAt,
     updatedAt: employee.updatedAt,

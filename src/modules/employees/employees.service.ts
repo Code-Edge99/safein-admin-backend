@@ -161,7 +161,6 @@ export class EmployeesService {
           memo: normalizedMemo,
           workTypeId: dto.workTypeId,
           status: (dto.status as EmployeeStatus) || EmployeeStatus.ACTIVE,
-          hireDate: dto.hireDate ? parseDateInputAsUtc(dto.hireDate, 'start') : undefined,
         } as any,
         include: {
           organization: true,
@@ -345,7 +344,6 @@ export class EmployeesService {
     const normalizedRole = dto.role !== undefined ? this.normalizeOptionalText(dto.role) : undefined;
     const normalizedEmail = dto.email !== undefined ? this.normalizeOptionalEmail(dto.email) : undefined;
     const normalizedMemo = dto.memo !== undefined ? this.normalizeOptionalText(dto.memo) : undefined;
-
     if (requestedEmployeeId !== undefined && !requestedEmployeeId) {
       throw new BadRequestException('직원 ID는 비워둘 수 없습니다.');
     }
@@ -389,11 +387,6 @@ export class EmployeesService {
             memo: normalizedMemo,
             workTypeId: dto.workTypeId,
             status: dto.status as EmployeeStatus | undefined,
-            hireDate: dto.hireDate
-              ? parseDateInputAsUtc(dto.hireDate, 'start')
-              : dto.hireDate === null
-                ? null
-                : undefined,
           } as any,
           include: {
             organization: true,
@@ -439,7 +432,6 @@ export class EmployeesService {
         id: true,
         name: true,
         organizationId: true,
-        hireDate: true,
       },
     });
 
@@ -466,7 +458,6 @@ export class EmployeesService {
           organizationId: employee.organizationId,
           status: 'DELETE' as EmployeeStatus,
           memo: `삭제 아카이브 계정 (원본 직원ID: ${employee.id})`,
-          hireDate: employee.hireDate,
           phone: null,
           email: null,
           position: null,
@@ -1042,7 +1033,6 @@ export class EmployeesService {
         status: 'PHONE_INFO_REVIEW' as EmployeeStatus,
         email: source.email,
         memo: [source.memo, reason].filter(Boolean).join(' | '),
-        hireDate: source.hireDate,
       },
     });
 
