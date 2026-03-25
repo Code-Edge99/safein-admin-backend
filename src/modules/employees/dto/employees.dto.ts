@@ -263,6 +263,12 @@ export class BulkMoveOrganizationDto extends BulkEmployeeActionDto {
   targetOrganizationId: string;
 }
 
+export class BulkEmployeeStatusUpdateDto extends BulkEmployeeActionDto {
+  @ApiProperty({ description: '변경할 상태', enum: EmployeeStatusEnum })
+  @IsEnum(EmployeeStatusEnum)
+  status: EmployeeStatusEnum;
+}
+
 export class EmployeeMdmManualUnblockDto {
   @ApiProperty({ description: '공개 디바이스 ID (예: IOS-ABCDEF01)' })
   @IsString()

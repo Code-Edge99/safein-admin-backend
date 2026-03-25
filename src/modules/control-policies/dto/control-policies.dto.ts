@@ -264,6 +264,19 @@ export class AssignEmployeesDto {
   employeeIds: string[];
 }
 
+export class BulkControlPolicyActionDto {
+  @ApiProperty({ description: '정책 ID 목록' })
+  @IsArray()
+  @IsString({ each: true })
+  policyIds: string[];
+}
+
+export class BulkControlPolicyStatusUpdateDto extends BulkControlPolicyActionDto {
+  @ApiProperty({ description: '활성 여부' })
+  @IsBoolean()
+  isActive: boolean;
+}
+
 export class ControlPolicyStatsDto {
   @ApiProperty({ description: '전체 정책 수' })
   totalPolicies: number;

@@ -733,6 +733,92 @@ export class ControlPoliciesService {
     });
   }
 
+  async bulkRemove(
+    policyIds: string[],
+    scopeOrganizationIds?: string[],
+  ): Promise<{ requested: number; deleted: number; skipped: number }> {
+    const uniquePolicyIds = Array.from(new Set(policyIds.filter(Boolean)));
+    const requested = uniquePolicyIds.length;
+
+    if (uniquePolicyIds.length === 0) {
+      return { requested: 0, deleted: 0, skipped: 0 };
+    }
+
+    const targetPolicies = await this.prisma.controlPolicy.findMany({
+      where: {
+        id: { in: uniquePolicyIds },
+        ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+      },
+      select: { id: true },
+    });
+
+    const targetPolicyIds = targetPolicies.map((policy) => policy.id);
+
+    if (targetPolicyIds.length === 0) {
+      return { requested, deleted: 0, skipped: requested };
+    }
+
+    await this.prisma.$transaction(async (tx: any) => {
+      await tx.controlPolicyZone.deleteMany({ where: { policyId: { in: targetPolicyIds } } });
+      await tx.controlPolicyTimePolicy.deleteMany({ where: { policyId: { in: targetPolicyIds } } });
+      await tx.controlPolicyBehavior.deleteMany({ where: { policyId: { in: targetPolicyIds } } });
+      await tx.controlPolicyAllowedApp.deleteMany({ where: { policyId: { in: targetPolicyIds } } });
+      await tx.controlPolicyEmployee.deleteMany({ where: { policyId: { in: targetPolicyIds } } });
+      await tx.controlPolicy.deleteMany({ where: { id: { in: targetPolicyIds } } });
+    });
+
+    return {
+      requested,
+      deleted: targetPolicyIds.length,
+      skipped: Math.max(0, requested - targetPolicyIds.length),
+    };
+  }
+
+  async bulkSetActive(
+    policyIds: string[],
+    isActive: boolean,
+    scopeOrganizationIds?: string[],
+  ): Promise<{ requested: number; updated: number; skipped: number }> {
+    const uniquePolicyIds = Array.from(new Set(policyIds.filter(Boolean)));
+    const requested = uniquePolicyIds.length;
+
+    if (uniquePolicyIds.length === 0) {
+      return { requested: 0, updated: 0, skipped: 0 };
+    }
+
+    const targetPolicies = await this.prisma.controlPolicy.findMany({
+      where: {
+        id: { in: uniquePolicyIds },
+        ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+      },
+      select: { id: true, isActive: true },
+    });
+
+    const changedTargetPolicyIds = targetPolicies
+      .filter((policy) => policy.isActive !== isActive)
+      .map((policy) => policy.id);
+
+    if (changedTargetPolicyIds.length === 0) {
+      return { requested, updated: 0, skipped: requested };
+    }
+
+    const result = await this.prisma.controlPolicy.updateMany({
+      where: { id: { in: changedTargetPolicyIds } },
+      data: { isActive },
+    });
+
+    void this.notifyPoliciesChanged(changedTargetPolicyIds, isActive ? 'activate' : 'deactivate')
+      .catch((error) => {
+        this.logger.warn(`정책 일괄 상태 변경 후 policy_changed 비동기 전송 실패: ${String(error)}`);
+      });
+
+    return {
+      requested,
+      updated: result.count,
+      skipped: Math.max(0, requested - result.count),
+    };
+  }
+
   async toggleActive(id: string, scopeOrganizationIds?: string[]): Promise<ControlPolicyResponseDto> {
     await this.assertPolicyInScope(id, scopeOrganizationIds);
 
@@ -789,14 +875,37 @@ export class ControlPoliciesService {
       },
     });
 
-    for (const policy of policies) {
-      await this.notifyPolicyChangedForWorkType({
+    const notifyConcurrency = this.resolvePolicyNotifyConcurrency();
+
+    for (let index = 0; index < policies.length; index += notifyConcurrency) {
+      const chunk = policies.slice(index, index + notifyConcurrency);
+      const results = await Promise.allSettled(chunk.map((policy) => this.notifyPolicyChangedForWorkType({
         policyId: policy.id,
         organizationId: policy.organizationId,
         workTypeId: policy.workTypeId,
         trigger,
+      })));
+
+      results.forEach((result, chunkIndex) => {
+        if (result.status === 'rejected') {
+          const failedPolicy = chunk[chunkIndex];
+          this.logger.warn(
+            `[policy_changed] notifyPoliciesChanged 실패 policyId=${failedPolicy.id}: ${String(result.reason)}`,
+          );
+        }
       });
     }
+  }
+
+  private resolvePolicyNotifyConcurrency(): number {
+    const raw = this.configService.get<string>('POLICY_NOTIFY_CONCURRENCY')?.trim();
+    const parsed = Number(raw);
+
+    if (Number.isFinite(parsed) && parsed >= 1) {
+      return Math.floor(parsed);
+    }
+
+    return 5;
   }
 
   private async notifyPolicyChangedForWorkType(params: {

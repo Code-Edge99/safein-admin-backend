@@ -33,6 +33,8 @@ import {
   AssignBehaviorConditionsDto,
   AssignAllowedAppsDto,
   AssignEmployeesDto,
+  BulkControlPolicyActionDto,
+  BulkControlPolicyStatusUpdateDto,
 } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard';
@@ -199,5 +201,25 @@ export class ControlPoliciesController {
   @ApiResponse({ status: 404, description: '정책을 찾을 수 없음' })
   async remove(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<void> {
     return this.controlPoliciesService.remove(id, req.organizationScopeIds ?? undefined);
+  }
+
+  @Post('bulk/delete')
+  @ApiOperation({ summary: '제어 정책 일괄 삭제' })
+  @ApiResponse({ status: 200, description: '삭제된 정책 수' })
+  async bulkDelete(
+    @Req() req: AuthenticatedAdminRequest,
+    @Body() dto: BulkControlPolicyActionDto,
+  ): Promise<{ requested: number; deleted: number; skipped: number }> {
+    return this.controlPoliciesService.bulkRemove(dto.policyIds, req.organizationScopeIds ?? undefined);
+  }
+
+  @Post('bulk/status')
+  @ApiOperation({ summary: '제어 정책 일괄 활성/비활성' })
+  @ApiResponse({ status: 200, description: '처리된 정책 수' })
+  async bulkUpdateStatus(
+    @Req() req: AuthenticatedAdminRequest,
+    @Body() dto: BulkControlPolicyStatusUpdateDto,
+  ): Promise<{ requested: number; updated: number; skipped: number }> {
+    return this.controlPoliciesService.bulkSetActive(dto.policyIds, dto.isActive, req.organizationScopeIds ?? undefined);
   }
 }

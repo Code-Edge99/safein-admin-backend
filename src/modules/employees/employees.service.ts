@@ -466,12 +466,20 @@ export class EmployeesService {
 
     this.assertOrganizationInScope(employee.organizationId, scopeOrganizationIds);
 
-    const archiveEmployeeId = this.buildDeletedEmployeeArchiveId(employee.id);
+    await this.removeEmployeeById(employee.id, employee.name ?? '삭제된 직원', employee.organizationId);
+  }
+
+  private async removeEmployeeById(
+    employeeId: string,
+    employeeName: string,
+    organizationId: string,
+  ): Promise<void> {
+    const archiveEmployeeId = this.buildDeletedEmployeeArchiveId(employeeId);
     const archivePasswordHash = await bcrypt.hash(randomUUID(), 10);
 
     await this.prisma.$transaction(async (tx) => {
       const employeeDevices = await tx.device.findMany({
-        where: { employeeId: employee.id },
+        where: { employeeId },
         select: { id: true },
       });
       const employeeDeviceIds = employeeDevices.map((device) => device.id);
@@ -479,10 +487,10 @@ export class EmployeesService {
       await tx.employee.create({
         data: {
           id: archiveEmployeeId,
-          name: employee.name || '삭제된 직원',
-          organizationId: employee.organizationId,
+          name: employeeName || '삭제된 직원',
+          organizationId,
           status: 'DELETE' as EmployeeStatus,
-          memo: `삭제 아카이브 계정 (원본 직원ID: ${employee.id})`,
+          memo: `삭제 아카이브 계정 (원본 직원ID: ${employeeId})`,
           phone: null,
           email: null,
           position: null,
@@ -492,15 +500,15 @@ export class EmployeesService {
       });
 
       await tx.controlPolicyEmployee.deleteMany({
-        where: { employeeId: employee.id },
+        where: { employeeId },
       });
 
       await tx.employeeExclusion.deleteMany({
-        where: { employeeId: employee.id },
+        where: { employeeId },
       });
 
       await tx.device.updateMany({
-        where: { employeeId: employee.id },
+        where: { employeeId },
         data: {
           employeeId: null,
           deviceStatus: DeviceOperationStatus.UNASSIGNED,
@@ -520,38 +528,38 @@ export class EmployeesService {
       });
 
       await tx.controlLog.updateMany({
-        where: { employeeId: employee.id },
+        where: { employeeId },
         data: { employeeId: archiveEmployeeId },
       });
 
       await tx.employeeDailyStat.updateMany({
-        where: { employeeId: employee.id },
+        where: { employeeId },
         data: { employeeId: archiveEmployeeId },
       });
 
       await tx.zoneVisitSession.updateMany({
-        where: { employeeId: employee.id },
+        where: { employeeId },
         data: { employeeId: archiveEmployeeId },
       });
 
       await tx.appUsageSession.updateMany({
-        where: { employeeId: employee.id },
+        where: { employeeId },
         data: { employeeId: archiveEmployeeId },
       });
 
       await tx.workSession.updateMany({
-        where: { employeeId: employee.id },
+        where: { employeeId },
         data: { employeeId: archiveEmployeeId },
       });
 
       const employeeAccount = await tx.employeeAccount.findUnique({
-        where: { employeeId: employee.id },
+        where: { employeeId },
         select: { id: true },
       });
 
       if (employeeAccount) {
         await tx.employeeAccount.update({
-          where: { employeeId: employee.id },
+          where: { employeeId },
           data: {
             employeeId: archiveEmployeeId,
             isActive: false,
@@ -561,7 +569,7 @@ export class EmployeesService {
       }
 
       await tx.employee.delete({
-        where: { id: employee.id },
+        where: { id: employeeId },
       });
     });
   }
@@ -576,7 +584,6 @@ export class EmployeesService {
   ): Promise<{ updated: number }> {
     const resolvedEmployeeIds = await resolveEmployeePrimaryIds(this.prisma, dto.employeeIds);
 
-    // 근무 유형 존재 여부 확인
     const workType = await this.prisma.workType.findUnique({
       where: { id: dto.workTypeId },
     });
@@ -603,7 +610,6 @@ export class EmployeesService {
 
     this.ensureOrganizationInScope(dto.targetOrganizationId, scopeOrganizationIds);
 
-    // 대상 조직 존재 여부 확인
     const organization = await this.prisma.organization.findUnique({
       where: { id: dto.targetOrganizationId },
     });
@@ -620,7 +626,6 @@ export class EmployeesService {
         data: { organizationId: dto.targetOrganizationId },
       });
 
-      // 조직 이동 후 타 조직 정책 개별 할당은 정합성을 위해 제거
       await tx.controlPolicyEmployee.deleteMany({
         where: {
           employeeId: { in: dto.employeeIds },
@@ -647,13 +652,19 @@ export class EmployeesService {
     employeeIds: string[],
     status: EmployeeStatusEnum,
     scopeOrganizationIds?: string[],
-  ): Promise<{ updated: number }> {
+  ): Promise<{ requested: number; updated: number; skipped: number }> {
     const resolvedEmployeeIds = await resolveEmployeePrimaryIds(this.prisma, employeeIds);
+    const uniqueEmployeeIds = Array.from(new Set(resolvedEmployeeIds.filter(Boolean)));
+    const requested = uniqueEmployeeIds.length;
     const normalizedStatus = status as EmployeeStatus;
+
+    if (uniqueEmployeeIds.length === 0) {
+      return { requested: 0, updated: 0, skipped: 0 };
+    }
 
     const targetEmployees = await this.prisma.employee.findMany({
       where: {
-        id: { in: resolvedEmployeeIds },
+        id: { in: uniqueEmployeeIds },
         ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
       },
       select: {
@@ -668,19 +679,63 @@ export class EmployeesService {
         .map((employee) => employee.id)
       : [];
 
+    const targetEmployeeIds = targetEmployees.map((employee) => employee.id);
+
+    if (targetEmployeeIds.length === 0) {
+      return { requested, updated: 0, skipped: requested };
+    }
+
     const result = await this.prisma.employee.updateMany({
       where: {
-        id: { in: resolvedEmployeeIds },
-        ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+        id: { in: targetEmployeeIds },
+        status: { not: normalizedStatus },
       },
       data: { status: normalizedStatus },
     });
 
     if (shouldNotifyEmployeeIds.length > 0) {
-      await this.notifyPolicyChangedForEmployees(shouldNotifyEmployeeIds, 'employee_status_non_active');
+      void this.notifyPolicyChangedForEmployees(shouldNotifyEmployeeIds, 'employee_status_non_active')
+        .catch((error) => {
+          this.logger.warn(`직원 일괄 상태 변경 후 policy_changed 비동기 전송 실패: ${String(error)}`);
+        });
     }
 
-    return { updated: result.count };
+    return {
+      requested,
+      updated: result.count,
+      skipped: Math.max(0, requested - result.count),
+    };
+  }
+
+  async bulkRemove(
+    employeeIds: string[],
+    scopeOrganizationIds?: string[],
+  ): Promise<{ requested: number; deleted: number; skipped: number }> {
+    const resolvedEmployeeIds = await resolveEmployeePrimaryIds(this.prisma, employeeIds);
+    const uniqueEmployeeIds = Array.from(new Set(resolvedEmployeeIds.filter(Boolean)));
+    const requested = uniqueEmployeeIds.length;
+
+    if (uniqueEmployeeIds.length === 0) {
+      return { requested: 0, deleted: 0, skipped: 0 };
+    }
+
+    const targetEmployees = await this.prisma.employee.findMany({
+      where: {
+        id: { in: uniqueEmployeeIds },
+        ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+      },
+      select: { id: true, name: true, organizationId: true },
+    });
+
+    await this.runInBatches(targetEmployees, this.resolveBulkDeleteConcurrency(), async (employee) => {
+      await this.removeEmployeeById(employee.id, employee.name ?? '삭제된 직원', employee.organizationId);
+    });
+
+    return {
+      requested,
+      deleted: targetEmployees.length,
+      skipped: Math.max(0, requested - targetEmployees.length),
+    };
   }
 
   async getStats(scopeOrganizationIds?: string[]): Promise<{
@@ -738,6 +793,30 @@ export class EmployeesService {
       deviceAssigned,
       byOrganization,
     };
+  }
+
+  private resolveBulkDeleteConcurrency(): number {
+    const raw = this.configService.get<string>('EMPLOYEE_BULK_DELETE_CONCURRENCY')?.trim();
+    const parsed = Number(raw);
+
+    if (Number.isFinite(parsed) && parsed >= 1) {
+      return Math.floor(parsed);
+    }
+
+    return 5;
+  }
+
+  private async runInBatches<T>(
+    items: T[],
+    concurrency: number,
+    worker: (item: T) => Promise<void>,
+  ): Promise<void> {
+    const safeConcurrency = Math.max(1, Math.floor(concurrency));
+
+    for (let index = 0; index < items.length; index += safeConcurrency) {
+      const chunk = items.slice(index, index + safeConcurrency);
+      await Promise.all(chunk.map((item) => worker(item)));
+    }
   }
 
   async assignDevice(

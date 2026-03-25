@@ -29,6 +29,7 @@ import {
   BulkAssignWorkTypeDto,
   BulkMoveOrganizationDto,
   BulkEmployeeActionDto,
+  BulkEmployeeStatusUpdateDto,
   EmployeeStatusEnum,
 } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -171,5 +172,25 @@ export class EmployeesController {
       EmployeeStatusEnum.RESIGNED,
       req.organizationScopeIds ?? undefined,
     );
+  }
+
+  @Post('bulk/delete')
+  @ApiOperation({ summary: '직원 일괄 삭제' })
+  @ApiResponse({ status: 200, description: '삭제된 직원 수' })
+  bulkDelete(
+    @Req() req: AuthenticatedAdminRequest,
+    @Body() dto: BulkEmployeeActionDto,
+  ): Promise<{ requested: number; deleted: number; skipped: number }> {
+    return this.employeesService.bulkRemove(dto.employeeIds, req.organizationScopeIds ?? undefined);
+  }
+
+  @Post('bulk/status')
+  @ApiOperation({ summary: '직원 일괄 상태 변경' })
+  @ApiResponse({ status: 200, description: '처리된 직원 수' })
+  bulkUpdateStatus(
+    @Req() req: AuthenticatedAdminRequest,
+    @Body() dto: BulkEmployeeStatusUpdateDto,
+  ): Promise<{ requested: number; updated: number; skipped: number }> {
+    return this.employeesService.bulkUpdateStatus(dto.employeeIds, dto.status, req.organizationScopeIds ?? undefined);
   }
 }
