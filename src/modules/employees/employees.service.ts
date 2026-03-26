@@ -431,6 +431,16 @@ export class EmployeesService {
       await this.notifyPolicyChangedForEmployees([employee.id], 'employee_status_non_active');
     }
 
+    if (
+      previousEmployee
+      && dto.workTypeId
+      && previousEmployee.workTypeId !== dto.workTypeId
+    ) {
+      void this.notifyPolicyChangedForEmployees([employee.id], 'employee_work_type_changed').catch((err) =>
+        this.logger.warn(`근무유형 변경 policy_changed 전송 실패(employeeId=${employee.id}): ${String(err)}`),
+      );
+    }
+
     if (actorUserId) {
       void this.prisma.auditLog.create({
         data: {
@@ -1237,7 +1247,7 @@ export class EmployeesService {
 
   private async notifyPolicyChangedForEmployees(
     employeeIds: string[],
-    trigger: 'employee_status_non_active',
+    trigger: 'employee_status_non_active' | 'employee_work_type_changed',
   ): Promise<void> {
     const uniqueEmployeeIds = Array.from(new Set(employeeIds.filter(Boolean)));
     if (uniqueEmployeeIds.length === 0) {
@@ -1274,7 +1284,7 @@ export class EmployeesService {
           token,
           os: device.os,
           trigger,
-          policyApplied: false,
+          policyApplied: trigger !== 'employee_status_non_active',
         });
         successCount += 1;
       } catch (error) {

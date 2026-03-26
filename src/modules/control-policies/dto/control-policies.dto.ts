@@ -277,6 +277,43 @@ export class BulkControlPolicyStatusUpdateDto extends BulkControlPolicyActionDto
   isActive: boolean;
 }
 
+export class DispatchPolicyChangedDto {
+  @ApiPropertyOptional({
+    description: '정책 ID 목록 (전달 시 이 목록을 우선 대상으로 사용)',
+    example: ['1f6f0b2e-5bb1-4c07-a6cb-3d7d9f0d1f20'],
+  })
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  policyIds?: string[];
+
+  @ApiPropertyOptional({
+    description: '조직 ID 필터 (policyIds 미전달 시 대상 정책 조회 조건)',
+    example: '7af0eb0a-7f4f-4f5f-8157-2c1d2411d1a9',
+  })
+  @IsString()
+  @IsOptional()
+  organizationId?: string;
+
+  @ApiPropertyOptional({
+    description: '작업 유형 ID 필터 (policyIds 미전달 시 대상 정책 조회 조건)',
+    example: '92f6f966-80d5-4e3e-b39d-49062e8f1a5d',
+  })
+  @IsString()
+  @IsOptional()
+  workTypeId?: string;
+
+  @ApiPropertyOptional({
+    description: '트리거 타입 (deactivate는 비활성 정책도 포함해서 해제 알림 전송)',
+    enum: ['create', 'activate', 'update', 'deactivate'],
+    default: 'update',
+    example: 'update',
+  })
+  @IsString()
+  @IsOptional()
+  trigger?: 'create' | 'activate' | 'update' | 'deactivate';
+}
+
 export class ControlPolicyStatsDto {
   @ApiProperty({ description: '전체 정책 수' })
   totalPolicies: number;

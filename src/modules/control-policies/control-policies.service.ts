@@ -716,7 +716,7 @@ export class ControlPoliciesService {
 
     const policy = await this.prisma.controlPolicy.findUnique({
       where: { id },
-      select: { id: true },
+      select: { id: true, organizationId: true, workTypeId: true },
     });
 
     if (!policy) {
@@ -730,6 +730,13 @@ export class ControlPoliciesService {
       await tx.controlPolicyAllowedApp.deleteMany({ where: { policyId: id } });
       await tx.controlPolicyEmployee.deleteMany({ where: { policyId: id } });
       await tx.controlPolicy.delete({ where: { id } });
+    });
+
+    await this.notifyPolicyChangedForWorkType({
+      policyId: policy.id,
+      organizationId: policy.organizationId,
+      workTypeId: policy.workTypeId,
+      trigger: 'deactivate',
     });
   }
 
@@ -749,7 +756,7 @@ export class ControlPoliciesService {
         id: { in: uniquePolicyIds },
         ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
       },
-      select: { id: true },
+      select: { id: true, organizationId: true, workTypeId: true },
     });
 
     const targetPolicyIds = targetPolicies.map((policy) => policy.id);
@@ -766,6 +773,8 @@ export class ControlPoliciesService {
       await tx.controlPolicyEmployee.deleteMany({ where: { policyId: { in: targetPolicyIds } } });
       await tx.controlPolicy.deleteMany({ where: { id: { in: targetPolicyIds } } });
     });
+
+    await this.notifyPoliciesByContext(targetPolicies, 'deactivate');
 
     return {
       requested,
@@ -895,6 +904,92 @@ export class ControlPoliciesService {
         }
       });
     }
+  }
+
+  private async notifyPoliciesByContext(
+    policies: Array<{ id: string; organizationId: string; workTypeId: string }>,
+    trigger: 'create' | 'activate' | 'update' | 'deactivate',
+  ): Promise<void> {
+    if (policies.length === 0) {
+      return;
+    }
+
+    const notifyConcurrency = this.resolvePolicyNotifyConcurrency();
+
+    for (let index = 0; index < policies.length; index += notifyConcurrency) {
+      const chunk = policies.slice(index, index + notifyConcurrency);
+      const results = await Promise.allSettled(chunk.map((policy) => this.notifyPolicyChangedForWorkType({
+        policyId: policy.id,
+        organizationId: policy.organizationId,
+        workTypeId: policy.workTypeId,
+        trigger,
+      })));
+
+      results.forEach((result, chunkIndex) => {
+        if (result.status === 'rejected') {
+          const failedPolicy = chunk[chunkIndex];
+          this.logger.warn(
+            `[policy_changed] notifyPoliciesByContext 실패 policyId=${failedPolicy.id}: ${String(result.reason)}`,
+          );
+        }
+      });
+    }
+  }
+
+  async dispatchPolicyChangedByFilter(
+    input: {
+      policyIds?: string[];
+      organizationId?: string;
+      workTypeId?: string;
+      trigger?: 'create' | 'activate' | 'update' | 'deactivate';
+    },
+    scopeOrganizationIds?: string[],
+  ): Promise<{ requested: number; dispatched: number; skipped: number }> {
+    const trigger = input.trigger ?? 'update';
+    const uniquePolicyIds = Array.from(new Set((input.policyIds ?? []).filter(Boolean)));
+
+    const where: any = {};
+
+    if (trigger !== 'deactivate') {
+      where.isActive = true;
+    }
+
+    if (uniquePolicyIds.length > 0) {
+      where.id = { in: uniquePolicyIds };
+    }
+
+    if (input.organizationId) {
+      where.organizationId = input.organizationId;
+    }
+
+    if (input.workTypeId) {
+      where.workTypeId = input.workTypeId;
+    }
+
+    this.applyOrganizationScope(where, scopeOrganizationIds);
+
+    const targets = await this.prisma.controlPolicy.findMany({
+      where,
+      select: { id: true },
+    });
+
+    const targetPolicyIds = targets.map((target) => target.id);
+    if (targetPolicyIds.length === 0) {
+      return {
+        requested: uniquePolicyIds.length > 0 ? uniquePolicyIds.length : 0,
+        dispatched: 0,
+        skipped: uniquePolicyIds.length > 0 ? uniquePolicyIds.length : 0,
+      };
+    }
+
+    await this.notifyPoliciesChanged(targetPolicyIds, trigger);
+
+    const requested = uniquePolicyIds.length > 0 ? uniquePolicyIds.length : targetPolicyIds.length;
+    return {
+      requested,
+      dispatched: targetPolicyIds.length,
+      skipped: Math.max(0, requested - targetPolicyIds.length),
+    };
   }
 
   private resolvePolicyNotifyConcurrency(): number {
@@ -1120,6 +1215,7 @@ export class ControlPoliciesService {
     },
   ): Promise<void> {
     const policyApplied = params.trigger === 'deactivate' ? 'false' : 'true';
+    const isIos = params.os === DeviceOS.iOS;
 
     const timeoutMs = this.resolvePolicyPushTimeoutMs();
     const abortController = new AbortController();
@@ -1143,11 +1239,28 @@ export class ControlPoliciesService {
               extraData: {
                 reason: params.trigger,
                 policyApplied,
+                deviceOs: isIos ? 'ios' : 'android',
+                iosNeedsBlockedAppsDecision: isIos ? 'true' : 'false',
               },
             },
             android: {
               priority: 'HIGH',
             },
+            ...(isIos
+              ? {
+                  apns: {
+                    headers: {
+                      'apns-priority': '10',
+                      'apns-collapse-id': 'policy_changed',
+                    },
+                    payload: {
+                      aps: {
+                        'content-available': 1,
+                      },
+                    },
+                  },
+                }
+              : {}),
           },
         }),
       });

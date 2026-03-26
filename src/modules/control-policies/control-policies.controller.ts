@@ -18,6 +18,7 @@ import {
   ApiResponse,
   ApiBearerAuth,
   ApiParam,
+  ApiBody,
 } from '@nestjs/swagger';
 import { ControlPoliciesService } from './control-policies.service';
 import {
@@ -35,6 +36,7 @@ import {
   AssignEmployeesDto,
   BulkControlPolicyActionDto,
   BulkControlPolicyStatusUpdateDto,
+  DispatchPolicyChangedDto,
 } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard';
@@ -221,5 +223,85 @@ export class ControlPoliciesController {
     @Body() dto: BulkControlPolicyStatusUpdateDto,
   ): Promise<{ requested: number; updated: number; skipped: number }> {
     return this.controlPoliciesService.bulkSetActive(dto.policyIds, dto.isActive, req.organizationScopeIds ?? undefined);
+  }
+
+  @Post('dispatch-policy-changed')
+  @ApiOperation({
+    summary: '화면 변경 트리거: policy_changed 강제 전송',
+    description:
+      '화면에서 정책 관련 리소스(구역/시간정책/행동조건/허용앱 프리셋) 변경 시 대상 정책에 policy_changed를 강제로 전송합니다.\n\n'
+      + '동작 규칙\n'
+      + '- policyIds가 있으면 해당 정책 우선\n'
+      + '- policyIds가 없으면 organizationId/workTypeId 필터 기반 조회\n'
+      + '- trigger가 deactivate이면 비활성 정책도 대상으로 포함\n'
+      + '- organization scope guard가 최종 대상 범위를 제한',
+  })
+  @ApiBody({
+    type: DispatchPolicyChangedDto,
+    description: '정책 변경 알림 디스패치 조건',
+    examples: {
+      byPolicies: {
+        summary: '정책 ID 직접 지정',
+        value: {
+          policyIds: ['1f6f0b2e-5bb1-4c07-a6cb-3d7d9f0d1f20', 'e89a36b7-3baf-4a5d-9c42-3f5dd2a8bcb7'],
+          trigger: 'update',
+        },
+      },
+      byScopeFilter: {
+        summary: '조직/작업유형 필터 기반',
+        value: {
+          organizationId: '7af0eb0a-7f4f-4f5f-8157-2c1d2411d1a9',
+          workTypeId: '92f6f966-80d5-4e3e-b39d-49062e8f1a5d',
+          trigger: 'update',
+        },
+      },
+      deactivateFlow: {
+        summary: '해제/삭제 반영',
+        value: {
+          policyIds: ['1f6f0b2e-5bb1-4c07-a6cb-3d7d9f0d1f20'],
+          trigger: 'deactivate',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'policy_changed 디스패치 결과',
+    content: {
+      'application/json': {
+        examples: {
+          success: {
+            summary: '일부 또는 전체 대상 전송 완료',
+            value: {
+              requested: 5,
+              dispatched: 5,
+              skipped: 0,
+            },
+          },
+          partiallySkipped: {
+            summary: '요청 대비 일부 스킵',
+            value: {
+              requested: 5,
+              dispatched: 3,
+              skipped: 2,
+            },
+          },
+        },
+      },
+    },
+  })
+  async dispatchPolicyChanged(
+    @Req() req: AuthenticatedAdminRequest,
+    @Body() dto: DispatchPolicyChangedDto,
+  ): Promise<{ requested: number; dispatched: number; skipped: number }> {
+    return this.controlPoliciesService.dispatchPolicyChangedByFilter(
+      {
+        policyIds: dto.policyIds,
+        organizationId: dto.organizationId,
+        workTypeId: dto.workTypeId,
+        trigger: dto.trigger,
+      },
+      req.organizationScopeIds ?? undefined,
+    );
   }
 }
