@@ -1,3 +1,7 @@
+# Safein Admin Backend
+
+세이프인 관리자 API 서버 (NestJS + Prisma + PostgreSQL)
+
 ## NCP Maps REST Geocoding 설정
 
 관리자 프론트의 지도 주소 검색은 기본적으로 JS SDK geocoder를 사용하며,
@@ -10,9 +14,6 @@ SDK geocoder 실패 시 admin-backend의 `/api/maps/geocode` 프록시로 자동
 
 프록시는 NCP Maps Geocoding REST API(`https://maps.apigw.ntruss.com/map-geocode/v2/geocode`)를 호출하며,
 요청 헤더에 `x-ncp-apigw-api-key-id`, `x-ncp-apigw-api-key`를 사용합니다.
-# Safein Admin Backend
-
-세이프인 관리자 API 서버 (NestJS + Prisma + PostgreSQL)
 
 ## 현재 구조 기준 핵심 규칙
 - Prisma 스키마/마이그레이션/시드는 `smombie-prisma`에서만 관리
