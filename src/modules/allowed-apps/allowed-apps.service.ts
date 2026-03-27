@@ -25,7 +25,7 @@ export class AllowedAppsService {
   ) {}
 
   private normalizePackageName(packageName: string): string {
-    return packageName.trim().toLowerCase();
+    return packageName.trim();
   }
 
   private normalizePlatform(platform?: string): 'android' | 'ios' {
