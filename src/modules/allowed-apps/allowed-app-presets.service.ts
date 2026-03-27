@@ -44,6 +44,43 @@ export class AllowedAppPresetsService {
     return 'android';
   }
 
+  private async findAppsOrThrow(appIds: string[] | undefined): Promise<Array<{ id: string; packageName: string; platform: string }>> {
+    if (!appIds || appIds.length === 0) return [];
+
+    const apps = await this.prisma.allowedApp.findMany({
+      where: { id: { in: appIds } },
+      select: { id: true, packageName: true, platform: true },
+    });
+
+    const foundIds = new Set(apps.map((app) => app.id));
+    const missingIds = appIds.filter((id) => !foundIds.has(id));
+    if (missingIds.length > 0) {
+      throw new NotFoundException(`존재하지 않는 허용앱이 포함되어 있습니다: ${missingIds.join(', ')}`);
+    }
+
+    return apps;
+  }
+
+  private inferPlatformFromApps(
+    apps: Array<{ id: string; packageName: string; platform: string }>,
+  ): 'android' | 'ios' | undefined {
+    if (apps.length === 0) return undefined;
+
+    const platforms = Array.from(new Set(apps.map((app) => this.normalizePlatform(app.platform))));
+    if (platforms.length > 1) return undefined;
+
+    return platforms[0];
+  }
+
+  private validateAppsPlatform(
+    apps: Array<{ id: string; packageName: string; platform: string }>,
+    presetPlatform?: 'android' | 'ios',
+  ): void {
+    // 프리셋에는 플랫폼 혼합 앱 저장을 허용하고, 실제 전송 시 디바이스 플랫폼에 맞는 앱만 내려준다.
+    void apps;
+    void presetPlatform;
+  }
+
   private async ensureValidPlatformData(): Promise<void> {
     if (this.platformsNormalized) return;
 
@@ -61,34 +98,6 @@ export class AllowedAppPresetsService {
     this.platformsNormalized = true;
   }
 
-  private async validateAppsExist(
-    appIds: string[] | undefined,
-    presetPlatform?: 'android' | 'ios',
-  ): Promise<void> {
-    if (!appIds || appIds.length === 0) return;
-
-    const apps = await this.prisma.allowedApp.findMany({
-      where: { id: { in: appIds } },
-      select: { id: true, name: true, packageName: true, platform: true },
-    });
-
-    const foundIds = new Set(apps.map((app) => app.id));
-    const missingIds = appIds.filter((id) => !foundIds.has(id));
-    if (missingIds.length > 0) {
-      throw new NotFoundException(`존재하지 않는 허용앱이 포함되어 있습니다: ${missingIds.join(', ')}`);
-    }
-
-    if (presetPlatform) {
-      const mismatchedApps = apps.filter((app) => this.normalizePlatform(app.platform) !== presetPlatform);
-      if (mismatchedApps.length > 0) {
-        throw new BadRequestException(
-          `프리셋 플랫폼(${presetPlatform})과 다른 앱이 포함되어 있습니다: ${mismatchedApps.map((app) => app.packageName).join(', ')}`,
-        );
-      }
-    }
-
-  }
-
   async create(
     dto: CreateAllowedAppPresetDto,
     scopeOrganizationIds?: string[],
@@ -98,13 +107,17 @@ export class AllowedAppPresetsService {
 
     this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
 
-    await this.validateAppsExist(dto.appIds, this.normalizePlatform(dto.platform));
+    const apps = await this.findAppsOrThrow(dto.appIds);
+    const explicitPlatform = dto.platform === undefined ? undefined : this.normalizePlatform(dto.platform);
+    const inferredPlatform = this.inferPlatformFromApps(apps);
+    const targetPlatform = explicitPlatform ?? inferredPlatform ?? 'android';
+    this.validateAppsPlatform(apps, targetPlatform);
 
     const preset = await this.prisma.allowedAppPreset.create({
       data: {
         name: dto.name,
         description: dto.description,
-        platform: this.normalizePlatform(dto.platform),
+        platform: targetPlatform,
         organizationId: dto.organizationId,
         workTypeId: dto.workTypeId,
         createdById: actorUserId,
@@ -235,11 +248,22 @@ export class AllowedAppPresetsService {
 
     this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
 
-    const targetPlatform = dto.platform === undefined
-      ? this.normalizePlatform(existingPreset.platform)
-      : this.normalizePlatform(dto.platform);
+    const explicitPlatform = dto.platform === undefined ? undefined : this.normalizePlatform(dto.platform);
 
-    await this.validateAppsExist(dto.appIds, targetPlatform);
+    let appsToValidate: Array<{ id: string; packageName: string; platform: string }> = [];
+    if (dto.appIds !== undefined) {
+      appsToValidate = await this.findAppsOrThrow(dto.appIds);
+    } else if (explicitPlatform !== undefined) {
+      const existingAppIds = (existingPreset.apps || []).map((app) => app.id);
+      appsToValidate = await this.findAppsOrThrow(existingAppIds);
+    }
+
+    const inferredPlatform = explicitPlatform === undefined ? this.inferPlatformFromApps(appsToValidate) : undefined;
+    const targetPlatform = explicitPlatform
+      ?? inferredPlatform
+      ?? this.normalizePlatform(existingPreset.platform);
+
+    this.validateAppsPlatform(appsToValidate, targetPlatform);
 
     // 앱 목록이 변경되는 경우 처리
     if (dto.appIds !== undefined) {
@@ -264,7 +288,7 @@ export class AllowedAppPresetsService {
       data: {
         name: dto.name,
         description: dto.description,
-        platform: dto.platform === undefined ? undefined : targetPlatform,
+        platform: explicitPlatform !== undefined || inferredPlatform !== undefined ? targetPlatform : undefined,
         organizationId: dto.organizationId,
         workTypeId: dto.workTypeId,
         updatedById: actorUserId,
@@ -353,7 +377,8 @@ export class AllowedAppPresetsService {
   ): Promise<AllowedAppPresetDetailDto> {
     await this.ensureValidPlatformData();
     const preset = await this.findOne(id, scopeOrganizationIds);
-    await this.validateAppsExist(appIds, this.normalizePlatform(preset.platform));
+    const apps = await this.findAppsOrThrow(appIds);
+    this.validateAppsPlatform(apps, this.normalizePlatform(preset.platform));
 
     // 기존에 없는 앱만 추가
     const existingItems = await this.prisma.allowedAppPresetItem.findMany({
