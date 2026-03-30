@@ -1,6 +1,7 @@
 import {
   Controller,
   Post,
+  Patch,
   Body,
   Get,
   UseGuards,
@@ -22,6 +23,7 @@ import {
   TokenResponseDto,
   AuthUserDto,
   RefreshTokenDto,
+  UpdateProfileDto,
 } from './dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
@@ -68,6 +70,19 @@ export class AuthController {
   @ApiResponse({ status: 200, description: '프로필 조회 성공', type: AuthUserDto })
   async getProfile(@Request() req: AuthenticatedRequest): Promise<AuthUserDto> {
     return this.authService.getProfile(req.user.id);
+  }
+
+  @Patch('profile')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '내 프로필 수정' })
+  @ApiResponse({ status: 200, description: '프로필 수정 성공', type: AuthUserDto })
+  @ApiResponse({ status: 400, description: '잘못된 요청' })
+  async updateProfile(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: UpdateProfileDto,
+  ): Promise<AuthUserDto> {
+    return this.authService.updateProfile(req.user.id, dto);
   }
 
   @Post('change-password')

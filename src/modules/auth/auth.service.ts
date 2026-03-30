@@ -3,7 +3,13 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
-import { LoginDto, ChangePasswordDto, TokenResponseDto, AuthUserDto } from './dto';
+import {
+  LoginDto,
+  ChangePasswordDto,
+  TokenResponseDto,
+  AuthUserDto,
+  UpdateProfileDto,
+} from './dto';
 import { AccountStatus, AdminRole, LoginStatus } from '@prisma/client';
 import { FIXED_ADMIN_UNLIMITED_TOKEN, FIXED_ADMIN_UNLIMITED_USER } from './auth.constants';
 
@@ -164,6 +170,25 @@ export class AuthService {
       account.id === FIXED_ADMIN_UNLIMITED_USER.id
       || account.username === FIXED_ADMIN_UNLIMITED_USER.username
     );
+  }
+
+  private async getLastPasswordChangedAt(accountId: string): Promise<Date | undefined> {
+    const latestLog = await this.prisma.auditLog.findFirst({
+      where: {
+        accountId,
+        action: 'UPDATE',
+        resourceType: 'Account',
+        resourceName: '비밀번호 변경',
+      },
+      orderBy: {
+        timestamp: 'desc',
+      },
+      select: {
+        timestamp: true,
+      },
+    });
+
+    return latestLog?.timestamp;
   }
 
   async login(
@@ -329,6 +354,8 @@ export class AuthService {
         : undefined,
       organizationId: account.organizationId || '',
       organizationType: account.organization?.type,
+      lastLogin: account.lastLogin || undefined,
+      createdAt: account.createdAt || undefined,
     };
   }
 
@@ -381,6 +408,66 @@ export class AuthService {
       throw new UnauthorizedException('사용자를 찾을 수 없습니다.');
     }
 
-    return user;
+    const lastPasswordChangedAt = await this.getLastPasswordChangedAt(userId);
+
+    return {
+      ...user,
+      lastPasswordChangedAt,
+    };
+  }
+
+  async updateProfile(userId: string, dto: UpdateProfileDto): Promise<AuthUserDto> {
+    const currentUser = await this.validateUser(userId);
+
+    if (!currentUser) {
+      throw new UnauthorizedException('사용자를 찾을 수 없습니다.');
+    }
+
+    const updated = await this.prisma.account.update({
+      where: { id: userId },
+      data: {
+        name: dto.name,
+        email: dto.email,
+      },
+      include: {
+        organization: true,
+      },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        accountId: userId,
+        action: 'UPDATE',
+        resourceType: 'Account',
+        resourceId: userId,
+        resourceName: '내 프로필 수정',
+        changesBefore: {
+          name: currentUser.name,
+          email: currentUser.email || '',
+        },
+        changesAfter: {
+          name: updated.name,
+          email: updated.email || '',
+        },
+      },
+    });
+
+    const lastPasswordChangedAt = await this.getLastPasswordChangedAt(userId);
+
+    return {
+      id: updated.id,
+      username: updated.username,
+      name: updated.name,
+      email: updated.email,
+      role: updated.role,
+      organization: updated.organization
+        ? { id: updated.organization.id, name: updated.organization.name }
+        : undefined,
+      organizationId: updated.organizationId || '',
+      organizationType: updated.organization?.type,
+      lastLogin: updated.lastLogin || undefined,
+      createdAt: updated.createdAt || undefined,
+      lastPasswordChangedAt,
+    };
   }
 }

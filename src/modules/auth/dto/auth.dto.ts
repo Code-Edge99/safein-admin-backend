@@ -1,5 +1,6 @@
-import { IsString, IsNotEmpty, MinLength } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsString, IsNotEmpty, MinLength, IsEmail, MaxLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 
 export class LoginDto {
   @ApiProperty({ description: '사용자 아이디', example: 'admin' })
@@ -23,13 +24,28 @@ export class ChangePasswordDto {
   @ApiProperty({ description: '새 비밀번호' })
   @IsString()
   @IsNotEmpty()
-  @MinLength(6)
+  @MinLength(8)
   newPassword: string;
 
   @ApiProperty({ description: '새 비밀번호 확인' })
   @IsString()
   @IsNotEmpty()
   confirmPassword: string;
+}
+
+export class UpdateProfileDto {
+  @ApiProperty({ description: '사용자 이름' })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(50)
+  name: string;
+
+  @ApiProperty({ description: '이메일' })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
+  @IsEmail()
+  @MaxLength(100)
+  email: string;
 }
 
 export class TokenResponseUserOrganizationDto {
@@ -113,6 +129,15 @@ export class AuthUserDto {
   @ApiProperty({ description: '조직 ID' })
   organizationId: string;
 
-  @ApiProperty({ description: '조직 유형', required: false })
+  @ApiPropertyOptional({ description: '조직 유형' })
   organizationType?: string;
+
+  @ApiPropertyOptional({ description: '마지막 로그인 시각' })
+  lastLogin?: Date;
+
+  @ApiPropertyOptional({ description: '계정 생성 시각' })
+  createdAt?: Date;
+
+  @ApiPropertyOptional({ description: '마지막 비밀번호 변경 시각' })
+  lastPasswordChangedAt?: Date;
 }
