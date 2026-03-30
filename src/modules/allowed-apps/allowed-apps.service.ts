@@ -55,8 +55,13 @@ export class AllowedAppsService {
     const normalizedPackageName = this.normalizePackageName(dto.packageName);
 
     // 패키지 이름 중복 체크
-    const existing = await this.prisma.allowedApp.findUnique({
-      where: { packageName: normalizedPackageName },
+    const existing = await this.prisma.allowedApp.findFirst({
+      where: {
+        packageName: {
+          equals: normalizedPackageName,
+          mode: 'insensitive',
+        },
+      },
     });
 
     if (existing) {
@@ -165,7 +170,7 @@ export class AllowedAppsService {
 
     const normalizedPackageName = this.normalizePackageName(packageName);
 
-    const app = await this.prisma.allowedApp.findUnique({
+    let app = await this.prisma.allowedApp.findUnique({
       where: { packageName: normalizedPackageName },
       include: {
         _count: {
@@ -173,6 +178,23 @@ export class AllowedAppsService {
         },
       },
     });
+
+    if (!app) {
+      app = await this.prisma.allowedApp.findFirst({
+        where: {
+          packageName: {
+            equals: normalizedPackageName,
+            mode: 'insensitive',
+          },
+        },
+        orderBy: { updatedAt: 'desc' },
+        include: {
+          _count: {
+            select: { presetItems: true },
+          },
+        },
+      });
+    }
 
     if (!app) {
       throw new NotFoundException('허용앱을 찾을 수 없습니다.');
@@ -200,7 +222,10 @@ export class AllowedAppsService {
     if (normalizedPackageName) {
       const existing = await this.prisma.allowedApp.findFirst({
         where: {
-          packageName: normalizedPackageName,
+          packageName: {
+            equals: normalizedPackageName,
+            mode: 'insensitive',
+          },
           NOT: { id },
         },
       });
