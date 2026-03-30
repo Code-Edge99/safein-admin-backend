@@ -9,6 +9,12 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
 import { RequestLoggingInterceptor } from './common/interceptors/request-logging.interceptor';
 import { FIXED_ADMIN_UNLIMITED_TOKEN } from './modules/auth/auth.constants';
 import { readStageConfig, resolveRuntimeStage } from './common/config/stage.config';
+import { PrismaService } from './prisma/prisma.service';
+import {
+  PersistentAuditLogger,
+  parseBoolean,
+  parsePersistLogLevels,
+} from './common/utils/persistent-audit.logger';
 
 const MASTER_ADMIN_USERNAME = 'master-admin';
 
@@ -20,6 +26,14 @@ function createUnlimitedAdminToken(configService: ConfigService): string | null 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
+  const prismaService = app.get(PrismaService);
+
+  const persistentLogger = new PersistentAuditLogger(prismaService, {
+    source: 'admin-backend',
+    enabled: parseBoolean(configService.get<string>('SYSTEM_LOG_PERSIST_ENABLED'), true),
+    levels: parsePersistLogLevels(configService.get<string>('SYSTEM_LOG_PERSIST_LEVELS')),
+  });
+  app.useLogger(persistentLogger);
 
   const runtimeStage = resolveRuntimeStage(configService);
   if (runtimeStage === 'prod') {
@@ -105,8 +119,8 @@ async function bootstrap() {
   const port = configService.get('PORT', 3000);
   await app.listen(port);
 
-  console.log(`🚀 Application is running on: http://localhost:${port}/api`);
-  console.log(`📚 Swagger docs: http://localhost:${port}/api/docs`);
+  persistentLogger.log(`Application is running on: http://localhost:${port}/api`, 'Bootstrap');
+  persistentLogger.log(`Swagger docs: http://localhost:${port}/api/docs`, 'Bootstrap');
 }
 
 bootstrap();
