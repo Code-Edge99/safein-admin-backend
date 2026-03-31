@@ -19,6 +19,7 @@ export class RequestLoggingInterceptor implements NestInterceptor {
   private readonly maxSerializedLength = 400;
   private readonly maxObjectDepth = 4;
   private readonly maxArrayLength = 20;
+  private readonly slowReadRequestWarnMs = 1500;
 
   private readonly sensitiveQueryKeys = [
     'token',
@@ -58,9 +59,20 @@ export class RequestLoggingInterceptor implements NestInterceptor {
         next: (responseBody) => {
           const durationMs = Date.now() - startedAt;
           const statusCode = response.statusCode;
-          this.logger.log(
-            `${request.method} ${safeUrl} ${statusCode} ${durationMs}ms`,
-          );
+          const normalizedMethod = request.method.toUpperCase();
+          const message = `${normalizedMethod} ${safeUrl} ${statusCode} ${durationMs}ms`;
+          const isReadOnlySuccess = ['GET', 'HEAD', 'OPTIONS'].includes(normalizedMethod) && statusCode < 400;
+
+          if (isReadOnlySuccess) {
+            if (durationMs >= this.slowReadRequestWarnMs) {
+              this.logger.warn(`${message} [slow-read]`);
+            } else {
+              this.logger.debug(message);
+            }
+          } else {
+            this.logger.log(message);
+          }
+
           void this.persistAuditLog(request, safeUrl, statusCode, durationMs, undefined, responseBody);
         },
         error: (error) => {
