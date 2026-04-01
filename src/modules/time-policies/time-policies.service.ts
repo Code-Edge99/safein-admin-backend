@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException 
 import { AuditAction } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
-import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertLeafOrganization } from '../../common/utils/organization-scope.util';
 import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toTimePolicyResponseDto } from './time-policies.mapper';
 import {
@@ -38,7 +38,7 @@ export class TimePoliciesService {
     scopeOrganizationIds?: string[],
     actorUserId?: string,
   ): Promise<TimePolicyResponseDto> {
-    const { organizationId, workTypeId, excludePeriods, ...rest } = createTimePolicyDto;
+    const { organizationId, excludePeriods, ...rest } = createTimePolicyDto;
 
     this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
 
@@ -50,15 +50,7 @@ export class TimePoliciesService {
       throw new BadRequestException('조직을 찾을 수 없습니다.');
     }
 
-    // Validate work type if provided
-    if (workTypeId) {
-      const workType = await this.prisma.workType.findUnique({
-        where: { id: workTypeId },
-      });
-      if (!workType) {
-        throw new BadRequestException('작업 유형을 찾을 수 없습니다.');
-      }
-    }
+    await assertLeafOrganization(this.prisma, organizationId);
 
     const normalizedSlot = this.resolvePrimaryTimeSlot(createTimePolicyDto);
     if (!normalizedSlot) {
@@ -75,7 +67,6 @@ export class TimePoliciesService {
         endTime: this.parseTimeToDate(endTime),
         days,
         organizationId,
-        workTypeId,
         createdById: actorUserId,
         updatedById: actorUserId,
         ...(normalizedExcludePeriods.length > 0 && {
@@ -92,9 +83,6 @@ export class TimePoliciesService {
         organization: {
           select: { id: true, name: true },
         },
-        workType: {
-          select: { id: true, name: true },
-        },
         excludePeriods: true,
       },
     });
@@ -106,7 +94,7 @@ export class TimePoliciesService {
     filter: TimePolicyFilterDto,
     scopeOrganizationIds?: string[],
   ): Promise<TimePolicyListResponseDto> {
-    const { search, organizationId, workTypeId, page = 1, limit = 20 } = filter;
+    const { search, organizationId, page = 1, limit = 20 } = filter;
     const skip = (page - 1) * limit;
 
     const where: any = {};
@@ -122,10 +110,6 @@ export class TimePoliciesService {
       where.organizationId = { in: scopeOrganizationIds };
     }
 
-    if (workTypeId) {
-      where.workTypeId = workTypeId;
-    }
-
     const [policies, total] = await Promise.all([
       this.prisma.timePolicy.findMany({
         where,
@@ -134,9 +118,6 @@ export class TimePoliciesService {
         orderBy: { createdAt: 'desc' },
         include: {
           organization: {
-            select: { id: true, name: true },
-          },
-          workType: {
             select: { id: true, name: true },
           },
           excludePeriods: true,
@@ -159,9 +140,6 @@ export class TimePoliciesService {
       where: { id },
       include: {
         organization: {
-          select: { id: true, name: true },
-        },
-        workType: {
           select: { id: true, name: true },
         },
         excludePeriods: true,
@@ -191,9 +169,6 @@ export class TimePoliciesService {
         organization: {
           select: { id: true, name: true },
         },
-        workType: {
-          select: { id: true, name: true },
-        },
       },
       orderBy: { name: 'asc' },
     });
@@ -211,7 +186,6 @@ export class TimePoliciesService {
 
     const {
       organizationId,
-      workTypeId,
       excludePeriods,
       timeSlots,
       startTime,
@@ -231,18 +205,6 @@ export class TimePoliciesService {
         throw new BadRequestException('조직을 찾을 수 없습니다.');
       }
       updateData.organizationId = organizationId;
-    }
-
-    if (workTypeId !== undefined) {
-      if (workTypeId) {
-        const workType = await this.prisma.workType.findUnique({
-          where: { id: workTypeId },
-        });
-        if (!workType) {
-          throw new BadRequestException('작업 유형을 찾을 수 없습니다.');
-        }
-      }
-      updateData.workTypeId = workTypeId || null;
     }
 
     const normalizedSlot = this.resolvePrimaryTimeSlot({
@@ -283,9 +245,6 @@ export class TimePoliciesService {
       },
       include: {
         organization: {
-          select: { id: true, name: true },
-        },
-        workType: {
           select: { id: true, name: true },
         },
         excludePeriods: true,

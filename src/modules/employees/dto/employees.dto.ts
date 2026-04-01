@@ -89,12 +89,6 @@ export class CreateEmployeeDto {
   @IsString()
   memo?: string;
 
-  @ApiPropertyOptional({ description: '근무 유형 ID' })
-  @IsOptional()
-  @Transform(({ value }) => normalizeOptionalText(value))
-  @IsString()
-  workTypeId?: string;
-
   @ApiPropertyOptional({ description: '상태', enum: EmployeeStatusEnum, default: 'ACTIVE' })
   @IsOptional()
   @IsEnum(EmployeeStatusEnum)
@@ -159,12 +153,6 @@ export class EmployeeResponseDto {
 
   @ApiPropertyOptional({ description: '이메일' })
   email?: string;
-
-  @ApiPropertyOptional({ description: '근무 유형 ID' })
-  workTypeId?: string;
-
-  @ApiPropertyOptional({ description: '근무 유형명' })
-  workTypeName?: string;
 
   @ApiProperty({ description: '상태' })
   status: string;
@@ -233,11 +221,6 @@ export class EmployeeFilterDto extends BaseFilterDto {
   @IsString()
   organizationId?: string;
 
-  @ApiPropertyOptional({ description: '근무 유형 ID' })
-  @IsOptional()
-  @IsString()
-  workTypeId?: string;
-
   @ApiPropertyOptional({ description: '상태 필터', enum: EmployeeStatusEnum })
   @IsOptional()
   @IsEnum(EmployeeStatusEnum)
@@ -249,12 +232,6 @@ export class BulkEmployeeActionDto {
   @IsArray()
   @IsString({ each: true })
   employeeIds: string[];
-}
-
-export class BulkAssignWorkTypeDto extends BulkEmployeeActionDto {
-  @ApiProperty({ description: '근무 유형 ID' })
-  @IsString()
-  workTypeId: string;
 }
 
 export class BulkMoveOrganizationDto extends BulkEmployeeActionDto {

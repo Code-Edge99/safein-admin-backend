@@ -24,8 +24,14 @@ export class DashboardController {
 
   @Get('stats')
   @ApiOperation({ summary: '대시보드 통계' })
-  getStats(@Req() req: AuthenticatedAdminRequest) {
-    return this.dashboardService.getStats(req.organizationScopeIds ?? undefined);
+  getStats(
+    @Req() req: AuthenticatedAdminRequest,
+    @Query('organizationId') organizationId?: string,
+  ) {
+    return this.dashboardService.getStats(
+      organizationId,
+      req.organizationScopeIds ?? undefined,
+    );
   }
 
   @Get('hourly-data')
@@ -129,10 +135,12 @@ export class DashboardController {
   getSiteReports(
     @Req() req: AuthenticatedAdminRequest,
     @Query('days') days?: number,
+    @Query('organizationId') organizationId?: string,
   ) {
     return this.dashboardService.getSiteReports(
       days ? Number(days) : undefined,
       req.organizationScopeIds ?? undefined,
+      organizationId,
     );
   }
 }

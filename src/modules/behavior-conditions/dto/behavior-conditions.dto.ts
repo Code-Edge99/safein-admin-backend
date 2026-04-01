@@ -58,11 +58,6 @@ export class CreateBehaviorConditionDto {
   @IsNotEmpty()
   organizationId: string;
 
-  @ApiPropertyOptional({ description: '작업 유형 ID' })
-  @IsString()
-  @IsOptional()
-  workTypeId?: string;
-
 }
 
 export class UpdateBehaviorConditionDto extends PartialType(CreateBehaviorConditionDto) {}
@@ -97,12 +92,6 @@ export class BehaviorConditionResponseDto {
 
   @ApiPropertyOptional({ description: '조직 정보' })
   organization?: {
-    id: string;
-    name: string;
-  };
-
-  @ApiPropertyOptional({ description: '작업 유형 정보' })
-  workType?: {
     id: string;
     name: string;
   };
@@ -145,11 +134,6 @@ export class BehaviorConditionFilterDto {
   @IsString()
   @IsOptional()
   organizationId?: string;
-
-  @ApiPropertyOptional({ description: '작업 유형 ID' })
-  @IsString()
-  @IsOptional()
-  workTypeId?: string;
 
   @ApiPropertyOptional({ description: '페이지 번호', default: 1 })
   @IsNumber()

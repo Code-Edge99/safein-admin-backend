@@ -32,7 +32,6 @@ export function toTimePolicyResponseDto(policy: any, customTimeSlots?: TimeSlotD
     priority: 0,
     allowOutsideHours: false,
     organization: policy.organization,
-    workType: policy.workType,
     excludePeriods: formattedExcludePeriods,
     affectedEmployeeCount,
     createdAt: policy.createdAt,

@@ -2,14 +2,13 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
-  ConflictException,
   ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuditAction, DeviceOS, EmployeeStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { ensureOrganizationInScope, assertLeafOrganization } from '../../common/utils/organization-scope.util';
 import { resolveEmployeePrimaryIds } from '../../common/utils/employee-identifier.util';
 import { toControlPolicyDetailDto, toControlPolicyResponseDto } from './control-policies.mapper';
 import { readStageConfig } from '../../common/config/stage.config';
@@ -91,7 +90,6 @@ export class ControlPoliciesService {
   ): Promise<ControlPolicyDetailDto> {
     const {
       organizationId,
-      workTypeId,
       zoneIds,
       timePolicyIds,
       behaviorConditionIds,
@@ -111,8 +109,17 @@ export class ControlPoliciesService {
       throw new BadRequestException('조직을 찾을 수 없습니다.');
     }
 
+    await assertLeafOrganization(this.prisma, organizationId);
+
+    // 조직과 정책은 1:1 매핑 — 이미 정책이 있으면 생성 불가
+    const existingPolicy = await this.prisma.controlPolicy.findFirst({
+      where: { organizationId },
+    });
+    if (existingPolicy) {
+      throw new BadRequestException('해당 조직에는 이미 통제정책이 존재합니다. 조직당 하나의 정책만 허용됩니다.');
+    }
+
     await this.validatePolicyRelations(this.prisma, organizationId, {
-      workTypeId,
       zoneIds,
       timePolicyIds,
       behaviorConditionIds,
@@ -132,20 +139,11 @@ export class ControlPoliciesService {
       allowedAppPresetIds,
     });
 
-    // Check if policy already exists for this work type (1:1 relationship)
-    const existingPolicy = await this.prisma.controlPolicy.findUnique({
-      where: { workTypeId },
-    });
-    if (existingPolicy) {
-      throw new ConflictException('해당 작업 유형에 이미 정책이 존재합니다.');
-    }
-
     // Create policy with all relations
     const policy = await this.prisma.controlPolicy.create({
       data: {
         ...rest,
         organizationId,
-        workTypeId,
         createdById: actorUserId,
         updatedById: actorUserId,
         zones: zoneIds?.length
@@ -178,10 +176,9 @@ export class ControlPoliciesService {
 
     const detail = await this.findOneDetail(policy.id, scopeOrganizationIds);
 
-    await this.notifyPolicyChangedForWorkType({
+    await this.notifyPolicyChangedForOrganization({
       policyId: policy.id,
       organizationId,
-      workTypeId,
       trigger: 'create',
     });
 
@@ -192,7 +189,7 @@ export class ControlPoliciesService {
     filter: ControlPolicyFilterDto,
     scopeOrganizationIds?: string[],
   ): Promise<ControlPolicyListResponseDto> {
-    const { search, organizationId, workTypeId, isActive, page = 1, limit = 20 } = filter;
+    const { search, organizationId, isActive, page = 1, limit = 20 } = filter;
     const skip = (page - 1) * limit;
 
     const where: any = {};
@@ -207,10 +204,6 @@ export class ControlPoliciesService {
 
     this.applyOrganizationScope(where, scopeOrganizationIds);
 
-    if (workTypeId) {
-      where.workTypeId = workTypeId;
-    }
-
     if (isActive !== undefined) {
       where.isActive = isActive;
     }
@@ -223,7 +216,6 @@ export class ControlPoliciesService {
         orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }],
         include: {
           organization: { select: { id: true, name: true } },
-          workType: { select: { id: true, name: true } },
           zones: {
             include: {
               zone: { select: { id: true, name: true, type: true } },
@@ -296,7 +288,6 @@ export class ControlPoliciesService {
       },
       include: {
         organization: { select: { id: true, name: true } },
-        workType: { select: { id: true, name: true } },
         zones: {
           include: {
             zone: { select: { id: true, name: true, type: true } },
@@ -364,7 +355,6 @@ export class ControlPoliciesService {
       orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }],
       include: {
         organization: { select: { id: true, name: true } },
-        workType: { select: { id: true, name: true } },
         _count: {
           select: {
             zones: true,
@@ -391,7 +381,6 @@ export class ControlPoliciesService {
       },
       include: {
         organization: { select: { id: true, name: true } },
-        workType: { select: { id: true, name: true } },
         zones: {
           include: {
             zone: { select: { id: true, name: true, type: true } },
@@ -444,67 +433,6 @@ export class ControlPoliciesService {
     return this.toDetailDto(policy);
   }
 
-  async findByWorkType(
-    workTypeId: string,
-    scopeOrganizationIds?: string[],
-  ): Promise<ControlPolicyDetailDto | null> {
-    const policy = await this.prisma.controlPolicy.findUnique({
-      where: { workTypeId },
-      include: {
-        organization: { select: { id: true, name: true } },
-        workType: { select: { id: true, name: true } },
-        zones: {
-          include: {
-            zone: { select: { id: true, name: true, type: true } },
-          },
-        },
-        timePolicies: {
-          include: {
-            timePolicy: { select: { id: true, name: true } },
-          },
-        },
-        behaviors: {
-          include: {
-            behaviorCondition: { select: { id: true, name: true } },
-          },
-        },
-        allowedApps: {
-          include: {
-            preset: {
-              select: {
-                id: true,
-                name: true,
-                items: {
-                  include: {
-                    allowedApp: {
-                      select: {
-                        id: true,
-                        name: true,
-                        packageName: true,
-                        iconUrl: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-        targetEmployees: {
-          include: {
-            employee: { select: { id: true, name: true } },
-          },
-        },
-      } as any,
-    });
-
-    if (policy && scopeOrganizationIds && !scopeOrganizationIds.includes(policy.organizationId)) {
-      return null;
-    }
-
-    return policy ? this.toDetailDto(policy) : null;
-  }
-
   async update(
     id: string,
     updateDto: UpdateControlPolicyDto,
@@ -516,7 +444,6 @@ export class ControlPoliciesService {
 
     const {
       organizationId,
-      workTypeId,
       zoneIds,
       timePolicyIds,
       behaviorConditionIds,
@@ -532,7 +459,7 @@ export class ControlPoliciesService {
 
       const currentPolicy = await tx.controlPolicy.findUnique({
         where: { id },
-        select: { organizationId: true, workTypeId: true },
+        select: { organizationId: true },
       });
       if (!currentPolicy) {
         throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
@@ -543,18 +470,26 @@ export class ControlPoliciesService {
               throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
             }
 
-      const targetWorkTypeId = workTypeId ?? currentPolicy.workTypeId;
       const organizationChanged =
         organizationId !== undefined && organizationId !== currentPolicy.organizationId;
 
       if (organizationId) {
         const org = await tx.organization.findUnique({ where: { id: organizationId } });
         if (!org) throw new BadRequestException('조직을 찾을 수 없습니다.');
+
+        if (organizationChanged) {
+          const existingPolicyOnTarget = await tx.controlPolicy.findFirst({
+            where: { organizationId },
+          });
+          if (existingPolicyOnTarget) {
+            throw new BadRequestException('대상 조직에는 이미 통제정책이 존재합니다. 조직당 하나의 정책만 허용됩니다.');
+          }
+        }
+
         updateData.organizationId = organizationId;
       }
 
       await this.validatePolicyRelations(tx, targetOrganizationId, {
-        workTypeId: targetWorkTypeId,
         zoneIds,
         timePolicyIds,
         behaviorConditionIds,
@@ -567,21 +502,9 @@ export class ControlPoliciesService {
         behaviorConditionIds,
       });
 
-      // Check if policy already exists for this work type (1:1 relationship)
-      const existingPolicy = await tx.controlPolicy.findUnique({ where: { workTypeId: targetWorkTypeId } });
-      if (existingPolicy && existingPolicy.id !== id) {
-        throw new ConflictException('해당 작업 유형에 이미 정책이 존재합니다.');
-      }
-
-      if (workTypeId) {
-        updateData.workTypeId = workTypeId;
-      }
-
-      updateData.updatedById = actorUserId;
-
       await tx.controlPolicy.update({
         where: { id },
-        data: updateData,
+        data: { ...updateData, updatedById: actorUserId },
       });
 
       // 조직 변경 시 기존 관계 데이터는 재검증 없이 유지하지 않고 안전하게 비웁니다.
@@ -677,16 +600,14 @@ export class ControlPoliciesService {
       select: {
         id: true,
         organizationId: true,
-        workTypeId: true,
         isActive: true,
       },
     });
 
     if (updatedPolicy) {
-      await this.notifyPolicyChangedForWorkType({
+      await this.notifyPolicyChangedForOrganization({
         policyId: updatedPolicy.id,
         organizationId: updatedPolicy.organizationId,
-        workTypeId: updatedPolicy.workTypeId,
         trigger: updatedPolicy.isActive ? 'update' : 'deactivate',
       });
 
@@ -716,7 +637,7 @@ export class ControlPoliciesService {
 
     const policy = await this.prisma.controlPolicy.findUnique({
       where: { id },
-      select: { id: true, organizationId: true, workTypeId: true },
+      select: { id: true, organizationId: true },
     });
 
     if (!policy) {
@@ -732,10 +653,9 @@ export class ControlPoliciesService {
       await tx.controlPolicy.delete({ where: { id } });
     });
 
-    await this.notifyPolicyChangedForWorkType({
+    await this.notifyPolicyChangedForOrganization({
       policyId: policy.id,
       organizationId: policy.organizationId,
-      workTypeId: policy.workTypeId,
       trigger: 'deactivate',
     });
   }
@@ -756,7 +676,7 @@ export class ControlPoliciesService {
         id: { in: uniquePolicyIds },
         ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
       },
-      select: { id: true, organizationId: true, workTypeId: true },
+      select: { id: true, organizationId: true },
     });
 
     const targetPolicyIds = targetPolicies.map((policy) => policy.id);
@@ -841,7 +761,6 @@ export class ControlPoliciesService {
       data: { isActive: !policy.isActive },
       include: {
         organization: { select: { id: true, name: true } },
-        workType: { select: { id: true, name: true } },
         _count: {
           select: {
             zones: true,
@@ -854,10 +773,9 @@ export class ControlPoliciesService {
       } as any,
     });
 
-    await this.notifyPolicyChangedForWorkType({
+    await this.notifyPolicyChangedForOrganization({
       policyId: updated.id,
       organizationId: updated.organizationId,
-      workTypeId: updated.workTypeId,
       trigger: updated.isActive ? 'activate' : 'deactivate',
     });
 
@@ -880,7 +798,6 @@ export class ControlPoliciesService {
       select: {
         id: true,
         organizationId: true,
-        workTypeId: true,
       },
     });
 
@@ -888,10 +805,9 @@ export class ControlPoliciesService {
 
     for (let index = 0; index < policies.length; index += notifyConcurrency) {
       const chunk = policies.slice(index, index + notifyConcurrency);
-      const results = await Promise.allSettled(chunk.map((policy) => this.notifyPolicyChangedForWorkType({
+      const results = await Promise.allSettled(chunk.map((policy) => this.notifyPolicyChangedForOrganization({
         policyId: policy.id,
         organizationId: policy.organizationId,
-        workTypeId: policy.workTypeId,
         trigger,
       })));
 
@@ -907,7 +823,7 @@ export class ControlPoliciesService {
   }
 
   private async notifyPoliciesByContext(
-    policies: Array<{ id: string; organizationId: string; workTypeId: string }>,
+    policies: Array<{ id: string; organizationId: string }>,
     trigger: 'create' | 'activate' | 'update' | 'deactivate',
   ): Promise<void> {
     if (policies.length === 0) {
@@ -918,10 +834,9 @@ export class ControlPoliciesService {
 
     for (let index = 0; index < policies.length; index += notifyConcurrency) {
       const chunk = policies.slice(index, index + notifyConcurrency);
-      const results = await Promise.allSettled(chunk.map((policy) => this.notifyPolicyChangedForWorkType({
+      const results = await Promise.allSettled(chunk.map((policy) => this.notifyPolicyChangedForOrganization({
         policyId: policy.id,
         organizationId: policy.organizationId,
-        workTypeId: policy.workTypeId,
         trigger,
       })));
 
@@ -940,7 +855,6 @@ export class ControlPoliciesService {
     input: {
       policyIds?: string[];
       organizationId?: string;
-      workTypeId?: string;
       trigger?: 'create' | 'activate' | 'update' | 'deactivate';
     },
     scopeOrganizationIds?: string[],
@@ -960,10 +874,6 @@ export class ControlPoliciesService {
 
     if (input.organizationId) {
       where.organizationId = input.organizationId;
-    }
-
-    if (input.workTypeId) {
-      where.workTypeId = input.workTypeId;
     }
 
     this.applyOrganizationScope(where, scopeOrganizationIds);
@@ -1003,10 +913,9 @@ export class ControlPoliciesService {
     return 5;
   }
 
-  private async notifyPolicyChangedForWorkType(params: {
+  private async notifyPolicyChangedForOrganization(params: {
     policyId: string;
     organizationId: string;
-    workTypeId: string;
     trigger: 'create' | 'activate' | 'update' | 'deactivate';
   }): Promise<void> {
     try {
@@ -1017,13 +926,12 @@ export class ControlPoliciesService {
       const endpointHint = this.resolveEndpointHint(endpointUrl);
 
       this.logger.log(
-        `[policy_changed] dispatch start dispatchId=${dispatchId}, trigger=${params.trigger}, policyId=${params.policyId}, org=${params.organizationId}, workType=${params.workTypeId}, endpoint=${endpointUrl}, concurrency=${dispatchConcurrency}, endpointHint=${endpointHint}`,
+        `[policy_changed] dispatch start dispatchId=${dispatchId}, trigger=${params.trigger}, policyId=${params.policyId}, org=${params.organizationId}, endpoint=${endpointUrl}, concurrency=${dispatchConcurrency}, endpointHint=${endpointHint}`,
       );
 
       const totalTargetEmployees = await this.prisma.employee.count({
         where: {
           organizationId: params.organizationId,
-          workTypeId: params.workTypeId,
           status: EmployeeStatus.ACTIVE,
         },
       });
@@ -1042,7 +950,6 @@ export class ControlPoliciesService {
         FROM devices d
         JOIN employees e ON e.id = d."employeeId"
         WHERE d."organizationId" = ${params.organizationId}
-          AND e."workTypeId" = ${params.workTypeId}
           AND e.status = CAST(${EmployeeStatus.ACTIVE} AS "EmployeeStatus")
           AND d."pushToken" IS NOT NULL
           AND (d."pushTokenStatus" IS NULL OR d."pushTokenStatus" <> 'ERROR')
@@ -1157,7 +1064,6 @@ export class ControlPoliciesService {
         dispatchId,
         trigger: params.trigger,
         policyId: params.policyId,
-        workTypeId: params.workTypeId,
         organizationId: params.organizationId,
         endpointUrl,
         endpointHint,
@@ -1559,7 +1465,7 @@ export class ControlPoliciesService {
   }
 
   async getStats(scopeOrganizationIds?: string[]): Promise<ControlPolicyStatsDto> {
-    const [totalPolicies, activePolicies, totalWorkTypes, byOrgResult] = await Promise.all([
+    const [totalPolicies, activePolicies, byOrgResult] = await Promise.all([
       this.prisma.controlPolicy.count({
         where: scopeOrganizationIds
           ? {
@@ -1576,13 +1482,6 @@ export class ControlPoliciesService {
               }
             : {}),
         },
-      }),
-      this.prisma.workType.count({
-        where: scopeOrganizationIds
-          ? {
-              organizationId: { in: scopeOrganizationIds },
-            }
-          : undefined,
       }),
       this.prisma.controlPolicy.groupBy({
         by: ['organizationId'],
@@ -1610,12 +1509,9 @@ export class ControlPoliciesService {
       byOrganization[orgName] = item._count.organizationId;
     });
 
-    const workTypeCoverage = totalWorkTypes > 0 ? (totalPolicies / totalWorkTypes) * 100 : 0;
-
     return {
       totalPolicies,
       activePolicies,
-      workTypeCoverage: Math.round(workTypeCoverage * 100) / 100,
       byOrganization,
     };
   }
@@ -1693,7 +1589,6 @@ export class ControlPoliciesService {
     tx: any,
     organizationId: string,
     relationIds: {
-      workTypeId?: string;
       zoneIds?: string[];
       timePolicyIds?: string[];
       behaviorConditionIds?: string[];
@@ -1702,7 +1597,6 @@ export class ControlPoliciesService {
     },
   ): Promise<void> {
     const {
-      workTypeId,
       zoneIds,
       timePolicyIds,
       behaviorConditionIds,
@@ -1714,19 +1608,6 @@ export class ControlPoliciesService {
       tx,
       organizationId,
     );
-
-    if (workTypeId) {
-      const workType = await tx.workType.findUnique({
-        where: { id: workTypeId },
-        select: { id: true, organizationId: true },
-      });
-      if (!workType) {
-        throw new BadRequestException('작업 유형을 찾을 수 없습니다.');
-      }
-      if (workType.organizationId !== organizationId) {
-        throw new BadRequestException('작업 유형은 정책과 동일 조직이어야 합니다.');
-      }
-    }
 
     const uniqueZoneIds = this.normalizeIds(zoneIds);
     if (uniqueZoneIds.length > 0) {

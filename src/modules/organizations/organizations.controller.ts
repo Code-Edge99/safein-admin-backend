@@ -23,6 +23,8 @@ import {
   OrganizationResponseDto,
   OrganizationTreeDto,
   OrganizationStatsDto,
+  TransferResourcesDto,
+  TransferResourcesResultDto,
 } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard';
@@ -117,5 +119,21 @@ export class OrganizationsController {
   @ApiResponse({ status: 400, description: '삭제 불가 (하위 조직 또는 직원 존재)' })
   remove(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<void> {
     return this.organizationsService.remove(id, req.organizationScopeIds ?? undefined);
+  }
+
+  @Post(':id/transfer-resources')
+  @ApiOperation({ summary: '직원 이관', description: '원본 조직의 직원을 대상 조직으로 이관합니다. 이관된 직원은 대상 조직의 정책을 따릅니다.' })
+  @ApiParam({ name: 'id', description: '원본 조직 ID' })
+  @ApiResponse({ status: 201, description: '이관 성공', type: TransferResourcesResultDto })
+  transferResources(
+    @Req() req: AuthenticatedAdminRequest,
+    @Param('id') id: string,
+    @Body() dto: TransferResourcesDto,
+  ): Promise<TransferResourcesResultDto> {
+    return this.organizationsService.transferResources(
+      id,
+      dto,
+      req.organizationScopeIds ?? undefined,
+    );
   }
 }

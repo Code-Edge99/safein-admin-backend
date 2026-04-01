@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException 
 import { AuditAction } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
-import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertLeafOrganization } from '../../common/utils/organization-scope.util';
 import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toBehaviorConditionResponseDto } from './behavior-conditions.mapper';
 import {
@@ -42,7 +42,6 @@ export class BehaviorConditionsService {
   ): Promise<BehaviorConditionResponseDto> {
     const {
       organizationId,
-      workTypeId,
       enableDistanceCondition: _enableDistanceCondition,
       enableStepsCondition: _enableStepsCondition,
       enableSpeedCondition: _enableSpeedCondition,
@@ -59,15 +58,7 @@ export class BehaviorConditionsService {
       throw new BadRequestException('조직을 찾을 수 없습니다.');
     }
 
-    // Validate work type if provided
-    if (workTypeId) {
-      const workType = await this.prisma.workType.findUnique({
-        where: { id: workTypeId },
-      });
-      if (!workType) {
-        throw new BadRequestException('작업 유형을 찾을 수 없습니다.');
-      }
-    }
+    await assertLeafOrganization(this.prisma, organizationId);
 
     const thresholdData = this.resolveThresholds(createDto);
 
@@ -76,13 +67,11 @@ export class BehaviorConditionsService {
         ...rest,
         ...thresholdData,
         organizationId,
-        workTypeId,
         createdById: actorUserId,
         updatedById: actorUserId,
       },
       include: {
         organization: { select: { id: true, name: true } },
-        workType: { select: { id: true, name: true } },
         _count: { select: { policyBehaviors: true } },
       },
     });
@@ -97,7 +86,6 @@ export class BehaviorConditionsService {
     const {
       search,
       organizationId,
-      workTypeId,
       enableDistanceCondition,
       enableStepsCondition,
       enableSpeedCondition,
@@ -131,10 +119,6 @@ export class BehaviorConditionsService {
       where.organizationId = { in: scopeOrganizationIds };
     }
 
-    if (workTypeId) {
-      where.workTypeId = workTypeId;
-    }
-
     const [conditions, total] = await Promise.all([
       this.prisma.behaviorCondition.findMany({
         where,
@@ -143,7 +127,6 @@ export class BehaviorConditionsService {
         orderBy: { createdAt: 'desc' },
         include: {
           organization: { select: { id: true, name: true } },
-          workType: { select: { id: true, name: true } },
           _count: { select: { policyBehaviors: true } },
         },
       }),
@@ -164,7 +147,6 @@ export class BehaviorConditionsService {
       where: { id },
       include: {
         organization: { select: { id: true, name: true } },
-        workType: { select: { id: true, name: true } },
         _count: { select: { policyBehaviors: true } },
       },
     });
@@ -190,7 +172,6 @@ export class BehaviorConditionsService {
       },
       include: {
         organization: { select: { id: true, name: true } },
-        workType: { select: { id: true, name: true } },
         _count: { select: { policyBehaviors: true } },
       },
       orderBy: { name: 'asc' },
@@ -209,7 +190,6 @@ export class BehaviorConditionsService {
       where: { id },
       include: {
         organization: { select: { id: true, name: true } },
-        workType: { select: { id: true, name: true } },
         _count: { select: { policyBehaviors: true } },
       },
     });
@@ -222,7 +202,6 @@ export class BehaviorConditionsService {
 
     const {
       organizationId,
-      workTypeId,
       enableDistanceCondition: _enableDistanceCondition,
       enableStepsCondition: _enableStepsCondition,
       enableSpeedCondition: _enableSpeedCondition,
@@ -249,18 +228,6 @@ export class BehaviorConditionsService {
       updateData.organizationId = organizationId;
     }
 
-    if (workTypeId !== undefined) {
-      if (workTypeId) {
-        const workType = await this.prisma.workType.findUnique({
-          where: { id: workTypeId },
-        });
-        if (!workType) {
-          throw new BadRequestException('작업 유형을 찾을 수 없습니다.');
-        }
-      }
-      updateData.workTypeId = workTypeId || null;
-    }
-
     const condition = await this.prisma.behaviorCondition.update({
       where: { id },
       data: {
@@ -269,7 +236,6 @@ export class BehaviorConditionsService {
       },
       include: {
         organization: { select: { id: true, name: true } },
-        workType: { select: { id: true, name: true } },
         _count: { select: { policyBehaviors: true } },
       },
     });

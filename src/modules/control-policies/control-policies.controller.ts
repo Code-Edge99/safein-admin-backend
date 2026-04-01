@@ -78,17 +78,6 @@ export class ControlPoliciesController {
     return this.controlPoliciesService.findByOrganization(orgId, req.organizationScopeIds ?? undefined);
   }
 
-  @Get('work-type/:workTypeId')
-  @ApiOperation({ summary: '작업 유형별 제어 정책 조회' })
-  @ApiParam({ name: 'workTypeId', description: '작업 유형 ID' })
-  @ApiResponse({ status: 200, description: '정책 상세 정보', type: ControlPolicyDetailDto })
-  async findByWorkType(
-    @Req() req: AuthenticatedAdminRequest,
-    @Param('workTypeId') workTypeId: string,
-  ): Promise<ControlPolicyDetailDto | null> {
-    return this.controlPoliciesService.findByWorkType(workTypeId, req.organizationScopeIds ?? undefined);
-  }
-
   @Get(':id')
   @ApiOperation({ summary: '제어 정책 상세 조회' })
   @ApiParam({ name: 'id', description: '정책 ID' })
@@ -232,7 +221,7 @@ export class ControlPoliciesController {
       '화면에서 정책 관련 리소스(구역/시간정책/행동조건/허용앱 프리셋) 변경 시 대상 정책에 policy_changed를 강제로 전송합니다.\n\n'
       + '동작 규칙\n'
       + '- policyIds가 있으면 해당 정책 우선\n'
-      + '- policyIds가 없으면 organizationId/workTypeId 필터 기반 조회\n'
+      + '- policyIds가 없으면 organizationId 필터 기반 조회\n'
       + '- trigger가 deactivate이면 비활성 정책도 대상으로 포함\n'
       + '- organization scope guard가 최종 대상 범위를 제한',
   })
@@ -248,10 +237,9 @@ export class ControlPoliciesController {
         },
       },
       byScopeFilter: {
-        summary: '조직/작업유형 필터 기반',
+        summary: '조직 필터 기반',
         value: {
           organizationId: '7af0eb0a-7f4f-4f5f-8157-2c1d2411d1a9',
-          workTypeId: '92f6f966-80d5-4e3e-b39d-49062e8f1a5d',
           trigger: 'update',
         },
       },
@@ -298,7 +286,6 @@ export class ControlPoliciesController {
       {
         policyIds: dto.policyIds,
         organizationId: dto.organizationId,
-        workTypeId: dto.workTypeId,
         trigger: dto.trigger,
       },
       req.organizationScopeIds ?? undefined,

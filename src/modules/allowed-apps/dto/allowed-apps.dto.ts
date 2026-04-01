@@ -196,11 +196,6 @@ export class CreateAllowedAppPresetDto {
   @IsNotEmpty()
   organizationId: string;
 
-  @ApiPropertyOptional({ description: '작업 유형 ID' })
-  @IsString()
-  @IsOptional()
-  workTypeId?: string;
-
   @ApiPropertyOptional({ description: '프리셋 플랫폼 (android | ios)', default: 'android' })
   @IsString()
   @IsOptional()
@@ -228,12 +223,6 @@ export class AllowedAppPresetResponseDto {
 
   @ApiPropertyOptional({ description: '조직 정보' })
   organization?: {
-    id: string;
-    name: string;
-  };
-
-  @ApiPropertyOptional({ description: '작업 유형 정보' })
-  workType?: {
     id: string;
     name: string;
   };
@@ -269,11 +258,6 @@ export class AllowedAppPresetFilterDto {
   @IsString()
   @IsOptional()
   organizationId?: string;
-
-  @ApiPropertyOptional({ description: '작업 유형 ID' })
-  @IsString()
-  @IsOptional()
-  workTypeId?: string;
 
   @ApiPropertyOptional({ description: '플랫폼 필터 (android | ios | all)', default: 'all' })
   @IsString()

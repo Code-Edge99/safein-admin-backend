@@ -28,11 +28,6 @@ export class CreateControlPolicyDto {
   @IsNotEmpty()
   organizationId: string;
 
-  @ApiProperty({ description: '작업 유형 ID' })
-  @IsString()
-  @IsNotEmpty()
-  workTypeId: string;
-
   @ApiPropertyOptional({ description: '우선순위 (1-100, 낮을수록 높음)', default: 1 })
   @IsNumber()
   @Min(1)
@@ -98,12 +93,6 @@ export class ControlPolicyResponseDto {
 
   @ApiPropertyOptional({ description: '조직 정보' })
   organization?: {
-    id: string;
-    name: string;
-  };
-
-  @ApiPropertyOptional({ description: '작업 유형 정보' })
-  workType?: {
     id: string;
     name: string;
   };
@@ -187,11 +176,6 @@ export class ControlPolicyFilterDto {
   @IsString()
   @IsOptional()
   organizationId?: string;
-
-  @ApiPropertyOptional({ description: '작업 유형 ID' })
-  @IsString()
-  @IsOptional()
-  workTypeId?: string;
 
   @ApiPropertyOptional({ description: '활성 상태' })
   @IsOptional()
@@ -296,14 +280,6 @@ export class DispatchPolicyChangedDto {
   organizationId?: string;
 
   @ApiPropertyOptional({
-    description: '작업 유형 ID 필터 (policyIds 미전달 시 대상 정책 조회 조건)',
-    example: '92f6f966-80d5-4e3e-b39d-49062e8f1a5d',
-  })
-  @IsString()
-  @IsOptional()
-  workTypeId?: string;
-
-  @ApiPropertyOptional({
     description: '트리거 타입 (deactivate는 비활성 정책도 포함해서 해제 알림 전송)',
     enum: ['create', 'activate', 'update', 'deactivate'],
     default: 'update',
@@ -320,9 +296,6 @@ export class ControlPolicyStatsDto {
 
   @ApiProperty({ description: '활성 정책 수' })
   activePolicies: number;
-
-  @ApiProperty({ description: '작업 유형 커버리지' })
-  workTypeCoverage: number;
 
   @ApiProperty({ description: '조직별 정책 수' })
   byOrganization: Record<string, number>;

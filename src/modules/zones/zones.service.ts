@@ -3,7 +3,7 @@ import { AuditAction } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { preferKstTimestamp } from '../../common/utils/kst-time.util';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
-import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertLeafOrganization } from '../../common/utils/organization-scope.util';
 import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toZoneResponseDto } from './zones.mapper';
 import {
@@ -39,7 +39,7 @@ export class ZonesService {
     scopeOrganizationIds?: string[],
     actorUserId?: string,
   ): Promise<ZoneResponseDto> {
-    const { coordinates, organizationId, workTypeId, type, shape, ...rest } = createZoneDto;
+    const { coordinates, organizationId, type, shape, ...rest } = createZoneDto;
 
     this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
 
@@ -51,15 +51,7 @@ export class ZonesService {
       throw new BadRequestException('조직을 찾을 수 없습니다.');
     }
 
-    // Validate work type if provided
-    if (workTypeId) {
-      const workType = await this.prisma.workType.findUnique({
-        where: { id: workTypeId },
-      });
-      if (!workType) {
-        throw new BadRequestException('작업 유형을 찾을 수 없습니다.');
-      }
-    }
+    await assertLeafOrganization(this.prisma, organizationId);
 
     // 좌표 정규화: lat/lng 또는 latitude/longitude 모두 수용
     const normalizedCoords = this.normalizeCoordinates(coordinates);
@@ -77,15 +69,11 @@ export class ZonesService {
         coordinates: normalizedCoords as any,
         ...geometryMetadata,
         organizationId,
-        workTypeId,
         createdById: actorUserId,
         updatedById: actorUserId,
       },
       include: {
         organization: {
-          select: { id: true, name: true },
-        },
-        workType: {
           select: { id: true, name: true },
         },
       },
@@ -95,7 +83,7 @@ export class ZonesService {
   }
 
   async findAll(filter: ZoneFilterDto, scopeOrganizationIds?: string[]): Promise<ZoneListResponseDto> {
-    const { search, type, organizationId, workTypeId, page = 1, limit = 20 } = filter;
+    const { search, type, organizationId, page = 1, limit = 20 } = filter;
     const skip = (page - 1) * limit;
 
     const where: any = { deletedAt: null };
@@ -115,10 +103,6 @@ export class ZonesService {
       where.organizationId = { in: scopeOrganizationIds };
     }
 
-    if (workTypeId) {
-      where.workTypeId = workTypeId;
-    }
-
     const [zones, total] = await Promise.all([
       this.prisma.zone.findMany({
         where,
@@ -127,9 +111,6 @@ export class ZonesService {
         orderBy: { createdAt: 'desc' },
         include: {
           organization: {
-            select: { id: true, name: true },
-          },
-          workType: {
             select: { id: true, name: true },
           },
         },
@@ -151,9 +132,6 @@ export class ZonesService {
       where: { id, deletedAt: null },
       include: {
         organization: {
-          select: { id: true, name: true },
-        },
-        workType: {
           select: { id: true, name: true },
         },
       },
@@ -183,9 +161,6 @@ export class ZonesService {
         organization: {
           select: { id: true, name: true },
         },
-        workType: {
-          select: { id: true, name: true },
-        },
       },
       orderBy: { name: 'asc' },
     });
@@ -201,7 +176,7 @@ export class ZonesService {
   ): Promise<ZoneResponseDto> {
     await this.findOne(id, scopeOrganizationIds);
 
-    const { coordinates, organizationId, workTypeId, ...rest } = updateZoneDto;
+    const { coordinates, organizationId, ...rest } = updateZoneDto;
 
     const updateData: any = { ...rest };
 
@@ -241,18 +216,6 @@ export class ZonesService {
       updateData.organizationId = organizationId;
     }
 
-    if (workTypeId !== undefined) {
-      if (workTypeId) {
-        const workType = await this.prisma.workType.findUnique({
-          where: { id: workTypeId },
-        });
-        if (!workType) {
-          throw new BadRequestException('작업 유형을 찾을 수 없습니다.');
-        }
-      }
-      updateData.workTypeId = workTypeId || null;
-    }
-
     const zone = await this.prisma.zone.update({
       where: { id },
       data: {
@@ -261,9 +224,6 @@ export class ZonesService {
       },
       include: {
         organization: {
-          select: { id: true, name: true },
-        },
-        workType: {
           select: { id: true, name: true },
         },
       },

@@ -88,11 +88,6 @@ export class CreateZoneDto {
   @IsNotEmpty()
   organizationId: string;
 
-  @ApiPropertyOptional({ description: '작업 유형 ID' })
-  @IsString()
-  @IsOptional()
-  workTypeId?: string;
-
   @ApiPropertyOptional({ description: '그룹 ID' })
   @IsString()
   @IsOptional()
@@ -151,12 +146,6 @@ export class ZoneResponseDto {
     name: string;
   };
 
-  @ApiPropertyOptional({ description: '작업 유형 정보' })
-  workType?: {
-    id: string;
-    name: string;
-  };
-
   @ApiProperty({ description: '생성일시' })
   createdAt: Date;
 
@@ -179,11 +168,6 @@ export class ZoneFilterDto {
   @IsString()
   @IsOptional()
   organizationId?: string;
-
-  @ApiPropertyOptional({ description: '작업 유형 ID' })
-  @IsString()
-  @IsOptional()
-  workTypeId?: string;
 
   @ApiPropertyOptional({ description: '페이지 번호', default: 1 })
   @IsNumber()

@@ -9,7 +9,6 @@ export function toAllowedAppPresetResponseDto(
     name: preset.name,
     description: preset.description,
     organization: preset.organization,
-    workType: preset.workType,
     platform: normalizePlatform(preset.platform),
     appCount: preset._count?.items || 0,
     policyCount: preset._count?.policyPresets || 0,

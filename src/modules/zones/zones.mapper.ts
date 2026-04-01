@@ -47,7 +47,6 @@ export function toZoneResponseDto(zone: any): ZoneResponseDto {
     centerLng: zone.centerLon ?? undefined,
     groupId: zone.groupId,
     organization: zone.organization,
-    workType: zone.workType,
     createdAt: zone.createdAt,
     updatedAt: zone.updatedAt,
   };

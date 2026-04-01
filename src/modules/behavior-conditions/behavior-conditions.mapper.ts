@@ -12,7 +12,6 @@ export function toBehaviorConditionResponseDto(condition: any): BehaviorConditio
     speedThreshold: condition.speedThreshold,
     description: condition.description,
     organization: condition.organization,
-    workType: condition.workType,
     policyCount: condition._count?.policyBehaviors ?? 0,
     createdAt: condition.createdAt,
     updatedAt: condition.updatedAt,

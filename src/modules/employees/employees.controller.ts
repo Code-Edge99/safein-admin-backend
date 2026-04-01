@@ -26,7 +26,6 @@ import {
   EmployeeFilterDto,
   EmployeeMdmManualUnblockDto,
   EmployeeDeviceLogoutUntilNextLoginDto,
-  BulkAssignWorkTypeDto,
   BulkMoveOrganizationDto,
   BulkEmployeeActionDto,
   BulkEmployeeStatusUpdateDto,
@@ -136,13 +135,6 @@ export class EmployeesController {
   @ApiResponse({ status: 200, description: '직원 삭제 성공' })
   remove(@Req() req: AuthenticatedAdminRequest, @Param('employeeId') employeeId: string): Promise<void> {
     return this.employeesService.remove(employeeId, req.organizationScopeIds ?? undefined);
-  }
-
-  @Post('bulk/assign-work-type')
-  @ApiOperation({ summary: '일괄 근무 유형 할당' })
-  @ApiResponse({ status: 200, description: '처리된 직원 수' })
-  bulkAssignWorkType(@Req() req: AuthenticatedAdminRequest, @Body() dto: BulkAssignWorkTypeDto): Promise<{ updated: number }> {
-    return this.employeesService.bulkAssignWorkType(dto, req.organizationScopeIds ?? undefined);
   }
 
   @Post('bulk/move-organization')

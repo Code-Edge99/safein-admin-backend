@@ -293,14 +293,20 @@ export class DashboardService {
     return Array.from(visited);
   }
 
-  async getStats(scopeOrganizationIds?: string[]) {
+  async getStats(organizationId?: string, scopeOrganizationIds?: string[]) {
+    this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
+
+    const targetOrganizationIds = organizationId
+      ? await this.collectDescendantOrganizationIds(organizationId, scopeOrganizationIds)
+      : scopeOrganizationIds;
+
     const now = new Date();
     const onlineThreshold = new Date(now.getTime() - 15 * 60 * 1000);
     const todayStart = getKstStartOfDay(now);
     const yesterdayStart = getKstDaysAgoStart(1, now);
     const monthStart = getKstMonthStart(now);
     const previousMonthStart = getKstMonthStart(now, -1);
-    const controlLogScopeCondition = this.buildControlLogOrganizationScopeCondition(scopeOrganizationIds);
+    const controlLogScopeCondition = this.buildControlLogOrganizationScopeCondition(targetOrganizationIds);
 
     const [
       totalEmployees,
@@ -316,32 +322,32 @@ export class DashboardService {
       employeesLastMonth,
     ] = await Promise.all([
       this.prisma.employee.count({
-        where: scopeOrganizationIds
-          ? { organizationId: { in: scopeOrganizationIds } }
+        where: targetOrganizationIds
+          ? { organizationId: { in: targetOrganizationIds } }
           : undefined,
       }),
       this.prisma.employee.count({
         where: {
           status: 'ACTIVE',
-          ...(scopeOrganizationIds
+          ...(targetOrganizationIds
             ? {
-                organizationId: { in: scopeOrganizationIds },
+                organizationId: { in: targetOrganizationIds },
               }
             : {}),
         },
       }),
       this.prisma.device.count({
-        where: scopeOrganizationIds
-          ? { organizationId: { in: scopeOrganizationIds } }
+        where: targetOrganizationIds
+          ? { organizationId: { in: targetOrganizationIds } }
           : undefined,
       }),
       this.prisma.device.count({
         where: {
           status: 'NORMAL',
           lastCommunication: { gte: onlineThreshold },
-          ...(scopeOrganizationIds
+          ...(targetOrganizationIds
             ? {
-                organizationId: { in: scopeOrganizationIds },
+                organizationId: { in: targetOrganizationIds },
               }
             : {}),
         },
@@ -349,9 +355,9 @@ export class DashboardService {
       this.prisma.controlPolicy.count({
         where: {
           isActive: true,
-          ...(scopeOrganizationIds
+          ...(targetOrganizationIds
             ? {
-                organizationId: { in: scopeOrganizationIds },
+                organizationId: { in: targetOrganizationIds },
               }
             : {}),
         },
@@ -359,9 +365,9 @@ export class DashboardService {
       this.prisma.zone.count({
         where: {
           deletedAt: null,
-          ...(scopeOrganizationIds
+          ...(targetOrganizationIds
             ? {
-                organizationId: { in: scopeOrganizationIds },
+                organizationId: { in: targetOrganizationIds },
               }
             : {}),
         },
@@ -386,9 +392,9 @@ export class DashboardService {
           employeeId: { not: null },
           status: 'NORMAL',
           lastCommunication: { gte: onlineThreshold },
-          ...(scopeOrganizationIds
+          ...(targetOrganizationIds
             ? {
-                organizationId: { in: scopeOrganizationIds },
+                organizationId: { in: targetOrganizationIds },
               }
             : {}),
         },
@@ -396,9 +402,9 @@ export class DashboardService {
         this.prisma.employee.count({
           where: {
             createdAt: { gte: monthStart },
-            ...(scopeOrganizationIds
+            ...(targetOrganizationIds
               ? {
-                  organizationId: { in: scopeOrganizationIds },
+                  organizationId: { in: targetOrganizationIds },
                 }
               : {}),
           },
@@ -406,9 +412,9 @@ export class DashboardService {
         this.prisma.employee.count({
           where: {
             createdAt: { gte: previousMonthStart, lt: monthStart },
-            ...(scopeOrganizationIds
+            ...(targetOrganizationIds
               ? {
-                  organizationId: { in: scopeOrganizationIds },
+                  organizationId: { in: targetOrganizationIds },
                 }
               : {}),
           },
@@ -1041,7 +1047,6 @@ export class DashboardService {
         name: true,
         organizationId: true,
         organization: { select: { id: true, name: true } },
-        workType: { select: { id: true, name: true } },
       },
       orderBy: { name: 'asc' },
     } as any);
@@ -1098,7 +1103,6 @@ export class DashboardService {
         employeeName: employee.name || '',
         organizationId: employee.organizationId || '',
         organizationName: employee.organization?.name || '',
-        workType: employee.workType?.name || '',
         totalBlocks: 0,
         totalEvents: 0,
         allowedEvents: 0,
@@ -1175,7 +1179,6 @@ export class DashboardService {
         employeeName: emp.employeeName,
         organizationId: emp.organizationId,
         organizationName: emp.organizationName,
-        workType: emp.workType,
         totalBlocks: emp.totalBlocks,
         last7DaysBlocks: recentTotal,
         trend,
@@ -1206,7 +1209,6 @@ export class DashboardService {
     const employee = await findEmployeeByIdentifier(this.prisma, employeeId, {
       include: {
         organization: { select: { id: true, name: true } },
-        workType: { select: { id: true, name: true } },
       },
     });
 
@@ -1286,7 +1288,6 @@ export class DashboardService {
     const appliedPolicy = await this.resolveAppliedPolicyForEmployee(
       employee.id,
       employee.organizationId,
-      employee.workTypeId,
       policySourceOrganizationIds,
     );
 
@@ -1483,24 +1484,8 @@ export class DashboardService {
           ? Math.round((dailyHours.reduce((sum, value) => sum + value, 0) / dailyHours.length) * 10) / 10
           : 0;
 
-    // ── 비교 분석: 근무유형 평균 / 현장 평균 대비 ──
-    let vsWorkTypeAvg = 0;
+    // ── 비교 분석: 현장 평균 대비 ──
     let vsSiteAvg = 0;
-    if (employee.workTypeId) {
-      const peerWtStats = await this.prisma.employeeDailyStat.aggregate({
-        where: {
-          workTypeId: employee.workTypeId,
-          date: { gte: startDate30 },
-          employeeId: { not: employee.id },
-        },
-        _avg: { totalBlocks: true },
-        _count: { employeeId: true },
-      });
-      const peerWtAvg = peerWtStats._avg.totalBlocks || 0;
-      if (peerWtAvg > 0) {
-        vsWorkTypeAvg = Math.round(((totalBlocks / 30 - peerWtAvg) / peerWtAvg) * 100);
-      }
-    }
     const siteScopeOrganizationIds = [employee.organizationId];
 
     const peerSiteStats = await this.prisma.employeeDailyStat.aggregate({
@@ -1643,7 +1628,6 @@ export class DashboardService {
       employeeName: employee.name,
       organizationId: employee.organizationId,
       organizationName: employee.organization?.name || '',
-      workType: employee.workType?.name || '-',
       period: '최근 30일',
       avgWorkHours,
 
@@ -1670,7 +1654,6 @@ export class DashboardService {
         eveningBlockRate: Math.round((eveningLogs / totalLogCount) * 100),
         weeklyIncreaseRate,
         consecutiveBlocks,
-        vsWorkTypeAvg,
         vsSiteAvg,
         offHoursActivity,
         longStayInRestrictedZone,
@@ -1686,84 +1669,80 @@ export class DashboardService {
   private async resolveAppliedPolicyForEmployee(
     employeeId: string,
     organizationId: string,
-    workTypeId?: string | null,
     policySourceOrganizationIds?: string[],
   ) {
     const candidateOrganizationIds = policySourceOrganizationIds?.length
       ? policySourceOrganizationIds
       : [organizationId];
 
-    const [assignedPolicies, workTypePolicy] = await Promise.all([
-      this.prisma.controlPolicyEmployee.findMany({
-        where: {
-          employeeId,
-          policy: {
-            isActive: true,
-            organizationId: { in: candidateOrganizationIds },
+    const assignedPolicies = await this.prisma.controlPolicyEmployee.findMany({
+      where: {
+        employeeId,
+        policy: {
+          isActive: true,
+          organizationId: { in: candidateOrganizationIds },
+        },
+      },
+      include: {
+        policy: {
+          include: {
+            zones: {
+              include: {
+                zone: { select: { id: true, name: true, type: true, description: true, deletedAt: true } },
+              },
+            },
+            timePolicies: {
+              include: {
+                timePolicy: {
+                  select: { id: true, name: true, startTime: true, endTime: true, days: true },
+                },
+              },
+            },
+            behaviors: {
+              include: {
+                behaviorCondition: {
+                  select: { id: true, name: true, description: true },
+                },
+              },
+            },
           },
         },
-        include: {
-          policy: {
-            include: {
-              zones: {
-                include: {
-                  zone: { select: { id: true, name: true, type: true, description: true, deletedAt: true } },
-                },
-              },
-              timePolicies: {
-                include: {
-                  timePolicy: {
-                    select: { id: true, name: true, startTime: true, endTime: true, days: true },
-                  },
-                },
-              },
-              behaviors: {
-                include: {
-                  behaviorCondition: {
-                    select: { id: true, name: true, description: true },
-                  },
-                },
-              },
+      },
+    });
+
+    // Also find organization-level policies (not individually assigned)
+    const orgPolicies = await this.prisma.controlPolicy.findMany({
+      where: {
+        organizationId: { in: candidateOrganizationIds },
+        isActive: true,
+      },
+      include: {
+        zones: {
+          include: {
+            zone: { select: { id: true, name: true, type: true, description: true, deletedAt: true } },
+          },
+        },
+        timePolicies: {
+          include: {
+            timePolicy: {
+              select: { id: true, name: true, startTime: true, endTime: true, days: true },
             },
           },
         },
-      }),
-      workTypeId
-        ? this.prisma.controlPolicy.findFirst({
-            where: {
-              organizationId: { in: candidateOrganizationIds },
-              workTypeId,
-              isActive: true,
+        behaviors: {
+          include: {
+            behaviorCondition: {
+              select: { id: true, name: true, description: true },
             },
-            include: {
-              zones: {
-                include: {
-                  zone: { select: { id: true, name: true, type: true, description: true, deletedAt: true } },
-                },
-              },
-              timePolicies: {
-                include: {
-                  timePolicy: {
-                    select: { id: true, name: true, startTime: true, endTime: true, days: true },
-                  },
-                },
-              },
-              behaviors: {
-                include: {
-                  behaviorCondition: {
-                    select: { id: true, name: true, description: true },
-                  },
-                },
-              },
-            },
-          })
-        : Promise.resolve(null),
-    ]);
+          },
+        },
+      },
+    });
 
     const assignedPolicyIds = new Set(assignedPolicies.map((item) => item.policyId));
     const mergedPolicies = [
       ...(assignedPolicies as Array<{ policy: any }>).map((item) => item.policy),
-      ...(workTypePolicy ? [workTypePolicy] : []),
+      ...orgPolicies,
     ];
 
     const uniquePolicies = Array.from(new Map(mergedPolicies.map((policy: any) => [policy.id, policy])).values());
@@ -1787,7 +1766,7 @@ export class DashboardService {
       description: selectedPolicy.description || '',
       isActive: !!selectedPolicy.isActive,
       priority: selectedPolicy.priority,
-      source: assignedPolicyIds.has(selectedPolicy.id) ? 'EMPLOYEE' : 'WORK_TYPE',
+      source: assignedPolicyIds.has(selectedPolicy.id) ? 'EMPLOYEE' : 'ORGANIZATION',
       timePolicies: (selectedPolicy.timePolicies || []).map((item: any) => ({
         ...item.timePolicy,
         startTime: this.formatPolicyTime(item.timePolicy?.startTime),
@@ -1827,7 +1806,13 @@ export class DashboardService {
     return `${hours}:${minutes}`;
   }
 
-  async getSiteReports(days = 7, scopeOrganizationIds?: string[]) {
+  async getSiteReports(days = 7, scopeOrganizationIds?: string[], organizationId?: string) {
+    this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
+
+    const targetOrganizationIds = organizationId
+      ? await this.collectDescendantOrganizationIds(organizationId, scopeOrganizationIds)
+      : scopeOrganizationIds;
+
     const endDate = new Date();
     const safeDays = Number.isFinite(days)
       ? Math.min(Math.max(Math.trunc(days), 1), 30)
@@ -1841,7 +1826,7 @@ export class DashboardService {
       where: {
         type: { not: 'company' },
         isActive: true,
-        ...(scopeOrganizationIds ? { id: { in: scopeOrganizationIds } } : {}),
+        ...(targetOrganizationIds ? { id: { in: targetOrganizationIds } } : {}),
       },
       include: {
         parent: { select: { id: true, name: true } },
@@ -1856,7 +1841,7 @@ export class DashboardService {
       where: {
         type: { not: 'company' },
         isActive: true,
-        ...(scopeOrganizationIds ? { id: { in: scopeOrganizationIds } } : {}),
+        ...(targetOrganizationIds ? { id: { in: targetOrganizationIds } } : {}),
       },
       select: {
         id: true,

@@ -16,6 +16,7 @@ import { PaginatedResponse } from '../../common/dto';
 import {
   assertOrganizationInScopeOrThrow,
   ensureOrganizationInScope,
+  assertLeafOrganization,
 } from '../../common/utils/organization-scope.util';
 import { findEmployeeByIdentifier, normalizePhoneEmployeeId, resolveEmployeePrimaryIds } from '../../common/utils/employee-identifier.util';
 import { parseDateInputAsUtc } from '../../common/utils/kst-time.util';
@@ -29,7 +30,6 @@ import {
   EmployeeFilterDto,
   EmployeeMdmManualUnblockDto,
   EmployeeDeviceLogoutUntilNextLoginDto,
-  BulkAssignWorkTypeDto,
   BulkMoveOrganizationDto,
   EmployeeStatusEnum,
 } from './dto';
@@ -97,7 +97,6 @@ export class EmployeesService {
 
   private async validateEmployeeAssignment(
     organizationId: string,
-    workTypeId?: string | null,
   ): Promise<void> {
     const organization = await this.prisma.organization.findUnique({
       where: { id: organizationId },
@@ -108,20 +107,7 @@ export class EmployeesService {
       throw new NotFoundException('조직을 찾을 수 없습니다.');
     }
 
-    if (workTypeId) {
-      const workType = await this.prisma.workType.findUnique({
-        where: { id: workTypeId },
-        select: { id: true, organizationId: true },
-      });
-
-      if (!workType) {
-        throw new NotFoundException('근무 유형을 찾을 수 없습니다.');
-      }
-
-      if (workType.organizationId !== organizationId) {
-        throw new BadRequestException('근무 유형이 선택한 조직에 속하지 않습니다.');
-      }
-    }
+    await assertLeafOrganization(this.prisma, organizationId);
   }
 
   async create(
@@ -150,7 +136,7 @@ export class EmployeesService {
 
     this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
 
-    await this.validateEmployeeAssignment(dto.organizationId, dto.workTypeId);
+    await this.validateEmployeeAssignment(dto.organizationId);
 
     let employee;
     try {
@@ -163,14 +149,12 @@ export class EmployeesService {
           role: normalizedRole,
           email: normalizedEmail,
           memo: normalizedMemo,
-          workTypeId: dto.workTypeId,
           status: (dto.status as EmployeeStatus) || EmployeeStatus.ACTIVE,
           createdById: actorUserId,
           updatedById: actorUserId,
         } as any,
         include: {
           organization: true,
-          workType: true,
         },
       });
     } catch (error) {
@@ -219,11 +203,6 @@ export class EmployeesService {
       ];
     }
 
-    // 근무 유형 필터
-    if (filter.workTypeId) {
-      where.workTypeId = filter.workTypeId;
-    }
-
     // 상태 필터
     if (filter.status) {
       where.status = filter.status as EmployeeStatus;
@@ -236,7 +215,6 @@ export class EmployeesService {
         where,
         include: {
           organization: true,
-          workType: true,
           _count: {
             select: { devices: true },
           },
@@ -257,7 +235,6 @@ export class EmployeesService {
     const employee = await findEmployeeByIdentifier(this.prisma, employeeId, {
       include: {
         organization: true,
-        workType: true,
         devices: {
           select: {
             id: true,
@@ -326,7 +303,6 @@ export class EmployeesService {
         referenceId: true,
         status: true,
         organizationId: true,
-        workTypeId: true,
       },
     });
 
@@ -365,7 +341,6 @@ export class EmployeesService {
 
     await this.validateEmployeeAssignment(
       targetOrganizationId,
-      dto.workTypeId ?? previousEmployee.workTypeId,
     );
 
     let employee;
@@ -392,13 +367,11 @@ export class EmployeesService {
             role: normalizedRole,
             email: normalizedEmail,
             memo: normalizedMemo,
-            workTypeId: dto.workTypeId,
             status: dto.status as EmployeeStatus | undefined,
             updatedById: actorUserId,
           } as any,
           include: {
             organization: true,
-            workType: true,
           },
         });
 
@@ -429,16 +402,6 @@ export class EmployeesService {
       && previousEmployee.status !== (dto.status as EmployeeStatus)
     ) {
       await this.notifyPolicyChangedForEmployees([employee.id], 'employee_status_non_active');
-    }
-
-    if (
-      previousEmployee
-      && dto.workTypeId
-      && previousEmployee.workTypeId !== dto.workTypeId
-    ) {
-      void this.notifyPolicyChangedForEmployees([employee.id], 'employee_work_type_changed').catch((err) =>
-        this.logger.warn(`근무유형 변경 policy_changed 전송 실패(employeeId=${employee.id}): ${String(err)}`),
-      );
     }
 
     if (actorUserId) {
@@ -505,7 +468,6 @@ export class EmployeesService {
           email: null,
           position: null,
           role: null,
-          workTypeId: null,
         },
       });
 
@@ -588,30 +550,6 @@ export class EmployeesService {
     return `deleted:${employeeId}:${randomUUID()}`;
   }
 
-  async bulkAssignWorkType(
-    dto: BulkAssignWorkTypeDto,
-    scopeOrganizationIds?: string[],
-  ): Promise<{ updated: number }> {
-    const resolvedEmployeeIds = await resolveEmployeePrimaryIds(this.prisma, dto.employeeIds);
-
-    const workType = await this.prisma.workType.findUnique({
-      where: { id: dto.workTypeId },
-    });
-    if (!workType) {
-      throw new NotFoundException('근무 유형을 찾을 수 없습니다.');
-    }
-
-    const result = await this.prisma.employee.updateMany({
-      where: {
-        id: { in: resolvedEmployeeIds },
-        ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
-      },
-      data: { workTypeId: dto.workTypeId },
-    });
-
-    return { updated: result.count };
-  }
-
   async bulkMoveOrganization(
     dto: BulkMoveOrganizationDto,
     scopeOrganizationIds?: string[],
@@ -626,6 +564,8 @@ export class EmployeesService {
     if (!organization) {
       throw new NotFoundException('대상 조직을 찾을 수 없습니다.');
     }
+
+    await assertLeafOrganization(this.prisma, dto.targetOrganizationId);
 
     const result = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.employee.updateMany({
@@ -852,7 +792,7 @@ export class EmployeesService {
 
     const updated = await this.prisma.employee.findUnique({
       where: { id: employee.id },
-      include: { organization: true, workType: true },
+      include: { organization: true },
     });
     return this.toResponseDto(updated);
   }
@@ -870,7 +810,7 @@ export class EmployeesService {
 
     const updated = await this.prisma.employee.findUnique({
       where: { id: employee.id },
-      include: { organization: true, workType: true },
+      include: { organization: true },
     });
     return this.toResponseDto(updated);
   }
@@ -1141,7 +1081,6 @@ export class EmployeesService {
         id: reviewEmployeeId,
         name: source.name,
         organizationId: source.organizationId,
-        workTypeId: source.workTypeId,
         position: source.position,
         role: source.role,
         status: 'PHONE_INFO_REVIEW' as EmployeeStatus,
@@ -1247,7 +1186,7 @@ export class EmployeesService {
 
   private async notifyPolicyChangedForEmployees(
     employeeIds: string[],
-    trigger: 'employee_status_non_active' | 'employee_work_type_changed',
+    trigger: 'employee_status_non_active',
   ): Promise<void> {
     const uniqueEmployeeIds = Array.from(new Set(employeeIds.filter(Boolean)));
     if (uniqueEmployeeIds.length === 0) {

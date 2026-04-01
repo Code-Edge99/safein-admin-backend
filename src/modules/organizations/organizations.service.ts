@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OrganizationType as PrismaOrgType, DeviceStatus } from '@prisma/client';
-import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertLeafOrganization } from '../../common/utils/organization-scope.util';
 import { normalizePhoneNumber } from '../../common/utils/phone.util';
 import { toOrganizationResponseDto } from './organizations.mapper';
 import {
@@ -10,6 +10,8 @@ import {
   OrganizationResponseDto,
   OrganizationTreeDto,
   OrganizationStatsDto,
+  TransferResourcesDto,
+  TransferResourcesResultDto,
 } from './dto';
 
 @Injectable()
@@ -315,7 +317,6 @@ export class OrganizationsService {
           select: {
             children: true,
             employees: true,
-            workTypes: true,
             zones: true,
             timePolicies: true,
             behaviorConditions: true,
@@ -341,7 +342,6 @@ export class OrganizationsService {
     }
 
     if (
-      organization._count.workTypes > 0 ||
       organization._count.zones > 0 ||
       organization._count.timePolicies > 0 ||
       organization._count.behaviorConditions > 0 ||
@@ -404,5 +404,57 @@ export class OrganizationsService {
 
   private toResponseDto(org: any): OrganizationResponseDto {
     return toOrganizationResponseDto(org);
+  }
+
+  async transferResources(
+    sourceOrganizationId: string,
+    dto: TransferResourcesDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<TransferResourcesResultDto> {
+    this.ensureOrganizationInScope(sourceOrganizationId, scopeOrganizationIds);
+    this.ensureOrganizationInScope(dto.targetOrganizationId, scopeOrganizationIds);
+
+    if (sourceOrganizationId === dto.targetOrganizationId) {
+      throw new BadRequestException('원본 조직과 대상 조직이 동일합니다.');
+    }
+
+    const [source, target] = await Promise.all([
+      this.prisma.organization.findUnique({ where: { id: sourceOrganizationId } }),
+      this.prisma.organization.findUnique({ where: { id: dto.targetOrganizationId } }),
+    ]);
+
+    if (!source) throw new NotFoundException('원본 조직을 찾을 수 없습니다.');
+    if (!target) throw new NotFoundException('대상 조직을 찾을 수 없습니다.');
+
+    await assertLeafOrganization(this.prisma, dto.targetOrganizationId);
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const employees = await tx.employee.updateMany({
+        where: { organizationId: sourceOrganizationId },
+        data: { organizationId: dto.targetOrganizationId },
+      });
+
+      // 장치도 직원과 함께 이관
+      await tx.device.updateMany({
+        where: { organizationId: sourceOrganizationId },
+        data: { organizationId: dto.targetOrganizationId },
+      });
+
+      // employeeCount 갱신
+      const [sourceCount, targetCount] = await Promise.all([
+        tx.employee.count({ where: { organizationId: sourceOrganizationId } }),
+        tx.employee.count({ where: { organizationId: dto.targetOrganizationId } }),
+      ]);
+      await Promise.all([
+        tx.organization.update({ where: { id: sourceOrganizationId }, data: { employeeCount: sourceCount } }),
+        tx.organization.update({ where: { id: dto.targetOrganizationId }, data: { employeeCount: targetCount } }),
+      ]);
+
+      return {
+        employees: employees.count,
+      };
+    });
+
+    return result;
   }
 }

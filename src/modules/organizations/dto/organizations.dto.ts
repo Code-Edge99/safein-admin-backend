@@ -147,3 +147,15 @@ export class OrganizationStatsDto {
   @ApiProperty({ description: '하위 조직 수' })
   childOrganizations: number;
 }
+
+export class TransferResourcesDto {
+  @ApiProperty({ description: '이관 대상 조직 ID' })
+  @IsString()
+  @IsNotEmpty()
+  targetOrganizationId: string;
+}
+
+export class TransferResourcesResultDto {
+  @ApiProperty({ description: '이관된 직원 수' })
+  employees: number;
+}

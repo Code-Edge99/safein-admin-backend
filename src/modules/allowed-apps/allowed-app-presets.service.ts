@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException 
 import { AuditAction } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
-import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertLeafOrganization } from '../../common/utils/organization-scope.util';
 import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toAllowedAppPresetDetailDto, toAllowedAppPresetResponseDto } from './allowed-app-presets.mapper';
 import {
@@ -107,6 +107,8 @@ export class AllowedAppPresetsService {
 
     this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
 
+    await assertLeafOrganization(this.prisma, dto.organizationId);
+
     const apps = await this.findAppsOrThrow(dto.appIds);
     const explicitPlatform = dto.platform === undefined ? undefined : this.normalizePlatform(dto.platform);
     const inferredPlatform = this.inferPlatformFromApps(apps);
@@ -119,7 +121,6 @@ export class AllowedAppPresetsService {
         description: dto.description,
         platform: targetPlatform,
         organizationId: dto.organizationId,
-        workTypeId: dto.workTypeId,
         createdById: actorUserId,
         updatedById: actorUserId,
         items: dto.appIds?.length
@@ -132,7 +133,6 @@ export class AllowedAppPresetsService {
       },
       include: {
         organization: { select: { id: true, name: true } },
-        workType: { select: { id: true, name: true } },
         items: {
           include: {
             allowedApp: true,
@@ -170,10 +170,6 @@ export class AllowedAppPresetsService {
       where.organizationId = { in: scopeOrganizationIds };
     }
 
-    if (filter.workTypeId) {
-      where.workTypeId = filter.workTypeId;
-    }
-
     if (filter.platform && filter.platform !== 'all') {
       where.platform = this.normalizePlatform(filter.platform);
     }
@@ -185,7 +181,6 @@ export class AllowedAppPresetsService {
         take: limit,
         include: {
           organization: { select: { id: true, name: true } },
-          workType: { select: { id: true, name: true } },
           items: {
             include: {
               allowedApp: true,
@@ -216,7 +211,6 @@ export class AllowedAppPresetsService {
       where: { id },
       include: {
         organization: { select: { id: true, name: true } },
-        workType: { select: { id: true, name: true } },
         items: {
           include: {
             allowedApp: true,
@@ -290,12 +284,10 @@ export class AllowedAppPresetsService {
         description: dto.description,
         platform: explicitPlatform !== undefined || inferredPlatform !== undefined ? targetPlatform : undefined,
         organizationId: dto.organizationId,
-        workTypeId: dto.workTypeId,
         updatedById: actorUserId,
       },
       include: {
         organization: { select: { id: true, name: true } },
-        workType: { select: { id: true, name: true } },
         items: {
           include: {
             allowedApp: true,
@@ -485,7 +477,6 @@ export class AllowedAppPresetsService {
       where: { organizationId },
       include: {
         organization: { select: { id: true, name: true } },
-        workType: { select: { id: true, name: true } },
         items: {
           include: {
             allowedApp: true,

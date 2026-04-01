@@ -96,11 +96,6 @@ export class CreateTimePolicyDto {
   @IsNotEmpty()
   organizationId: string;
 
-  @ApiPropertyOptional({ description: '작업 유형 ID (선택)' })
-  @IsString()
-  @IsOptional()
-  workTypeId?: string;
-
   @ApiProperty({ description: '시간대 규칙', type: [TimeSlotDto] })
   @IsArray()
   @ValidateNested({ each: true })
@@ -174,12 +169,6 @@ export class TimePolicyResponseDto {
   @ApiPropertyOptional({ description: '예외시간 목록', type: [ExcludePeriodResponseDto] })
   excludePeriods?: ExcludePeriodResponseDto[];
 
-  @ApiPropertyOptional({ description: '작업 유형 정보' })
-  workType?: {
-    id: string;
-    name: string;
-  };
-
   @ApiProperty({ description: '적용 직원 수' })
   affectedEmployeeCount: number;
 
@@ -200,11 +189,6 @@ export class TimePolicyFilterDto {
   @IsString()
   @IsOptional()
   organizationId?: string;
-
-  @ApiPropertyOptional({ description: '작업 유형 ID' })
-  @IsString()
-  @IsOptional()
-  workTypeId?: string;
 
   @ApiPropertyOptional({ description: '페이지 번호', default: 1 })
   @IsNumber()
@@ -246,11 +230,6 @@ export class CheckTimeActiveDto {
   @IsOptional()
   @IsString()
   employeeId?: string;
-
-  @ApiPropertyOptional({ description: '작업 유형 ID' })
-  @IsOptional()
-  @IsString()
-  workTypeId?: string;
 }
 
 export class TimePolicyStatsDto {
