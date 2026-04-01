@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { OrganizationType as PrismaOrgType, DeviceStatus } from '@prisma/client';
+import { DeviceStatus } from '@prisma/client';
 import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertLeafOrganization } from '../../common/utils/organization-scope.util';
 import { normalizePhoneNumber } from '../../common/utils/phone.util';
 import { toOrganizationResponseDto } from './organizations.mapper';
@@ -18,12 +18,6 @@ import {
 export class OrganizationsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private assertSupportedOrganizationType(type: string | undefined): void {
-    if (type === 'field') {
-      throw new BadRequestException('구역(field) 조직 유형은 더 이상 지원되지 않습니다. 사업장(site)을 사용해주세요.');
-    }
-  }
-
   private ensureOrganizationInScope(
     organizationId: string | undefined,
     scopeOrganizationIds?: string[],
@@ -40,7 +34,6 @@ export class OrganizationsService {
 
   async create(dto: CreateOrganizationDto, scopeOrganizationIds?: string[], actorUserId?: string): Promise<OrganizationResponseDto> {
     this.ensureOrganizationInScope(dto.parentId || undefined, scopeOrganizationIds);
-    this.assertSupportedOrganizationType(dto.type);
     const normalizedManagerPhone = normalizePhoneNumber(dto.managerPhone);
 
     // 상위 조직 검증
@@ -56,7 +49,6 @@ export class OrganizationsService {
     const organization = await this.prisma.organization.create({
       data: {
         name: dto.name,
-        type: dto.type as PrismaOrgType,
         address: dto.address,
         detailAddress: dto.detailAddress,
         description: dto.description,
@@ -108,7 +100,7 @@ export class OrganizationsService {
           },
         },
       },
-      orderBy: [{ type: 'asc' }, { name: 'asc' }],
+      orderBy: [{ name: 'asc' }],
     });
 
     return organizations.map(org => this.toResponseDto(org));
@@ -139,7 +131,7 @@ export class OrganizationsService {
           },
         },
       },
-      orderBy: [{ type: 'asc' }, { name: 'asc' }],
+      orderBy: [{ name: 'asc' }],
     });
 
     const organizationIdSet = new Set(organizations.map((org) => org.id));
@@ -247,7 +239,6 @@ export class OrganizationsService {
     actorUserId?: string,
   ): Promise<OrganizationResponseDto> {
     await this.findOne(id, scopeOrganizationIds); // 존재 여부 확인
-    this.assertSupportedOrganizationType(dto.type);
     const normalizedManagerPhone = normalizePhoneNumber(dto.managerPhone);
 
     // 순환 참조 방지
@@ -275,7 +266,6 @@ export class OrganizationsService {
       where: { id },
       data: {
         name: dto.name,
-        type: dto.type as PrismaOrgType | undefined,
         address: dto.address,
         detailAddress: dto.detailAddress,
         description: dto.description,

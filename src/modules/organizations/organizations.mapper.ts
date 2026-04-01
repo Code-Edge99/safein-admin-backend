@@ -4,7 +4,6 @@ export function toOrganizationResponseDto(org: any): OrganizationResponseDto {
   return {
     id: org.id,
     name: org.name,
-    type: org.type,
     parentId: org.parentId,
     address: org.address,
     detailAddress: org.detailAddress,

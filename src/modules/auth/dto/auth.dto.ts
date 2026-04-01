@@ -129,9 +129,6 @@ export class AuthUserDto {
   @ApiProperty({ description: '조직 ID' })
   organizationId: string;
 
-  @ApiPropertyOptional({ description: '조직 유형' })
-  organizationType?: string;
-
   @ApiPropertyOptional({ description: '마지막 로그인 시각' })
   lastLogin?: Date;
 

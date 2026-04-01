@@ -353,7 +353,6 @@ export class AuthService {
         ? { id: account.organization.id, name: account.organization.name }
         : undefined,
       organizationId: account.organizationId || '',
-      organizationType: account.organization?.type,
       lastLogin: account.lastLogin || undefined,
       createdAt: account.createdAt || undefined,
     };
@@ -464,7 +463,6 @@ export class AuthService {
         ? { id: updated.organization.id, name: updated.organization.name }
         : undefined,
       organizationId: updated.organizationId || '',
-      organizationType: updated.organization?.type,
       lastLogin: updated.lastLogin || undefined,
       createdAt: updated.createdAt || undefined,
       lastPasswordChangedAt,

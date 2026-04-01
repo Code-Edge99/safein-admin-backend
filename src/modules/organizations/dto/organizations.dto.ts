@@ -1,24 +1,13 @@
-import { IsString, IsNotEmpty, IsOptional, IsEnum, IsBoolean } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsBoolean } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { normalizeOptionalPhoneNumber } from '../../../common/utils/phone.util';
-
-export enum OrganizationType {
-  COMPANY = 'company',
-  SITE = 'site',
-  DEPARTMENT = 'department',
-  TEAM = 'team',
-}
 
 export class CreateOrganizationDto {
   @ApiProperty({ description: '조직명' })
   @IsString()
   @IsNotEmpty()
   name: string;
-
-  @ApiProperty({ description: '조직 유형', enum: OrganizationType })
-  @IsEnum(OrganizationType)
-  type: OrganizationType;
 
   @ApiPropertyOptional({ description: '상위 조직 ID' })
   @IsOptional()
@@ -70,9 +59,6 @@ export class OrganizationResponseDto {
 
   @ApiProperty({ description: '조직명' })
   name: string;
-
-  @ApiProperty({ description: '조직 유형' })
-  type: string;
 
   @ApiPropertyOptional({ description: '상위 조직 ID' })
   parentId: string | null;
