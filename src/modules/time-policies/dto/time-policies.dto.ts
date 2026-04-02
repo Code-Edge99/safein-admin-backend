@@ -40,10 +40,10 @@ export class TimeSlotDto {
 }
 
 export class ExcludePeriodDto {
-  @ApiProperty({ description: '예외시간 이름', example: '점심시간' })
+  @ApiProperty({ description: '예외시간 사유', example: '점심시간' })
   @IsString()
   @IsNotEmpty()
-  name: string;
+  reason: string;
 
   @ApiPropertyOptional({ description: '시작 시간 (HH:MM 형식)', example: '12:00' })
   @ValidateIf((value: ExcludePeriodDto) => !value.startTime)
@@ -70,8 +70,8 @@ export class ExcludePeriodResponseDto {
   @ApiProperty({ description: '예외시간 ID' })
   id: string;
 
-  @ApiProperty({ description: '예외시간 이름', example: '점심시간' })
-  name: string;
+  @ApiProperty({ description: '예외시간 사유', example: '점심시간' })
+  reason: string;
 
   @ApiProperty({ description: '시작 시간 (HH:MM 형식)', example: '12:00' })
   start: string;

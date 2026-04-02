@@ -72,7 +72,7 @@ export class TimePoliciesService {
         ...(normalizedExcludePeriods.length > 0 && {
           excludePeriods: {
             create: normalizedExcludePeriods.map((ep) => ({
-              name: ep.name,
+              reason: ep.reason,
               startTime: this.parseTimeToDate(ep.startTime),
               endTime: this.parseTimeToDate(ep.endTime),
             })),
@@ -229,7 +229,7 @@ export class TimePoliciesService {
         await this.prisma.timePolicyExcludePeriod.createMany({
           data: normalizedExcludePeriods.map((ep) => ({
             timePolicyId: id,
-            name: ep.name,
+            reason: ep.reason,
             startTime: this.parseTimeToDate(ep.startTime),
             endTime: this.parseTimeToDate(ep.endTime),
           })),
@@ -453,8 +453,8 @@ export class TimePoliciesService {
   }
 
   private normalizeExcludePeriods(
-    excludePeriods?: Array<{ name: string; start?: string; end?: string; startTime?: string; endTime?: string }>,
-  ): Array<{ name: string; startTime: string; endTime: string }> {
+    excludePeriods?: Array<{ reason: string; start?: string; end?: string; startTime?: string; endTime?: string }>,
+  ): Array<{ reason: string; startTime: string; endTime: string }> {
     if (!Array.isArray(excludePeriods)) {
       return [];
     }
@@ -463,14 +463,14 @@ export class TimePoliciesService {
       .map((period) => {
         const startTime = (period.start ?? period.startTime ?? '').trim();
         const endTime = (period.end ?? period.endTime ?? '').trim();
-        const name = (period.name ?? '').trim();
+        const reason = (period.reason ?? '').trim();
 
         return {
-          name,
+          reason,
           startTime,
           endTime,
         };
       })
-      .filter((period) => period.name.length > 0 && period.startTime.length > 0 && period.endTime.length > 0);
+      .filter((period) => period.reason.length > 0 && period.startTime.length > 0 && period.endTime.length > 0);
   }
 }

@@ -19,7 +19,7 @@ export function toTimePolicyResponseDto(policy: any, customTimeSlots?: TimeSlotD
 
   const formattedExcludePeriods = (policy.excludePeriods || []).map((ep: any) => ({
     id: ep.id,
-    name: ep.name,
+    reason: ep.reason,
     start: formatTime(ep.startTime),
     end: formatTime(ep.endTime),
   }));
