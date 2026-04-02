@@ -31,7 +31,7 @@ export class OrganizationScopeGuard implements CanActivate {
 
     const rootOrganization = await this.prisma.organization.findUnique({
       where: { id: user.organizationId },
-      select: { id: true, type: true, isActive: true },
+      select: { id: true, isActive: true },
     });
 
     if (!rootOrganization || !rootOrganization.isActive) {

@@ -100,7 +100,7 @@ export class EmployeesService {
   ): Promise<void> {
     const organization = await this.prisma.organization.findUnique({
       where: { id: organizationId },
-      select: { id: true, parentId: true, type: true },
+      select: { id: true, parentId: true },
     });
 
     if (!organization) {

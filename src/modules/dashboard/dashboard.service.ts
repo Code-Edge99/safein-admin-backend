@@ -1824,23 +1824,22 @@ export class DashboardService {
     // 회사(root) 제외 모든 조직 조회 (현장, 부서, 팀, 현장조 등)
     const sites = await this.prisma.organization.findMany({
       where: {
-        type: { not: 'company' },
         isActive: true,
+        parentId: { not: null },
         ...(targetOrganizationIds ? { id: { in: targetOrganizationIds } } : {}),
       },
       include: {
         parent: { select: { id: true, name: true } },
       },
       orderBy: [
-        { type: 'asc' },
         { name: 'asc' },
       ],
     });
 
     const allOrganizations = await this.prisma.organization.findMany({
       where: {
-        type: { not: 'company' },
         isActive: true,
+        parentId: { not: null },
         ...(targetOrganizationIds ? { id: { in: targetOrganizationIds } } : {}),
       },
       select: {
@@ -2111,7 +2110,7 @@ export class DashboardService {
         site: {
           id: site.id,
           name: site.name,
-          type: site.type,
+          type: '',
           parentName: site.parent?.name || null,
           employeeCount,
         },
