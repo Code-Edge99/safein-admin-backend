@@ -20,7 +20,16 @@ function copyDir(source, target) {
     throw new Error(`Source not found: ${source}`);
   }
   ensureDir(target);
-  fs.cpSync(source, target, { recursive: true, force: true });
+  if (process.platform === 'win32') {
+    try {
+      execSync(`robocopy "${source}" "${target}" /MIR /NJH /NJS /NP /NS /NC /NFL /NDL`, { stdio: 'ignore' });
+    } catch (e) {
+      // robocopy exit code < 8 means success (1=copied, 2=extra, 4=mismatch)
+      if (e.status >= 8) throw new Error(`robocopy failed with code ${e.status}`);
+    }
+  } else {
+    execSync(`cp -rf "${source}/." "${target}/"`, { stdio: 'ignore' });
+  }
 }
 
 function ensurePrismaProjectReady() {

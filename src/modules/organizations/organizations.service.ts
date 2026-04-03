@@ -40,9 +40,32 @@ export class OrganizationsService {
     if (dto.parentId) {
       const parent = await this.prisma.organization.findUnique({
         where: { id: dto.parentId },
+        include: {
+          _count: {
+            select: {
+              children: true,
+              employees: true,
+              zones: true,
+              timePolicies: true,
+              behaviorConditions: true,
+              allowedAppPresets: true,
+              controlPolicies: true,
+            },
+          },
+        },
       });
       if (!parent) {
         throw new NotFoundException('상위 조직을 찾을 수 없습니다.');
+      }
+      // 상위가 단위(리프)이고 직원이나 정책이 있으면 하위 생성 차단
+      if (parent._count.children === 0) {
+        const c = parent._count;
+        if (c.employees > 0 || c.zones > 0 || c.timePolicies > 0 ||
+            c.behaviorConditions > 0 || c.allowedAppPresets > 0 || c.controlPolicies > 0) {
+          throw new BadRequestException(
+            '해당 현장에 직원이나 정책이 배정되어 있어 하위 현장을 생성할 수 없습니다. 직원과 정책을 먼저 제거해주세요.',
+          );
+        }
       }
     }
 
@@ -61,20 +84,8 @@ export class OrganizationsService {
         isActive: dto.isActive ?? true,
       } as any,
       include: {
-        createdBy: {
-          select: {
-            id: true,
-            name: true,
-            username: true,
-          },
-        },
-        updatedBy: {
-          select: {
-            id: true,
-            name: true,
-            username: true,
-          },
-        },
+        createdBy: { select: { id: true, name: true, username: true } },
+        updatedBy: { select: { id: true, name: true, username: true } },
       },
     });
 

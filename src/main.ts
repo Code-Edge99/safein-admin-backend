@@ -55,7 +55,6 @@ async function bootstrap() {
 
   // CORS
   const corsOrigin = readStageConfig(configService, 'CORS_ORIGIN', {
-    local: 'http://localhost:5173',
     dev: 'http://localhost:5173',
     prod: 'http://localhost:5173',
   });

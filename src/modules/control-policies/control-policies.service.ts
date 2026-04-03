@@ -1281,9 +1281,8 @@ export class ControlPoliciesService {
 
   private getAppBackendBaseUrl(): string {
     const baseUrl = readStageConfig(this.configService, 'APP_BACKEND_BASE_URL', {
-      local: 'http://localhost:3100/api/app',
-      dev: 'http://app-backend:3100/api/app',
-      prod: 'http://app-backend:3100/api/app',
+      dev: 'http://localhost:3100/api/app',
+      prod: 'http://localhost:3100/api/app',
     });
     return baseUrl.trim().replace(/\/$/, '');
   }

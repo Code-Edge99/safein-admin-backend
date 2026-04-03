@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from './prisma/prisma.module';
+import { createStageConfigLoader } from './common/config/stage.config';
 
 // Feature Modules
 import { AuthModule } from './modules/auth/auth.module';
@@ -23,10 +24,11 @@ import { RequestLoggingInterceptor } from './common/interceptors/request-logging
 
 @Module({
   imports: [
-    // Config
+    // 단일 .env 파일 로드 → createStageConfigLoader가 KEY_PROD 등을 KEY로 자동 매핑
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
+      load: [createStageConfigLoader()],
     }),
 
     // Database
