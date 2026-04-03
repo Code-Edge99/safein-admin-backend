@@ -1,105 +1,139 @@
 # Safein Admin Backend
 
-세이프인 관리자 API 서버 (NestJS + Prisma + PostgreSQL)
+세이프인 관리자 API 서버입니다. (NestJS + Prisma + PostgreSQL)
 
-## NCP Maps REST Geocoding 설정
+## 개요
+- API Prefix: `/api`
+- Swagger: `/api/docs`
+- Prisma 스키마/마이그레이션/시드는 `safein-prisma`에서만 관리
+- 이 저장소의 `npm run prisma:*`는 차단되어 있으며, Prisma 관련 작업은 `safein-prisma`에서 실행해야 합니다.
 
-관리자 프론트의 지도 주소 검색은 기본적으로 JS SDK geocoder를 사용하며,
-SDK geocoder 실패 시 admin-backend의 `/api/maps/geocode` 프록시로 자동 fallback 됩니다.
-
-아래 환경변수 중 하나를 설정하세요:
-
-- `NCP_MAPS_API_KEY_ID=<NCP Client ID>`
-- `NCP_MAPS_API_KEY=<NCP Client Secret>`
-
-프록시는 NCP Maps Geocoding REST API(`https://maps.apigw.ntruss.com/map-geocode/v2/geocode`)를 호출하며,
-요청 헤더에 `x-ncp-apigw-api-key-id`, `x-ncp-apigw-api-key`를 사용합니다.
-
-## 현재 구조 기준 핵심 규칙
-- Prisma 스키마/마이그레이션/시드는 `smombie-prisma`에서만 관리
-- 이 서버의 `npm install`은 Prisma Client 동기화만 수행
-- `npm run prisma:*` 명령은 여기서 실행하지 않음(안내 후 종료)
-
-## 로컬 셋업 순서
-
-### 1) 폴더 배치
-아래 3개 폴더가 같은 레벨에 있어야 합니다.
-```text
-smombie/
-  smombie-prisma/
-  smombie-admin-backend/
-  smombie-app-backend/
-```
-
-### 2) 사전 준비
-- Node.js 20+
-- PostgreSQL 16+
+## 사전 준비
+- Node.js 20 이상
 - npm
+- PostgreSQL 16 이상
 
-### 3) 환경변수 설정
-프로젝트 루트에 `.env` 파일을 직접 생성하고 아래 예시를 기준으로 값 설정
+## 폴더 배치
+아래 폴더가 같은 레벨(형제 디렉터리)에 있어야 합니다.
 
-`smombie-admin-backend/.env`
-```env
-APP_STAGE=local
-DATABASE_URL=postgresql://postgres:password@localhost:5432/safein?schema=public
-PORT=3000
-JWT_SECRET=your-admin-jwt-secret
-JWT_EXPIRATION=1d
-
-# 단일 .env에서 스테이지별 값 관리
-CORS_ORIGIN_LOCAL=http://localhost:5173
-CORS_ORIGIN_DEV=https://dev-admin.example.com
-CORS_ORIGIN_PROD=https://admin.example.com
-
-APP_BACKEND_BASE_URL_LOCAL=http://localhost:3100/api/app
-APP_BACKEND_BASE_URL_DEV=https://dev-app-api.example.com/api/app
-APP_BACKEND_BASE_URL_PROD=https://app-api.example.com/api/app
-
-# (선택) 하위 호환 단일 키
-CORS_ORIGIN=*
-APP_BACKEND_BASE_URL=http://localhost:3100/api/app
+```text
+safein/
+  safein-prisma/
+  safein-admin-backend/
+  safein-app-backend/
 ```
 
-### 4) 공용 Prisma 준비(최초 1회)
+`safein-admin-backend/scripts/setup-prisma-client.js`는 `../safein-prisma` 경로에서 Prisma Client를 동기화합니다.
+
+## 빠른 실행
+
+### 1) 공용 Prisma 준비 (최초 1회)
 ```bash
-cd ../smombie-prisma
+cd ../safein-prisma
 npm install
 npm run prisma:migrate
 ```
 
-### 5) Admin Backend 설치/실행
+필요 시 시드 데이터 반영:
+
 ```bash
-cd ../smombie-admin-backend
+npm run prisma:seed
+```
+
+### 2) 환경변수 파일 생성
+`safein-admin-backend/.env` 파일을 만들고 아래 예시를 기준으로 값을 채웁니다.
+
+```env
+# stage: dev | prod (local 문자열은 dev로 처리됨)
+APP_STAGE=dev
+NODE_ENV=development
+
+PORT=3000
+DATABASE_URL=postgresql://postgres:password@localhost:5432/safein?schema=public
+
+# 운영(prod)에서는 32자 이상 필수
+JWT_SECRET=replace-with-32-plus-char-secret
+JWT_EXPIRATION=15m
+JWT_REFRESH_SECRET=replace-with-refresh-secret
+JWT_REFRESH_EXPIRATION=30d
+JWT_REFRESH_INACTIVITY=7d
+JWT_REFRESH_ABSOLUTE_EXPIRATION=30d
+
+# APP_STAGE 기준으로 *_DEV / *_PROD가 자동 매핑됨
+CORS_ORIGIN_DEV=http://localhost:5173
+CORS_ORIGIN_PROD=https://admin.example.com
+
+APP_BACKEND_BASE_URL_DEV=http://localhost:3100/api/app
+APP_BACKEND_BASE_URL_PROD=https://app-api.example.com/api/app
+
+# 좌표 암복호화 키(32 bytes 필요: hex/base64/utf8)
+LOCATION_ENCRYPTION_KEY=0123456789abcdef0123456789abcdef
+LOCATION_ENCRYPTION_KEY_VERSION=1
+
+# 선택: app-backend 내부 연동 보호
+APP_BACKEND_MDM_ADMIN_SECRET=replace-with-internal-secret
+
+# 선택: 지도 geocode fallback 프록시용
+NCP_MAPS_API_KEY_ID=your-ncp-client-id
+NCP_MAPS_API_KEY=your-ncp-client-secret
+
+# 선택: 시스템 로그 DB 영속화
+SYSTEM_LOG_PERSIST_ENABLED=true
+SYSTEM_LOG_PERSIST_LEVELS=error,warn,log
+```
+
+주의:
+- `APP_STAGE`는 `dev` 또는 `prod`만 의미 있게 처리됩니다.
+- `CORS_ORIGIN`에 `*`와 명시 도메인을 함께 넣으면 서버가 에러로 종료됩니다.
+
+### 3) 서버 설치/실행
+```bash
+cd ../safein-admin-backend
 npm install
 npm run dev
 ```
 
-## 접속 주소
+## 실행 확인
 - API: http://localhost:3000/api
 - Swagger: http://localhost:3000/api/docs
 
-## 운영 배포 규칙
-- 같은 DB를 공유하면 `prisma migrate deploy`는 한 서버/한 파이프라인에서 1회만 실행
-- 운영에서 `smombie-prisma` 설치 시 seed를 막으려면:
-  - `NODE_ENV=production` 사용 또는
-  - `PRISMA_SEED_ON_INSTALL=false npm install`
-
-## config / env / json 관리 방안
-- `env`는 코드 저장소에 커밋하지 않고, 로컬/서버의 `.env`로만 관리
-- 소스에서 `APP_STAGE`(`local|dev|prod`)를 읽고 `*_LOCAL|*_DEV|*_PROD` 키를 선택
-- 샘플 값 안내는 README에서 유지하고 실제 비밀값은 시크릿 매니저(예: GitHub Secrets, AWS SSM, Vault)로 주입
-- JSON 자격증명 파일(예: Firebase Admin SDK)은 커밋 금지, 서버 파일시스템의 절대경로 또는 배포 시 마운트 경로를 환경변수로 주입
-- 운영/개발 값 분리는 `NODE_ENV` + 환경별 시크릿으로 관리(코드 하드코딩 금지)
+Swagger 설명 영역과 서버 로그에서 개발용 무제한 토큰 정보를 확인할 수 있습니다.
 
 ## 자주 쓰는 명령어
 | 명령어 | 설명 |
 |--------|------|
-| `npm run dev` | 개발 서버 실행 |
+| `npm run dev` | 개발 서버 실행 (watch) |
 | `npm run build` | 빌드 |
 | `npm run start:prod` | 프로덕션 실행 |
-| `npm run prisma:*` | 사용 금지(공용 Prisma 저장소에서 실행) |
+| `npm run test` | 단위 테스트 |
+| `npm run lint` | 린트 |
 
-## 모듈 개요
-주요 경로: `/api/auth`, `/api/accounts`, `/api/employees`, `/api/devices`, `/api/control-policies`, `/api/dashboard`
+Prisma 관련 명령은 아래처럼 `safein-prisma`에서 실행합니다.
+
+```bash
+npm --prefix ../safein-prisma run prisma:migrate
+npm --prefix ../safein-prisma run prisma:migrate:deploy
+npm --prefix ../safein-prisma run prisma:studio
+```
+
+## 운영 배포 메모
+- 같은 DB를 공유하면 `prisma migrate deploy`는 한 파이프라인에서 1회만 실행하세요.
+- `safein-prisma` 설치 시 seed 자동실행을 막으려면 다음 중 하나를 사용하세요.
+  - `NODE_ENV=production`
+  - `PRISMA_SEED_ON_INSTALL=false npm install`
+
+## 트러블슈팅
+
+### 서버가 시작 직후 종료되는 경우
+- `JWT_SECRET` 누락/길이 부족 여부를 확인하세요. (prod에서 32자 이상 필수)
+- `CORS_ORIGIN` 값에 `*`와 도메인이 동시에 들어갔는지 확인하세요.
+- `DATABASE_URL` 연결 가능 여부를 확인하세요.
+
+### Prisma 관련 명령이 실패하는 경우
+- 이 저장소에서 `npm run prisma:*`를 실행하지 않았는지 확인하세요.
+- `../safein-prisma` 폴더 존재 여부와 권한을 확인하세요.
+
+### 지도 주소 검색 fallback이 동작하지 않는 경우
+- `NCP_MAPS_API_KEY_ID`, `NCP_MAPS_API_KEY` 값을 확인하세요.
+- geocode 프록시 엔드포인트: `/api/maps/geocode`
 
