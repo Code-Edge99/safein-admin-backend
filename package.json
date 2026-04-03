@@ -1,5 +1,5 @@
 {
-  "name": "smombie-admin-backend",
+  "name": "safein-admin-backend",
   "version": "1.0.0",
   "description": "Safein Admin Backend - NestJS with Prisma",
   "author": "",

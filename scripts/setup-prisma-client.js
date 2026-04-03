@@ -3,7 +3,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 
 const backendRoot = path.resolve(__dirname, '..');
-const prismaProjectDir = path.resolve(backendRoot, '..', 'smombie-prisma');
+const prismaProjectDir = path.resolve(backendRoot, '..', 'safein-prisma');
 
 const sourcePrismaClientDir = path.resolve(prismaProjectDir, 'node_modules', '.prisma', 'client');
 const sourceAtPrismaClientDir = path.resolve(prismaProjectDir, 'node_modules', '@prisma', 'client');
@@ -34,13 +34,13 @@ function copyDir(source, target) {
 
 function ensurePrismaProjectReady() {
   if (!fs.existsSync(prismaProjectDir)) {
-    throw new Error('smombie-prisma 폴더를 찾을 수 없습니다. 백엔드 서버에도 smombie-prisma를 함께 배포하세요.');
+    throw new Error('safein-prisma ?�더�?찾을 ???�습?�다. 백엔???�버?�도 safein-prisma�??�께 배포?�세??');
   }
 
   const hasSourceClient = fs.existsSync(sourcePrismaClientDir) && fs.existsSync(sourceAtPrismaClientDir);
   if (hasSourceClient) return;
 
-  console.log('[setup-prisma-client] Generating Prisma client in smombie-prisma...');
+  console.log('[setup-prisma-client] Generating Prisma client in safein-prisma...');
   execSync('npm install --no-audit --no-fund', { cwd: prismaProjectDir, stdio: 'inherit' });
   execSync('npm run -s prisma:generate', { cwd: prismaProjectDir, stdio: 'inherit' });
 }
