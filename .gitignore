@@ -5,16 +5,6 @@ node_modules/
 dist/
 build/
 
-# Environment
-.env
-.env.local
-.env.*.local
-
-# Secrets(JSON credentials)
-*adminsdk*.json
-*firebase-adminsdk*.json
-*.secret.json
-
 # IDE
 .idea/
 .vscode/
