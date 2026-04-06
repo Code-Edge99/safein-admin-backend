@@ -45,7 +45,7 @@
     "@nestjs/platform-express": "^11.1.18",
     "@nestjs/swagger": "^11.2.6",
     "@prisma/client": "^5.7.1",
-    "bcrypt": "^5.1.1",
+    "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.0",
     "helmet": "^8.1.0",
@@ -72,18 +72,12 @@
     "prettier": "^3.0.0",
     "prisma": "^5.7.1",
     "source-map-support": "^0.5.21",
-    "supertest": "^6.3.3",
+    "supertest": "^7.2.2",
     "ts-jest": "^29.1.0",
     "ts-loader": "^9.4.3",
     "ts-node": "^10.9.1",
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.9.3"
-  },
-  "overrides": {
-    "tar": "^7.5.13",
-    "picomatch": "^4.0.4",
-    "path-to-regexp": "^8.4.2",
-    "@tootallnate/once": "^3.0.1"
   },
   "jest": {
     "moduleFileExtensions": [
@@ -104,5 +98,11 @@
     "moduleNameMapper": {
       "^@/(.*)$": "<rootDir>/$1"
     }
+  },
+  "overrides": {
+    "path-to-regexp": "8.4.2",
+    "picomatch": "4.0.4",
+    "tar": "7.5.13",
+    "@tootallnate/once": "^3.0.1"
   }
 }
