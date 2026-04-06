@@ -30,6 +30,58 @@ export class OrganizationsService {
     return value;
   }
 
+  private async issueLeafTeamCodeIfMissing(organizationId: string): Promise<string | null> {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const teamCode = this.generateTeamCodeCandidate();
+
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          const current = await tx.organization.findUnique({
+            where: { id: organizationId },
+            select: {
+              teamCode: true,
+              _count: {
+                select: {
+                  children: true,
+                },
+              },
+            },
+          });
+
+          if (!current) {
+            return null;
+          }
+
+          // 팀코드는 말단(리프) 조직에만 유지한다.
+          if (current._count.children > 0) {
+            return null;
+          }
+
+          if (current.teamCode) {
+            return current.teamCode;
+          }
+
+          await tx.organization.update({
+            where: { id: organizationId },
+            data: {
+              teamCode,
+            },
+          });
+
+          return teamCode;
+        });
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    return null;
+  }
+
   private ensureOrganizationInScope(
     organizationId: string | undefined,
     scopeOrganizationIds?: string[],
@@ -241,6 +293,13 @@ export class OrganizationsService {
 
     if (!organization) {
       throw new NotFoundException('조직을 찾을 수 없습니다.');
+    }
+
+    if (!organization.teamCode) {
+      const issuedTeamCode = await this.issueLeafTeamCodeIfMissing(organization.id);
+      if (issuedTeamCode) {
+        organization.teamCode = issuedTeamCode;
+      }
     }
 
     return this.toResponseDto(organization);
