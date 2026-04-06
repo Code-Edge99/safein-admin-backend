@@ -81,6 +81,9 @@ export class OrganizationResponseDto {
   @ApiPropertyOptional({ description: '비상 연락처' })
   emergencyContact?: string;
 
+  @ApiPropertyOptional({ description: '단위 조직 팀코드 (5자리 대문자/숫자)' })
+  teamCode?: string | null;
+
   @ApiProperty({ description: '활성 상태' })
   isActive: boolean;
 

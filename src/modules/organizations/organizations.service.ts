@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { DeviceStatus } from '@prisma/client';
+import { DeviceStatus, Prisma } from '@prisma/client';
+import { randomInt } from 'crypto';
 import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertLeafOrganization } from '../../common/utils/organization-scope.util';
 import { normalizePhoneNumber } from '../../common/utils/phone.util';
 import { toOrganizationResponseDto } from './organizations.mapper';
@@ -16,7 +17,18 @@ import {
 
 @Injectable()
 export class OrganizationsService {
+  private static readonly TEAM_CODE_CHARSET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
   constructor(private readonly prisma: PrismaService) {}
+
+  private generateTeamCodeCandidate(): string {
+    let value = '';
+    for (let index = 0; index < 5; index += 1) {
+      const randomIndex = randomInt(OrganizationsService.TEAM_CODE_CHARSET.length);
+      value += OrganizationsService.TEAM_CODE_CHARSET[randomIndex];
+    }
+    return value;
+  }
 
   private ensureOrganizationInScope(
     organizationId: string | undefined,
@@ -69,24 +81,53 @@ export class OrganizationsService {
       }
     }
 
-    const organization = await this.prisma.organization.create({
-      data: {
-        name: dto.name,
-        address: dto.address,
-        detailAddress: dto.detailAddress,
-        description: dto.description,
-        managerName: dto.managerName,
-        managerPhone: normalizedManagerPhone || undefined,
-        emergencyContact: dto.emergencyContact,
-        createdById: actorUserId,
-        updatedById: actorUserId,
-        parentId: dto.parentId || null,
-        isActive: dto.isActive ?? true,
-      } as any,
-      include: {
-        createdBy: { select: { id: true, name: true, username: true } },
-        updatedBy: { select: { id: true, name: true, username: true } },
-      },
+    const organization = await this.prisma.$transaction(async (tx) => {
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        const teamCode = this.generateTeamCodeCandidate();
+
+        try {
+          const created = await tx.organization.create({
+            data: {
+              name: dto.name,
+              address: dto.address,
+              detailAddress: dto.detailAddress,
+              description: dto.description,
+              managerName: dto.managerName,
+              managerPhone: normalizedManagerPhone || undefined,
+              emergencyContact: dto.emergencyContact,
+              teamCode,
+              createdById: actorUserId,
+              updatedById: actorUserId,
+              parentId: dto.parentId || null,
+              isActive: dto.isActive ?? true,
+            } as any,
+            include: {
+              createdBy: { select: { id: true, name: true, username: true } },
+              updatedBy: { select: { id: true, name: true, username: true } },
+            },
+          });
+
+          // 부모가 기존 단위였다면 하위 조직 생성과 함께 그룹으로 전환되므로 팀코드를 제거한다.
+          if (dto.parentId) {
+            await tx.organization.update({
+              where: { id: dto.parentId },
+              data: {
+                teamCode: null,
+                updatedById: actorUserId,
+              },
+            });
+          }
+
+          return created;
+        } catch (error) {
+          if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+            continue;
+          }
+          throw error;
+        }
+      }
+
+      throw new BadRequestException('팀코드 생성에 실패했습니다. 잠시 후 다시 시도해주세요.');
     });
 
     return this.toResponseDto(organization);
@@ -267,42 +308,86 @@ export class OrganizationsService {
 
       const parent = await this.prisma.organization.findUnique({
         where: { id: dto.parentId },
+        include: {
+          _count: {
+            select: {
+              children: true,
+              employees: true,
+              zones: true,
+              timePolicies: true,
+              behaviorConditions: true,
+              allowedAppPresets: true,
+              controlPolicies: true,
+            },
+          },
+        },
       });
       if (!parent) {
         throw new NotFoundException('상위 조직을 찾을 수 없습니다.');
       }
+
+      if (parent._count.children === 0) {
+        const c = parent._count;
+        if (
+          c.employees > 0
+          || c.zones > 0
+          || c.timePolicies > 0
+          || c.behaviorConditions > 0
+          || c.allowedAppPresets > 0
+          || c.controlPolicies > 0
+        ) {
+          throw new BadRequestException(
+            '해당 현장에 직원이나 정책이 배정되어 있어 하위 현장을 생성할 수 없습니다. 직원과 정책을 먼저 제거해주세요.',
+          );
+        }
+      }
     }
 
-    const organization = await this.prisma.organization.update({
-      where: { id },
-      data: {
-        name: dto.name,
-        address: dto.address,
-        detailAddress: dto.detailAddress,
-        description: dto.description,
-        managerName: dto.managerName,
-        managerPhone: dto.managerPhone === undefined ? undefined : normalizedManagerPhone || null,
-        emergencyContact: dto.emergencyContact,
-        updatedById: actorUserId,
-        parentId: dto.parentId,
-        isActive: dto.isActive,
-      } as any,
-      include: {
-        createdBy: {
-          select: {
-            id: true,
-            name: true,
-            username: true,
+    const organization = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.organization.update({
+        where: { id },
+        data: {
+          name: dto.name,
+          address: dto.address,
+          detailAddress: dto.detailAddress,
+          description: dto.description,
+          managerName: dto.managerName,
+          managerPhone: dto.managerPhone === undefined ? undefined : normalizedManagerPhone || null,
+          emergencyContact: dto.emergencyContact,
+          updatedById: actorUserId,
+          parentId: dto.parentId,
+          isActive: dto.isActive,
+        } as any,
+        include: {
+          createdBy: {
+            select: {
+              id: true,
+              name: true,
+              username: true,
+            },
+          },
+          updatedBy: {
+            select: {
+              id: true,
+              name: true,
+              username: true,
+            },
           },
         },
-        updatedBy: {
-          select: {
-            id: true,
-            name: true,
-            username: true,
+      });
+
+      // 상위 조직이 생기면 그룹으로 전환되므로 팀코드를 제거한다.
+      if (dto.parentId) {
+        await tx.organization.update({
+          where: { id: dto.parentId },
+          data: {
+            teamCode: null,
+            updatedById: actorUserId,
           },
-        },
-      },
+        });
+      }
+
+      return updated;
     });
 
     return this.toResponseDto(organization);
