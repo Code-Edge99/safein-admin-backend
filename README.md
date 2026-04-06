@@ -9,7 +9,7 @@
 - 이 저장소의 `npm run prisma:*`는 차단되어 있으며, Prisma 관련 작업은 `safein-prisma`에서 실행해야 합니다.
 
 ## 사전 준비
-- Node.js 20 이상
+- Node.js 24 이상
 - npm
 - PostgreSQL 16 이상
 
