@@ -1,5 +1,5 @@
 import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
+import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -34,7 +34,10 @@ export class AuthService {
     private readonly configService: ConfigService,
   ) {}
 
-  private parseDurationToSeconds(rawValue: string | number | undefined, fallbackSeconds: number): number {
+  private parseDurationToSeconds(
+    rawValue: JwtSignOptions['expiresIn'] | undefined,
+    fallbackSeconds: number,
+  ): number {
     if (typeof rawValue === 'number' && Number.isFinite(rawValue) && rawValue > 0) {
       return Math.floor(rawValue);
     }
@@ -66,12 +69,16 @@ export class AuthService {
     return amount * (multiplier[unit] || 1);
   }
 
-  private getAccessTokenExpiresIn(): string {
-    return this.configService.get<string>('JWT_EXPIRATION', '15m');
+  private getAccessTokenExpiresIn(): NonNullable<JwtSignOptions['expiresIn']> {
+    return this.configService.get<string>('JWT_EXPIRATION', '15m') as NonNullable<
+      JwtSignOptions['expiresIn']
+    >;
   }
 
-  private getRefreshTokenExpiresIn(): string {
-    return this.configService.get<string>('JWT_REFRESH_EXPIRATION', '30d');
+  private getRefreshTokenExpiresIn(): NonNullable<JwtSignOptions['expiresIn']> {
+    return this.configService.get<string>('JWT_REFRESH_EXPIRATION', '30d') as NonNullable<
+      JwtSignOptions['expiresIn']
+    >;
   }
 
   private getRefreshSecret(): string {
@@ -293,11 +300,15 @@ export class AuthService {
 
     const nowSeconds = Math.floor(Date.now() / 1000);
     const inactivityLimitSeconds = this.parseDurationToSeconds(
-      this.configService.get<string>('JWT_REFRESH_INACTIVITY', '7d'),
+      this.configService.get<string>('JWT_REFRESH_INACTIVITY', '7d') as NonNullable<
+        JwtSignOptions['expiresIn']
+      >,
       604800,
     );
     const absoluteLimitSeconds = this.parseDurationToSeconds(
-      this.configService.get<string>('JWT_REFRESH_ABSOLUTE_EXPIRATION', '30d'),
+      this.configService.get<string>('JWT_REFRESH_ABSOLUTE_EXPIRATION', '30d') as NonNullable<
+        JwtSignOptions['expiresIn']
+      >,
       2592000,
     );
 
