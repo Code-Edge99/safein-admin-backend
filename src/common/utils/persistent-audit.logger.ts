@@ -1,5 +1,5 @@
 import { ConsoleLogger } from '@nestjs/common';
-import { AuditAction } from '@prisma/client';
+import { AuditAction, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 type PersistLogLevel = 'log' | 'warn' | 'error' | 'debug' | 'verbose';
@@ -66,29 +66,96 @@ export class PersistentAuditLogger extends ConsoleLogger {
     const normalizedContext = this.normalizeMessage(context) || 'Application';
     const timestamp = new Date();
 
-    void this.prisma.auditLog.create({
-      data: {
-        action: AuditAction.UPDATE,
-        resourceType: 'system-log',
-        resourceName: this.truncate(`${this.source} ${level.toUpperCase()} ${normalizedMessage}`, 200),
-        changesAfter: {
-          source: this.source,
-          level,
-          context: normalizedContext,
-          message: normalizedMessage,
-          trace: trace ? this.truncate(this.normalizeMessage(trace), this.maxMessageLength) : null,
-          loggedAt: timestamp.toISOString(),
-        },
-        timestamp,
-      },
-    }).catch((error) => {
-      const fallback = `[PersistentAuditLogger] audit_log persist failed: ${String(error)}\n`;
-      try {
-        process.stderr.write(fallback);
-      } catch {
-        // ignore stderr failures
-      }
+    const traceMessage = trace ? this.truncate(this.normalizeMessage(trace), this.maxMessageLength) : null;
+
+    void this.persistAuditLogWithFallback({
+      level,
+      normalizedMessage,
+      normalizedContext,
+      traceMessage,
+      timestamp,
     });
+  }
+
+  private async persistAuditLogWithFallback(params: {
+    level: PersistLogLevel;
+    normalizedMessage: string;
+    normalizedContext: string;
+    traceMessage: string | null;
+    timestamp: Date;
+  }): Promise<void> {
+    const fullData = this.buildAuditLogData(params, false);
+
+    try {
+      await this.prisma.auditLog.create({ data: fullData });
+      return;
+    } catch (error) {
+      if (!this.isValueTooLongError(error)) {
+        this.reportPersistFailure(error);
+        return;
+      }
+    }
+
+    const compactData = this.buildAuditLogData(params, true);
+    try {
+      await this.prisma.auditLog.create({ data: compactData });
+    } catch (error) {
+      this.reportPersistFailure(error);
+    }
+  }
+
+  private buildAuditLogData(
+    params: {
+      level: PersistLogLevel;
+      normalizedMessage: string;
+      normalizedContext: string;
+      traceMessage: string | null;
+      timestamp: Date;
+    },
+    compact: boolean,
+  ): Prisma.AuditLogCreateInput {
+    const resourceNameLimit = compact ? 80 : 200;
+    const messageLimit = compact ? 120 : this.maxMessageLength;
+    const contextLimit = compact ? 80 : this.maxMessageLength;
+    const traceLimit = compact ? 120 : this.maxMessageLength;
+
+    return {
+      action: AuditAction.UPDATE,
+      resourceType: 'system-log',
+      resourceName: this.truncate(
+        `${this.source} ${params.level.toUpperCase()} ${params.normalizedMessage}`,
+        resourceNameLimit,
+      ),
+      changesAfter: {
+        source: this.truncate(this.source, compact ? 32 : 100),
+        level: params.level,
+        context: this.truncate(params.normalizedContext, contextLimit),
+        message: this.truncate(params.normalizedMessage, messageLimit),
+        trace: params.traceMessage ? this.truncate(params.traceMessage, traceLimit) : null,
+        loggedAt: params.timestamp.toISOString(),
+      },
+      timestamp: params.timestamp,
+    };
+  }
+
+  private isValueTooLongError(error: unknown): boolean {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2000') {
+      return true;
+    }
+
+    const errorMessage = String(error);
+    return errorMessage.includes('provided value for the column is too long')
+      || errorMessage.includes('The provided value for the column is too long')
+      || errorMessage.includes('value too long for type');
+  }
+
+  private reportPersistFailure(error: unknown): void {
+    const fallback = `[PersistentAuditLogger] audit_log persist failed: ${String(error)}\n`;
+    try {
+      process.stderr.write(fallback);
+    } catch {
+      // ignore stderr failures
+    }
   }
 
   private normalizeMessage(value: unknown): string {
@@ -116,7 +183,11 @@ export class PersistentAuditLogger extends ConsoleLogger {
       return value;
     }
 
-    return `${value.slice(0, maxLength - 1)}...`;
+    if (maxLength <= 3) {
+      return value.slice(0, maxLength);
+    }
+
+    return `${value.slice(0, maxLength - 3)}...`;
   }
 }
 
