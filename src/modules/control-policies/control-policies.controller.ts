@@ -71,8 +71,8 @@ export class ControlPoliciesController {
   }
 
   @Get('organization/:orgId')
-  @ApiOperation({ summary: '조직별 제어 정책 조회' })
-  @ApiParam({ name: 'orgId', description: '조직 ID' })
+  @ApiOperation({ summary: '현장별 제어 정책 조회' })
+  @ApiParam({ name: 'orgId', description: '현장 ID' })
   @ApiResponse({ status: 200, description: '정책 목록', type: [ControlPolicyResponseDto] })
   async findByOrganization(@Req() req: AuthenticatedAdminRequest, @Param('orgId') orgId: string): Promise<ControlPolicyResponseDto[]> {
     return this.controlPoliciesService.findByOrganization(orgId, req.organizationScopeIds ?? undefined);
@@ -237,7 +237,7 @@ export class ControlPoliciesController {
         },
       },
       byScopeFilter: {
-        summary: '조직 필터 기반',
+        summary: '현장 필터 기반',
         value: {
           organizationId: '7af0eb0a-7f4f-4f5f-8157-2c1d2411d1a9',
           trigger: 'update',

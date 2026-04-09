@@ -65,7 +65,7 @@ export class ControlLogsController {
 
   @Get('employee-stats')
   @ApiOperation({ summary: '직원별 로그 통계 조회' })
-  @ApiQuery({ name: 'organizationId', required: false, description: '조직 ID' })
+  @ApiQuery({ name: 'organizationId', required: false, description: '현장 ID' })
   @ApiQuery({ name: 'limit', required: false, description: '조회 수', type: Number })
   @ApiResponse({ status: 200, description: '직원별 통계', type: [EmployeeLogStatsDto] })
   async getEmployeeStats(

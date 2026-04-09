@@ -4,12 +4,12 @@ import { Transform } from 'class-transformer';
 import { normalizeOptionalPhoneNumber } from '../../../common/utils/phone.util';
 
 export class CreateOrganizationDto {
-  @ApiProperty({ description: '조직명' })
+  @ApiProperty({ description: '현장명' })
   @IsString()
   @IsNotEmpty()
   name: string;
 
-  @ApiPropertyOptional({ description: '상위 조직 ID' })
+  @ApiPropertyOptional({ description: '상위 현장 ID' })
   @IsOptional()
   @IsString()
   parentId?: string;
@@ -29,12 +29,12 @@ export class CreateOrganizationDto {
   @IsString()
   description?: string;
 
-  @ApiPropertyOptional({ description: '조직 담당자명' })
+  @ApiPropertyOptional({ description: '현장 담당자명' })
   @IsOptional()
   @IsString()
   managerName?: string;
 
-  @ApiPropertyOptional({ description: '조직 담당자 연락처' })
+  @ApiPropertyOptional({ description: '현장 담당자 연락처' })
   @IsOptional()
   @Transform(({ value }) => normalizeOptionalPhoneNumber(value))
   @IsString()
@@ -54,13 +54,13 @@ export class CreateOrganizationDto {
 export class UpdateOrganizationDto extends PartialType(CreateOrganizationDto) {}
 
 export class OrganizationResponseDto {
-  @ApiProperty({ description: '조직 ID' })
+  @ApiProperty({ description: '현장 ID' })
   id: string;
 
-  @ApiProperty({ description: '조직명' })
+  @ApiProperty({ description: '현장명' })
   name: string;
 
-  @ApiPropertyOptional({ description: '상위 조직 ID' })
+  @ApiPropertyOptional({ description: '상위 현장 ID' })
   parentId: string | null;
 
   @ApiPropertyOptional({ description: '주소' })
@@ -72,16 +72,16 @@ export class OrganizationResponseDto {
   @ApiPropertyOptional({ description: '설명' })
   description?: string;
 
-  @ApiPropertyOptional({ description: '조직 담당자명' })
+  @ApiPropertyOptional({ description: '현장 담당자명' })
   managerName?: string;
 
-  @ApiPropertyOptional({ description: '조직 담당자 연락처' })
+  @ApiPropertyOptional({ description: '현장 담당자 연락처' })
   managerPhone?: string;
 
   @ApiPropertyOptional({ description: '비상 연락처' })
   emergencyContact?: string;
 
-  @ApiPropertyOptional({ description: '단위 조직 팀코드 (5자리 대문자/숫자)' })
+  @ApiPropertyOptional({ description: '단위 현장 팀코드 (5자리 대문자/숫자)' })
   teamCode?: string | null;
 
   @ApiProperty({ description: '활성 상태' })
@@ -110,7 +110,7 @@ export class OrganizationResponseDto {
 }
 
 export class OrganizationTreeDto extends OrganizationResponseDto {
-  @ApiPropertyOptional({ description: '하위 조직 목록', type: [OrganizationTreeDto] })
+  @ApiPropertyOptional({ description: '하위 현장 목록', type: [OrganizationTreeDto] })
   children?: OrganizationTreeDto[];
 
   @ApiPropertyOptional({ description: '장치 수' })
@@ -118,10 +118,10 @@ export class OrganizationTreeDto extends OrganizationResponseDto {
 }
 
 export class OrganizationStatsDto {
-  @ApiProperty({ description: '조직 ID' })
+  @ApiProperty({ description: '현장 ID' })
   organizationId: string;
 
-  @ApiProperty({ description: '조직명' })
+  @ApiProperty({ description: '현장명' })
   organizationName: string;
 
   @ApiProperty({ description: '총 직원 수' })
@@ -133,12 +133,12 @@ export class OrganizationStatsDto {
   @ApiProperty({ description: '총 장치 수' })
   totalDevices: number;
 
-  @ApiProperty({ description: '하위 조직 수' })
+  @ApiProperty({ description: '하위 현장 수' })
   childOrganizations: number;
 }
 
 export class TransferResourcesDto {
-  @ApiProperty({ description: '이관 대상 조직 ID' })
+  @ApiProperty({ description: '이관 대상 현장 ID' })
   @IsString()
   @IsNotEmpty()
   targetOrganizationId: string;

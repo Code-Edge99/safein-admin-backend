@@ -41,7 +41,7 @@ export class CreateDeviceDto {
   @IsString()
   employeeId?: string;
 
-  @ApiPropertyOptional({ description: '조직 ID' })
+  @ApiPropertyOptional({ description: '현장 ID' })
   @IsOptional()
   @IsUUID()
   organizationId?: string;
@@ -101,10 +101,10 @@ export class DeviceResponseDto {
   @ApiPropertyOptional({ description: '직원명' })
   employeeName?: string;
 
-  @ApiPropertyOptional({ description: '조직 ID' })
+  @ApiPropertyOptional({ description: '현장 ID' })
   organizationId?: string;
 
-  @ApiPropertyOptional({ description: '조직명' })
+  @ApiPropertyOptional({ description: '현장명' })
   organizationName?: string;
 
   @ApiProperty({ description: 'OS 타입' })

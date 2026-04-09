@@ -104,7 +104,7 @@ export class EmployeesService {
     });
 
     if (!organization) {
-      throw new NotFoundException('조직을 찾을 수 없습니다.');
+      throw new NotFoundException('현장을 찾을 수 없습니다.');
     }
 
     await assertLeafOrganization(this.prisma, organizationId);
@@ -185,7 +185,7 @@ export class EmployeesService {
   ): Promise<PaginatedResponse<EmployeeResponseDto>> {
     const where: Prisma.EmployeeWhereInput = {};
 
-    // 조직 필터
+    // 현장 필터
     if (filter.organizationId) {
       this.ensureOrganizationInScope(filter.organizationId, scopeOrganizationIds);
       where.organizationId = filter.organizationId;
@@ -562,7 +562,7 @@ export class EmployeesService {
       where: { id: dto.targetOrganizationId },
     });
     if (!organization) {
-      throw new NotFoundException('대상 조직을 찾을 수 없습니다.');
+      throw new NotFoundException('대상 현장을 찾을 수 없습니다.');
     }
 
     await assertLeafOrganization(this.prisma, dto.targetOrganizationId);

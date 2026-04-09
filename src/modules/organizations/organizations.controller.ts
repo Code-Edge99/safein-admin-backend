@@ -30,7 +30,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard';
 import { AuthenticatedAdminRequest } from '../../common/types/authenticated-request.type';
 
-@ApiTags('조직')
+@ApiTags('현장')
 @Controller('organizations')
 @UseGuards(JwtAuthGuard, OrganizationScopeGuard)
 @ApiBearerAuth()
@@ -38,8 +38,8 @@ export class OrganizationsController {
   constructor(private readonly organizationsService: OrganizationsService) {}
 
   @Post()
-  @ApiOperation({ summary: '조직 생성' })
-  @ApiResponse({ status: 201, description: '조직 생성 성공', type: OrganizationResponseDto })
+  @ApiOperation({ summary: '현장 생성' })
+  @ApiResponse({ status: 201, description: '현장 생성 성공', type: OrganizationResponseDto })
   create(@Req() req: AuthenticatedAdminRequest, @Body() createOrganizationDto: CreateOrganizationDto): Promise<OrganizationResponseDto> {
     return this.organizationsService.create(
       createOrganizationDto,
@@ -49,56 +49,56 @@ export class OrganizationsController {
   }
 
   @Get()
-  @ApiOperation({ summary: '전체 조직 목록 조회' })
-  @ApiResponse({ status: 200, description: '조직 목록', type: [OrganizationResponseDto] })
+  @ApiOperation({ summary: '전체 현장 목록 조회' })
+  @ApiResponse({ status: 200, description: '현장 목록', type: [OrganizationResponseDto] })
   findAll(@Req() req: AuthenticatedAdminRequest): Promise<OrganizationResponseDto[]> {
     return this.organizationsService.findAll(req.organizationScopeIds ?? undefined);
   }
 
   @Get('tree')
-  @ApiOperation({ summary: '조직 트리 조회' })
-  @ApiResponse({ status: 200, description: '조직 트리', type: [OrganizationTreeDto] })
+  @ApiOperation({ summary: '현장 트리 조회' })
+  @ApiResponse({ status: 200, description: '현장 트리', type: [OrganizationTreeDto] })
   findTree(@Req() req: AuthenticatedAdminRequest): Promise<OrganizationTreeDto[]> {
     return this.organizationsService.findTree(req.organizationScopeIds ?? undefined);
   }
 
   @Get(':id')
-  @ApiOperation({ summary: '조직 상세 조회' })
-  @ApiParam({ name: 'id', description: '조직 ID' })
-  @ApiResponse({ status: 200, description: '조직 상세', type: OrganizationResponseDto })
-  @ApiResponse({ status: 404, description: '조직을 찾을 수 없음' })
+  @ApiOperation({ summary: '현장 상세 조회' })
+  @ApiParam({ name: 'id', description: '현장 ID' })
+  @ApiResponse({ status: 200, description: '현장 상세', type: OrganizationResponseDto })
+  @ApiResponse({ status: 404, description: '현장을 찾을 수 없음' })
   findOne(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<OrganizationResponseDto> {
     return this.organizationsService.findOne(id, req.organizationScopeIds ?? undefined);
   }
 
   @Get(':id/stats')
-  @ApiOperation({ summary: '조직 통계 조회' })
-  @ApiParam({ name: 'id', description: '조직 ID' })
-  @ApiResponse({ status: 200, description: '조직 통계', type: OrganizationStatsDto })
+  @ApiOperation({ summary: '현장 통계 조회' })
+  @ApiParam({ name: 'id', description: '현장 ID' })
+  @ApiResponse({ status: 200, description: '현장 통계', type: OrganizationStatsDto })
   findOneWithStats(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<OrganizationStatsDto> {
     return this.organizationsService.findOneWithStats(id, req.organizationScopeIds ?? undefined);
   }
 
   @Get(':id/ancestors')
-  @ApiOperation({ summary: '상위 조직 목록 조회' })
-  @ApiParam({ name: 'id', description: '조직 ID' })
-  @ApiResponse({ status: 200, description: '상위 조직 목록', type: [OrganizationResponseDto] })
+  @ApiOperation({ summary: '상위 현장 목록 조회' })
+  @ApiParam({ name: 'id', description: '현장 ID' })
+  @ApiResponse({ status: 200, description: '상위 현장 목록', type: [OrganizationResponseDto] })
   getAncestors(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<OrganizationResponseDto[]> {
     return this.organizationsService.getAncestors(id, req.organizationScopeIds ?? undefined);
   }
 
   @Get(':id/descendants')
-  @ApiOperation({ summary: '하위 조직 목록 조회' })
-  @ApiParam({ name: 'id', description: '조직 ID' })
-  @ApiResponse({ status: 200, description: '하위 조직 목록', type: [OrganizationResponseDto] })
+  @ApiOperation({ summary: '하위 현장 목록 조회' })
+  @ApiParam({ name: 'id', description: '현장 ID' })
+  @ApiResponse({ status: 200, description: '하위 현장 목록', type: [OrganizationResponseDto] })
   getDescendants(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<OrganizationResponseDto[]> {
     return this.organizationsService.getDescendants(id, req.organizationScopeIds ?? undefined);
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: '조직 수정' })
-  @ApiParam({ name: 'id', description: '조직 ID' })
-  @ApiResponse({ status: 200, description: '조직 수정 성공', type: OrganizationResponseDto })
+  @ApiOperation({ summary: '현장 수정' })
+  @ApiParam({ name: 'id', description: '현장 ID' })
+  @ApiResponse({ status: 200, description: '현장 수정 성공', type: OrganizationResponseDto })
   update(
     @Req() req: AuthenticatedAdminRequest,
     @Param('id') id: string,
@@ -113,17 +113,17 @@ export class OrganizationsController {
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: '조직 삭제' })
-  @ApiParam({ name: 'id', description: '조직 ID' })
-  @ApiResponse({ status: 200, description: '조직 삭제 성공' })
-  @ApiResponse({ status: 400, description: '삭제 불가 (하위 조직 또는 직원 존재)' })
+  @ApiOperation({ summary: '현장 삭제' })
+  @ApiParam({ name: 'id', description: '현장 ID' })
+  @ApiResponse({ status: 200, description: '현장 삭제 성공' })
+  @ApiResponse({ status: 400, description: '삭제 불가 (하위 현장 또는 직원 존재)' })
   remove(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<void> {
     return this.organizationsService.remove(id, req.organizationScopeIds ?? undefined);
   }
 
   @Post(':id/transfer-resources')
-  @ApiOperation({ summary: '직원 이관', description: '원본 조직의 직원을 대상 조직으로 이관합니다. 이관된 직원은 대상 조직의 정책을 따릅니다.' })
-  @ApiParam({ name: 'id', description: '원본 조직 ID' })
+  @ApiOperation({ summary: '직원 이관', description: '원본 현장의 직원을 대상 현장으로 이관합니다. 이관된 직원은 대상 현장의 정책을 따릅니다.' })
+  @ApiParam({ name: 'id', description: '원본 현장 ID' })
   @ApiResponse({ status: 201, description: '이관 성공', type: TransferResourcesResultDto })
   transferResources(
     @Req() req: AuthenticatedAdminRequest,

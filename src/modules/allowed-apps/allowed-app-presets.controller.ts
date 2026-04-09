@@ -60,7 +60,7 @@ export class AllowedAppPresetsController {
   }
 
   @Get('organization/:organizationId')
-  @ApiOperation({ summary: '조직별 프리셋 목록' })
+  @ApiOperation({ summary: '현장별 프리셋 목록' })
   @ApiResponse({ status: 200, type: [AllowedAppPresetResponseDto] })
   findByOrganization(
     @Req() req: AuthenticatedAdminRequest,

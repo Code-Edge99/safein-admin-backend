@@ -138,7 +138,7 @@ export class EmployeesController {
   }
 
   @Post('bulk/move-organization')
-  @ApiOperation({ summary: '일괄 조직 이동' })
+  @ApiOperation({ summary: '일괄 현장 이동' })
   @ApiResponse({ status: 200, description: '처리된 직원 수' })
   bulkMoveOrganization(@Req() req: AuthenticatedAdminRequest, @Body() dto: BulkMoveOrganizationDto): Promise<{ updated: number }> {
     return this.employeesService.bulkMoveOrganization(dto, req.organizationScopeIds ?? undefined);

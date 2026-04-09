@@ -65,14 +65,14 @@ export class DevicesService {
       this.ensureOrganizationInScope(employee.organizationId || undefined, scopeOrganizationIds);
     }
 
-    // 조직 존재 여부 확인
+    // 현장 존재 여부 확인
     if (dto.organizationId) {
       this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
       const organization = await this.prisma.organization.findUnique({
         where: { id: dto.organizationId },
       });
       if (!organization) {
-        throw new NotFoundException('조직을 찾을 수 없습니다.');
+        throw new NotFoundException('현장을 찾을 수 없습니다.');
       }
     }
 
@@ -104,7 +104,7 @@ export class DevicesService {
   ): Promise<PaginatedResponse<DeviceResponseDto>> {
     const where: Prisma.DeviceWhereInput = {};
 
-    // 조직 필터
+    // 현장 필터
     if (filter.organizationId) {
       this.ensureOrganizationInScope(filter.organizationId, scopeOrganizationIds);
       where.organizationId = filter.organizationId;

@@ -100,7 +100,7 @@ export class OrganizationScopeGuard implements CanActivate {
 
     for (const requestedId of requestedIds) {
       if (!scopeIds.includes(requestedId)) {
-        throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
+        throw new ForbiddenException('요청한 현장은 접근 권한 범위를 벗어났습니다.');
       }
     }
   }

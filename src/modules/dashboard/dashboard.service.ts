@@ -637,7 +637,7 @@ export class DashboardService {
       : scopeOrganizationIds;
 
     if (!targetOrganizationIds || targetOrganizationIds.length === 0) {
-      throw new BadRequestException('재집계 대상 조직이 없습니다. organizationId를 지정하거나 권한 범위를 확인해주세요.');
+      throw new BadRequestException('재집계 대상 현장이 없습니다. organizationId를 지정하거나 권한 범위를 확인해주세요.');
     }
 
     const results: any[] = [];
@@ -807,7 +807,7 @@ export class DashboardService {
             action: AuditAction.UPDATE,
             resourceType: 'stats_reaggregation',
             resourceId: `${organizationId}:${formatKstDateKey(targetDate)}`,
-            resourceName: '조직/일자 통계 재집계',
+            resourceName: '현장/일자 통계 재집계',
             changesBefore: {
               daily: previousDaily
                 ? {
@@ -1821,7 +1821,7 @@ export class DashboardService {
     const trendStartDate = getKstDaysAgoStart(29, endDate);
     const previousRangeStartDate = getKstDaysAgoStart((safeDays * 2) - 1, endDate);
 
-    // 회사(root) 제외 모든 조직 조회 (현장, 부서, 팀, 현장조 등)
+    // 회사(root) 제외 모든 현장 조회 (현장, 부서, 팀, 현장조 등)
     const sites = await this.prisma.organization.findMany({
       where: {
         isActive: true,

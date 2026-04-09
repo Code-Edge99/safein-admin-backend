@@ -13,7 +13,7 @@ export class ReaggregateDayDto {
   date: string;
 
   @ApiPropertyOptional({
-    description: '대상 조직 ID. 미입력 시 본인 권한 범위 전체에 대해 실행됩니다.',
+    description: '대상 현장 ID. 미입력 시 본인 권한 범위 전체에 대해 실행됩니다.',
     example: 'org-123',
   })
   @IsString()

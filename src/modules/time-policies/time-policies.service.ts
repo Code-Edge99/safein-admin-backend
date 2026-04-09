@@ -47,7 +47,7 @@ export class TimePoliciesService {
       where: { id: organizationId },
     });
     if (!org) {
-      throw new BadRequestException('조직을 찾을 수 없습니다.');
+      throw new BadRequestException('현장을 찾을 수 없습니다.');
     }
 
     await assertLeafOrganization(this.prisma, organizationId);
@@ -202,7 +202,7 @@ export class TimePoliciesService {
         where: { id: organizationId },
       });
       if (!org) {
-        throw new BadRequestException('조직을 찾을 수 없습니다.');
+        throw new BadRequestException('현장을 찾을 수 없습니다.');
       }
       updateData.organizationId = organizationId;
     }

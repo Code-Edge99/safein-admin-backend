@@ -53,7 +53,7 @@ export class CreateBehaviorConditionDto {
   @IsOptional()
   description?: string;
 
-  @ApiProperty({ description: '조직 ID' })
+  @ApiProperty({ description: '현장 ID' })
   @IsString()
   @IsNotEmpty()
   organizationId: string;
@@ -90,7 +90,7 @@ export class BehaviorConditionResponseDto {
   @ApiPropertyOptional({ description: '설명' })
   description?: string;
 
-  @ApiPropertyOptional({ description: '조직 정보' })
+  @ApiPropertyOptional({ description: '현장 정보' })
   organization?: {
     id: string;
     name: string;
@@ -130,7 +130,7 @@ export class BehaviorConditionFilterDto {
   @Type(() => Boolean)
   enableSpeedCondition?: boolean;
 
-  @ApiPropertyOptional({ description: '조직 ID' })
+  @ApiPropertyOptional({ description: '현장 ID' })
   @IsString()
   @IsOptional()
   organizationId?: string;

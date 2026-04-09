@@ -83,7 +83,7 @@ export class CreateZoneDto {
   @IsOptional()
   radius?: number;
 
-  @ApiProperty({ description: '조직 ID' })
+  @ApiProperty({ description: '현장 ID' })
   @IsString()
   @IsNotEmpty()
   organizationId: string;
@@ -140,7 +140,7 @@ export class ZoneResponseDto {
   @ApiPropertyOptional({ description: '그룹 ID' })
   groupId?: string;
 
-  @ApiPropertyOptional({ description: '조직 정보' })
+  @ApiPropertyOptional({ description: '현장 정보' })
   organization?: {
     id: string;
     name: string;
@@ -164,7 +164,7 @@ export class ZoneFilterDto {
   @IsOptional()
   type?: ZoneTypeEnum;
 
-  @ApiPropertyOptional({ description: '조직 ID' })
+  @ApiPropertyOptional({ description: '현장 ID' })
   @IsString()
   @IsOptional()
   organizationId?: string;

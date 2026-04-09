@@ -106,17 +106,17 @@ export class ControlPoliciesService {
       where: { id: organizationId },
     });
     if (!org) {
-      throw new BadRequestException('조직을 찾을 수 없습니다.');
+      throw new BadRequestException('현장을 찾을 수 없습니다.');
     }
 
     await assertLeafOrganization(this.prisma, organizationId);
 
-    // 조직과 정책은 1:1 매핑 — 이미 정책이 있으면 생성 불가
+    // 현장과 정책은 1:1 매핑 — 이미 정책이 있으면 생성 불가
     const existingPolicy = await this.prisma.controlPolicy.findFirst({
       where: { organizationId },
     });
     if (existingPolicy) {
-      throw new BadRequestException('해당 조직에는 이미 통제정책이 존재합니다. 조직당 하나의 정책만 허용됩니다.');
+      throw new BadRequestException('해당 현장에는 이미 통제정책이 존재합니다. 현장당 하나의 정책만 허용됩니다.');
     }
 
     await this.validatePolicyRelations(this.prisma, organizationId, {
@@ -476,7 +476,7 @@ export class ControlPoliciesService {
 
       const targetOrganizationId = organizationId ?? currentPolicy.organizationId;
             if (scopeOrganizationIds && !scopeOrganizationIds.includes(targetOrganizationId)) {
-              throw new ForbiddenException('요청한 조직은 접근 권한 범위를 벗어났습니다.');
+              throw new ForbiddenException('요청한 현장은 접근 권한 범위를 벗어났습니다.');
             }
 
       const organizationChanged =
@@ -484,14 +484,14 @@ export class ControlPoliciesService {
 
       if (organizationId) {
         const org = await tx.organization.findUnique({ where: { id: organizationId } });
-        if (!org) throw new BadRequestException('조직을 찾을 수 없습니다.');
+        if (!org) throw new BadRequestException('현장을 찾을 수 없습니다.');
 
         if (organizationChanged) {
           const existingPolicyOnTarget = await tx.controlPolicy.findFirst({
             where: { organizationId },
           });
           if (existingPolicyOnTarget) {
-            throw new BadRequestException('대상 조직에는 이미 통제정책이 존재합니다. 조직당 하나의 정책만 허용됩니다.');
+            throw new BadRequestException('대상 현장에는 이미 통제정책이 존재합니다. 현장당 하나의 정책만 허용됩니다.');
           }
         }
 
@@ -516,8 +516,8 @@ export class ControlPoliciesService {
         data: { ...updateData, updatedById: actorUserId },
       });
 
-      // 조직 변경 시 기존 관계 데이터는 재검증 없이 유지하지 않고 안전하게 비웁니다.
-      // (새 조직 기준의 관계는 요청 본문으로 다시 설정)
+      // 현장 변경 시 기존 관계 데이터는 재검증 없이 유지하지 않고 안전하게 비웁니다.
+      // (새 현장 기준의 관계는 요청 본문으로 다시 설정)
       if (organizationChanged) {
         if (zoneIds === undefined) {
           await tx.controlPolicyZone.deleteMany({ where: { policyId: id } });
@@ -591,7 +591,7 @@ export class ControlPoliciesService {
       }
 
       if (employeeIds === undefined) {
-        // 정책 조직과 맞지 않는 개별 대상 직원 할당은 항상 정리
+        // 정책 현장과 맞지 않는 개별 대상 직원 할당은 항상 정리
         await tx.controlPolicyEmployee.deleteMany({
           where: {
             policyId: id,
@@ -1774,7 +1774,7 @@ export class ControlPoliciesService {
         },
       });
       if (zoneCount !== uniqueZoneIds.length) {
-        throw new BadRequestException('구역 ID가 유효하지 않거나 정책 조직/상위 조직과 일치하지 않습니다.');
+        throw new BadRequestException('구역 ID가 유효하지 않거나 정책 현장/상위 현장과 일치하지 않습니다.');
       }
     }
 
@@ -1787,7 +1787,7 @@ export class ControlPoliciesService {
         },
       });
       if (timePolicyCount !== uniqueTimePolicyIds.length) {
-        throw new BadRequestException('시간 정책 ID가 유효하지 않거나 정책 조직/상위 조직과 일치하지 않습니다.');
+        throw new BadRequestException('시간 정책 ID가 유효하지 않거나 정책 현장/상위 현장과 일치하지 않습니다.');
       }
     }
 
@@ -1800,7 +1800,7 @@ export class ControlPoliciesService {
         },
       });
       if (behaviorConditionCount !== uniqueBehaviorConditionIds.length) {
-        throw new BadRequestException('행동 조건 ID가 유효하지 않거나 정책 조직/상위 조직과 일치하지 않습니다.');
+        throw new BadRequestException('행동 조건 ID가 유효하지 않거나 정책 현장/상위 현장과 일치하지 않습니다.');
       }
     }
 
@@ -1813,14 +1813,14 @@ export class ControlPoliciesService {
         },
       });
       if (presetCount !== uniquePresetIds.length) {
-        throw new BadRequestException('허용앱 프리셋 ID가 유효하지 않거나 정책 조직/상위 조직과 일치하지 않습니다.');
+        throw new BadRequestException('허용앱 프리셋 ID가 유효하지 않거나 정책 현장/상위 현장과 일치하지 않습니다.');
       }
     }
 
     const rawEmployeeIds = this.normalizeIds(employeeIds);
     const uniqueEmployeeIds = await resolveEmployeePrimaryIds(tx, rawEmployeeIds);
     if (rawEmployeeIds.length > 0 && uniqueEmployeeIds.length !== rawEmployeeIds.length) {
-      throw new BadRequestException('직원 ID가 유효하지 않거나 정책 조직과 일치하지 않습니다.');
+      throw new BadRequestException('직원 ID가 유효하지 않거나 정책 현장과 일치하지 않습니다.');
     }
 
     if (uniqueEmployeeIds.length > 0) {
@@ -1828,7 +1828,7 @@ export class ControlPoliciesService {
         where: { id: { in: uniqueEmployeeIds }, organizationId },
       });
       if (employeeCount !== uniqueEmployeeIds.length) {
-        throw new BadRequestException('직원 ID가 유효하지 않거나 정책 조직과 일치하지 않습니다.');
+        throw new BadRequestException('직원 ID가 유효하지 않거나 정책 현장과 일치하지 않습니다.');
       }
     }
   }

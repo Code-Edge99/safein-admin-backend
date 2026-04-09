@@ -15,12 +15,12 @@ export class DateRangeFilterDto {
 }
 
 export class OrganizationFilterDto {
-  @ApiPropertyOptional({ description: '조직 ID' })
+  @ApiPropertyOptional({ description: '현장 ID' })
   @IsOptional()
   @IsString()
   organizationId?: string;
 
-  @ApiPropertyOptional({ description: '하위 조직 포함 여부' })
+  @ApiPropertyOptional({ description: '하위 현장 포함 여부' })
   @IsOptional()
   includeSubOrganizations?: boolean = true;
 }
@@ -33,7 +33,7 @@ export class SearchFilterDto {
 }
 
 export class BaseFilterDto extends PaginationDto {
-  @ApiPropertyOptional({ description: '조직 ID' })
+  @ApiPropertyOptional({ description: '현장 ID' })
   @IsOptional()
   @IsString()
   organizationId?: string;

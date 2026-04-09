@@ -75,9 +75,9 @@ export class ZonesController {
   }
 
   @Get('organization/:organizationId')
-  @ApiOperation({ summary: '조직별 구역 목록 조회' })
-  @ApiParam({ name: 'organizationId', description: '조직 ID' })
-  @ApiResponse({ status: 200, description: '조직별 구역 목록', type: [ZoneResponseDto] })
+  @ApiOperation({ summary: '현장별 구역 목록 조회' })
+  @ApiParam({ name: 'organizationId', description: '현장 ID' })
+  @ApiResponse({ status: 200, description: '현장별 구역 목록', type: [ZoneResponseDto] })
   async findByOrganization(
     @Req() req: AuthenticatedAdminRequest,
     @Param('organizationId') organizationId: string,

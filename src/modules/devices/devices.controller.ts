@@ -58,7 +58,7 @@ export class DevicesController {
 
   @Get('stats')
   @ApiOperation({ summary: '장치 통계 조회' })
-  @ApiQuery({ name: 'organizationId', required: false, description: '조직 ID' })
+  @ApiQuery({ name: 'organizationId', required: false, description: '현장 ID' })
   @ApiResponse({ status: 200, description: '장치 통계' })
   getStats(@Req() req: AuthenticatedAdminRequest, @Query('organizationId') organizationId?: string) {
     return this.devicesService.getDeviceStats(organizationId, req.organizationScopeIds ?? undefined);

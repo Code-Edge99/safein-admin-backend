@@ -52,7 +52,7 @@ export class OrganizationsService {
             return null;
           }
 
-          // 팀코드는 말단(리프) 조직에만 유지한다.
+          // 팀코드는 말단(리프) 현장에만 유지한다.
           if (current._count.children > 0) {
             return null;
           }
@@ -93,14 +93,14 @@ export class OrganizationsService {
     organization: { id: string },
     scopeOrganizationIds?: string[],
   ): void {
-    assertOrganizationInScopeOrThrow(organization.id, scopeOrganizationIds, '조직을 찾을 수 없습니다.');
+    assertOrganizationInScopeOrThrow(organization.id, scopeOrganizationIds, '현장을 찾을 수 없습니다.');
   }
 
   async create(dto: CreateOrganizationDto, scopeOrganizationIds?: string[], actorUserId?: string): Promise<OrganizationResponseDto> {
     this.ensureOrganizationInScope(dto.parentId || undefined, scopeOrganizationIds);
     const normalizedManagerPhone = normalizePhoneNumber(dto.managerPhone);
 
-    // 상위 조직 검증
+    // 상위 현장 검증
     if (dto.parentId) {
       const parent = await this.prisma.organization.findUnique({
         where: { id: dto.parentId },
@@ -119,7 +119,7 @@ export class OrganizationsService {
         },
       });
       if (!parent) {
-        throw new NotFoundException('상위 조직을 찾을 수 없습니다.');
+        throw new NotFoundException('상위 현장을 찾을 수 없습니다.');
       }
       // 상위가 단위(리프)이고 직원이나 정책이 있으면 하위 생성 차단
       if (parent._count.children === 0) {
@@ -159,7 +159,7 @@ export class OrganizationsService {
             },
           });
 
-          // 부모가 기존 단위였다면 하위 조직 생성과 함께 그룹으로 전환되므로 팀코드를 제거한다.
+          // 부모가 기존 단위였다면 하위 현장 생성과 함께 그룹으로 전환되므로 팀코드를 제거한다.
           if (dto.parentId) {
             await tx.organization.update({
               where: { id: dto.parentId },
@@ -240,7 +240,7 @@ export class OrganizationsService {
 
     const organizationIdSet = new Set(organizations.map((org) => org.id));
 
-    // 조직 트리 구조로 변환
+    // 현장 트리 구조로 변환
     const buildTree = (parentId: string | null): OrganizationTreeDto[] => {
       return organizations
         .filter((org) => org.parentId === parentId)
@@ -292,7 +292,7 @@ export class OrganizationsService {
     });
 
     if (!organization) {
-      throw new NotFoundException('조직을 찾을 수 없습니다.');
+      throw new NotFoundException('현장을 찾을 수 없습니다.');
     }
 
     if (!organization.teamCode) {
@@ -322,7 +322,7 @@ export class OrganizationsService {
     });
 
     if (!organization) {
-      throw new NotFoundException('조직을 찾을 수 없습니다.');
+      throw new NotFoundException('현장을 찾을 수 없습니다.');
     }
 
     // 활성 장치 수 조회
@@ -356,13 +356,13 @@ export class OrganizationsService {
     if (dto.parentId) {
       this.ensureOrganizationInScope(dto.parentId, scopeOrganizationIds);
       if (dto.parentId === id) {
-        throw new BadRequestException('조직은 자기 자신을 상위 조직으로 설정할 수 없습니다.');
+        throw new BadRequestException('현장은 자기 자신을 상위 현장으로 설정할 수 없습니다.');
       }
 
-      // 하위 조직을 상위로 설정하는지 확인
+      // 하위 현장을 상위로 설정하는지 확인
       const descendants = await this.getDescendants(id, scopeOrganizationIds);
       if (descendants.some((d) => d.id === dto.parentId)) {
-        throw new BadRequestException('하위 조직을 상위 조직으로 설정할 수 없습니다.');
+        throw new BadRequestException('하위 현장을 상위 현장으로 설정할 수 없습니다.');
       }
 
       const parent = await this.prisma.organization.findUnique({
@@ -382,7 +382,7 @@ export class OrganizationsService {
         },
       });
       if (!parent) {
-        throw new NotFoundException('상위 조직을 찾을 수 없습니다.');
+        throw new NotFoundException('상위 현장을 찾을 수 없습니다.');
       }
 
       if (parent._count.children === 0) {
@@ -435,7 +435,7 @@ export class OrganizationsService {
         },
       });
 
-      // 상위 조직이 생기면 그룹으로 전환되므로 팀코드를 제거한다.
+      // 상위 현장이 생기면 그룹으로 전환되므로 팀코드를 제거한다.
       if (dto.parentId) {
         await tx.organization.update({
           where: { id: dto.parentId },
@@ -473,17 +473,17 @@ export class OrganizationsService {
     });
 
     if (!organization) {
-      throw new NotFoundException('조직을 찾을 수 없습니다.');
+      throw new NotFoundException('현장을 찾을 수 없습니다.');
     }
 
     this.assertOrganizationInScope(organization, scopeOrganizationIds);
 
     if (organization._count.children > 0) {
-      throw new BadRequestException('하위 조직이 있는 조직은 삭제할 수 없습니다.');
+      throw new BadRequestException('하위 현장이 있는 현장은 삭제할 수 없습니다.');
     }
 
     if (organization._count.employees > 0) {
-      throw new BadRequestException('직원이 소속된 조직은 삭제할 수 없습니다.');
+      throw new BadRequestException('직원이 소속된 현장은 삭제할 수 없습니다.');
     }
 
     if (
@@ -493,7 +493,7 @@ export class OrganizationsService {
       organization._count.allowedAppPresets > 0 ||
       organization._count.controlPolicies > 0
     ) {
-      throw new BadRequestException('하위 정책/조건 데이터가 남아 있어 조직을 삭제할 수 없습니다. 관련 데이터를 먼저 정리해주세요.');
+      throw new BadRequestException('하위 정책/조건 데이터가 남아 있어 현장을 삭제할 수 없습니다. 관련 데이터를 먼저 정리해주세요.');
     }
 
     await this.prisma.organization.delete({
@@ -560,7 +560,7 @@ export class OrganizationsService {
     this.ensureOrganizationInScope(dto.targetOrganizationId, scopeOrganizationIds);
 
     if (sourceOrganizationId === dto.targetOrganizationId) {
-      throw new BadRequestException('원본 조직과 대상 조직이 동일합니다.');
+      throw new BadRequestException('원본 현장과 대상 현장이 동일합니다.');
     }
 
     const [source, target] = await Promise.all([
@@ -568,8 +568,8 @@ export class OrganizationsService {
       this.prisma.organization.findUnique({ where: { id: dto.targetOrganizationId } }),
     ]);
 
-    if (!source) throw new NotFoundException('원본 조직을 찾을 수 없습니다.');
-    if (!target) throw new NotFoundException('대상 조직을 찾을 수 없습니다.');
+    if (!source) throw new NotFoundException('원본 현장을 찾을 수 없습니다.');
+    if (!target) throw new NotFoundException('대상 현장을 찾을 수 없습니다.');
 
     await assertLeafOrganization(this.prisma, dto.targetOrganizationId);
 

@@ -23,7 +23,7 @@ export class CreateControlPolicyDto {
   @IsOptional()
   description?: string;
 
-  @ApiProperty({ description: '조직 ID' })
+  @ApiProperty({ description: '현장 ID' })
   @IsString()
   @IsNotEmpty()
   organizationId: string;
@@ -110,7 +110,7 @@ export class ControlPolicyResponseDto {
   @ApiPropertyOptional({ description: '누락 필수 조건 안내 메시지', type: [String] })
   missingRequiredConditionMessages?: string[];
 
-  @ApiPropertyOptional({ description: '조직 정보' })
+  @ApiPropertyOptional({ description: '현장 정보' })
   organization?: {
     id: string;
     name: string;
@@ -191,7 +191,7 @@ export class ControlPolicyFilterDto {
   @IsOptional()
   search?: string;
 
-  @ApiPropertyOptional({ description: '조직 ID' })
+  @ApiPropertyOptional({ description: '현장 ID' })
   @IsString()
   @IsOptional()
   organizationId?: string;
@@ -291,7 +291,7 @@ export class DispatchPolicyChangedDto {
   policyIds?: string[];
 
   @ApiPropertyOptional({
-    description: '조직 ID 필터 (policyIds 미전달 시 대상 정책 조회 조건)',
+    description: '현장 ID 필터 (policyIds 미전달 시 대상 정책 조회 조건)',
     example: '7af0eb0a-7f4f-4f5f-8157-2c1d2411d1a9',
   })
   @IsString()
@@ -316,6 +316,6 @@ export class ControlPolicyStatsDto {
   @ApiProperty({ description: '활성 정책 수' })
   activePolicies: number;
 
-  @ApiProperty({ description: '조직별 정책 수' })
+  @ApiProperty({ description: '현장별 정책 수' })
   byOrganization: Record<string, number>;
 }

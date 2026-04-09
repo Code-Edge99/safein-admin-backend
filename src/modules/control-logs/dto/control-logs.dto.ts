@@ -148,10 +148,10 @@ export class ControlLogResponseDto {
     deviceId: string;
   };
 
-  @ApiPropertyOptional({ description: '스냅샷 조직 ID' })
+  @ApiPropertyOptional({ description: '스냅샷 현장 ID' })
   organizationId?: string;
 
-  @ApiPropertyOptional({ description: '스냅샷 조직명' })
+  @ApiPropertyOptional({ description: '스냅샷 현장명' })
   organizationName?: string;
 
   @ApiPropertyOptional({ description: '정책 정보' })
@@ -182,7 +182,7 @@ export class ControlLogFilterDto {
   @IsOptional()
   search?: string;
 
-  @ApiPropertyOptional({ description: '조직 ID' })
+  @ApiPropertyOptional({ description: '현장 ID' })
   @IsString()
   @IsOptional()
   organizationId?: string;

@@ -61,9 +61,9 @@ export class BehaviorConditionsController {
   }
 
   @Get('organization/:organizationId')
-  @ApiOperation({ summary: '조직별 행동 조건 목록 조회' })
-  @ApiParam({ name: 'organizationId', description: '조직 ID' })
-  @ApiResponse({ status: 200, description: '조직별 조건 목록', type: [BehaviorConditionResponseDto] })
+  @ApiOperation({ summary: '현장별 행동 조건 목록 조회' })
+  @ApiParam({ name: 'organizationId', description: '현장 ID' })
+  @ApiResponse({ status: 200, description: '현장별 조건 목록', type: [BehaviorConditionResponseDto] })
   async findByOrganization(
     @Req() req: AuthenticatedAdminRequest,
     @Param('organizationId') organizationId: string,

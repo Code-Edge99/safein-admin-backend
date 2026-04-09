@@ -6,31 +6,31 @@ export class LoginDto {
   @ApiProperty({ description: '사용자 아이디', example: 'admin' })
   @IsString()
   @IsNotEmpty()
-  username: string;
+  username!: string;
 
   @ApiProperty({ description: '비밀번호', example: 'password123' })
   @IsString()
   @IsNotEmpty()
   @MinLength(6)
-  password: string;
+  password!: string;
 }
 
 export class ChangePasswordDto {
   @ApiProperty({ description: '현재 비밀번호' })
   @IsString()
   @IsNotEmpty()
-  currentPassword: string;
+  currentPassword!: string;
 
   @ApiProperty({ description: '새 비밀번호' })
   @IsString()
   @IsNotEmpty()
   @MinLength(8)
-  newPassword: string;
+  newPassword!: string;
 
   @ApiProperty({ description: '새 비밀번호 확인' })
   @IsString()
   @IsNotEmpty()
-  confirmPassword: string;
+  confirmPassword!: string;
 }
 
 export class UpdateProfileDto {
@@ -39,95 +39,95 @@ export class UpdateProfileDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(50)
-  name: string;
+  name!: string;
 
   @ApiProperty({ description: '이메일' })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
   @IsEmail()
   @MaxLength(100)
-  email: string;
+  email!: string;
 }
 
 export class TokenResponseUserOrganizationDto {
-  @ApiProperty({ description: '조직 ID' })
-  id: string;
+  @ApiProperty({ description: '현장 ID' })
+  id!: string;
 
-  @ApiProperty({ description: '조직명' })
-  name: string;
+  @ApiProperty({ description: '현장명' })
+  name!: string;
 }
 
 export class TokenResponseUserDto {
   @ApiProperty({ description: '사용자 ID' })
-  id: string;
+  id!: string;
 
   @ApiProperty({ description: '사용자 아이디' })
-  username: string;
+  username!: string;
 
   @ApiProperty({ description: '사용자 이름' })
-  name: string;
+  name!: string;
 
   @ApiProperty({ description: '이메일' })
-  email: string;
+  email!: string;
 
   @ApiProperty({ description: '역할' })
-  role: string;
+  role!: string;
 
-  @ApiProperty({ description: '소속 조직', required: false, type: TokenResponseUserOrganizationDto })
+  @ApiProperty({ description: '소속 현장', required: false, type: TokenResponseUserOrganizationDto })
   organization?: TokenResponseUserOrganizationDto;
 }
 
 export class TokenResponseDto {
   @ApiProperty({ description: 'JWT 액세스 토큰' })
-  accessToken: string;
+  accessToken!: string;
 
   @ApiProperty({ description: 'JWT 리프레시 토큰', required: false })
   refreshToken?: string;
 
   @ApiProperty({ description: '토큰 타입' })
-  tokenType: string;
+  tokenType!: string;
 
   @ApiProperty({ description: '액세스 토큰 만료 시간 (초)' })
-  expiresIn: number;
+  expiresIn!: number;
 
   @ApiProperty({ description: '리프레시 토큰 만료 시간 (초)', required: false })
   refreshExpiresIn?: number;
 
   @ApiProperty({ description: '사용자 정보', type: TokenResponseUserDto })
-  user: TokenResponseUserDto;
+  user!: TokenResponseUserDto;
 }
 
 export class RefreshTokenDto {
   @ApiProperty({ description: '리프레시 토큰' })
   @IsString()
   @IsNotEmpty()
-  refreshToken: string;
+  refreshToken!: string;
 }
 
 export class AuthUserDto {
   @ApiProperty({ description: '사용자 ID' })
-  id: string;
+  id!: string;
 
   @ApiProperty({ description: '사용자 아이디' })
-  username: string;
+  username!: string;
 
   @ApiProperty({ description: '사용자 이름' })
-  name: string;
+  name!: string;
 
   @ApiProperty({ description: '이메일', required: false })
   email?: string;
 
   @ApiProperty({ description: '역할' })
-  role: string;
+  role!: string;
 
   @ApiProperty({
-    description: '소속 조직',
+    description: '소속 현장',
     required: false,
     type: TokenResponseUserOrganizationDto,
   })
   organization?: TokenResponseUserOrganizationDto;
 
-  @ApiProperty({ description: '조직 ID' })
-  organizationId: string;
+  @ApiProperty({ description: '현장 ID' })
+  organizationId!: string;
 
   @ApiPropertyOptional({ description: '마지막 로그인 시각' })
   lastLogin?: Date;

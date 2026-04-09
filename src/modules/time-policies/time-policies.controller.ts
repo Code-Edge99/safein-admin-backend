@@ -62,9 +62,9 @@ export class TimePoliciesController {
   }
 
   @Get('organization/:organizationId')
-  @ApiOperation({ summary: '조직별 시간 정책 목록 조회' })
-  @ApiParam({ name: 'organizationId', description: '조직 ID' })
-  @ApiResponse({ status: 200, description: '조직별 정책 목록', type: [TimePolicyResponseDto] })
+  @ApiOperation({ summary: '현장별 시간 정책 목록 조회' })
+  @ApiParam({ name: 'organizationId', description: '현장 ID' })
+  @ApiResponse({ status: 200, description: '현장별 정책 목록', type: [TimePolicyResponseDto] })
   async findByOrganization(
     @Req() req: AuthenticatedAdminRequest,
     @Param('organizationId') organizationId: string,

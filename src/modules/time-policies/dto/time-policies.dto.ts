@@ -91,7 +91,7 @@ export class CreateTimePolicyDto {
   @IsOptional()
   description?: string;
 
-  @ApiProperty({ description: '조직 ID' })
+  @ApiProperty({ description: '현장 ID' })
   @IsString()
   @IsNotEmpty()
   organizationId: string;
@@ -160,7 +160,7 @@ export class TimePolicyResponseDto {
   @ApiProperty({ description: '시간대 외 제어 허용' })
   allowOutsideHours: boolean;
 
-  @ApiPropertyOptional({ description: '조직 정보' })
+  @ApiPropertyOptional({ description: '현장 정보' })
   organization?: {
     id: string;
     name: string;
@@ -185,7 +185,7 @@ export class TimePolicyFilterDto {
   @IsOptional()
   search?: string;
 
-  @ApiPropertyOptional({ description: '조직 ID' })
+  @ApiPropertyOptional({ description: '현장 ID' })
   @IsString()
   @IsOptional()
   organizationId?: string;
@@ -239,6 +239,6 @@ export class TimePolicyStatsDto {
   @ApiProperty({ description: '활성 정책 수' })
   activePolicies: number;
 
-  @ApiProperty({ description: '조직별 정책 수' })
+  @ApiProperty({ description: '현장별 정책 수' })
   byOrganization: Record<string, number>;
 }

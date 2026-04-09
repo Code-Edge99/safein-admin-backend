@@ -56,7 +56,7 @@ export class CreateAccountDto {
   @IsEnum(AdminRoleEnum)
   role: AdminRoleEnum;
 
-  @ApiPropertyOptional({ description: '조직 ID' })
+  @ApiPropertyOptional({ description: '현장 ID' })
   @IsString()
   @IsOptional()
   organizationId?: string;
@@ -114,7 +114,7 @@ export class AccountResponseDto {
   @ApiProperty({ description: '역할', enum: AdminRoleEnum })
   role: AdminRoleEnum;
 
-  @ApiPropertyOptional({ description: '조직 정보' })
+  @ApiPropertyOptional({ description: '현장 정보' })
   organization?: {
     id: string;
     name: string;
@@ -149,7 +149,7 @@ export class AccountFilterDto {
   @IsOptional()
   status?: AccountStatusEnum;
 
-  @ApiPropertyOptional({ description: '조직 ID' })
+  @ApiPropertyOptional({ description: '현장 ID' })
   @IsString()
   @IsOptional()
   organizationId?: string;

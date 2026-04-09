@@ -59,7 +59,7 @@ export class CreateEmployeeDto {
   @IsNotEmpty()
   name: string;
 
-  @ApiProperty({ description: '조직 ID' })
+  @ApiProperty({ description: '현장 ID' })
   @Transform(({ value }) => normalizeOptionalText(value))
   @IsString()
   @IsNotEmpty()
@@ -139,10 +139,10 @@ export class EmployeeResponseDto {
   @ApiProperty({ description: '직원 이름' })
   name: string;
 
-  @ApiProperty({ description: '조직 ID' })
+  @ApiProperty({ description: '현장 ID' })
   organizationId: string;
 
-  @ApiPropertyOptional({ description: '조직명' })
+  @ApiPropertyOptional({ description: '현장명' })
   organizationName?: string;
 
   @ApiPropertyOptional({ description: '직급/직책' })
@@ -216,7 +216,7 @@ export class EmployeeExclusionDto {
 }
 
 export class EmployeeFilterDto extends BaseFilterDto {
-  @ApiPropertyOptional({ description: '조직 ID' })
+  @ApiPropertyOptional({ description: '현장 ID' })
   @IsOptional()
   @IsString()
   organizationId?: string;
@@ -235,7 +235,7 @@ export class BulkEmployeeActionDto {
 }
 
 export class BulkMoveOrganizationDto extends BulkEmployeeActionDto {
-  @ApiProperty({ description: '대상 조직 ID' })
+  @ApiProperty({ description: '대상 현장 ID' })
   @IsString()
   targetOrganizationId: string;
 }

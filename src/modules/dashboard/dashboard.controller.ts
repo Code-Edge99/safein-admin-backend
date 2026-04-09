@@ -61,7 +61,7 @@ export class DashboardController {
   }
 
   @Post('reaggregate-day')
-  @ApiOperation({ summary: '조직/일자 통계 재집계 실행' })
+  @ApiOperation({ summary: '현장/일자 통계 재집계 실행' })
   reaggregateDay(
     @Req() req: AuthenticatedAdminRequest,
     @Body() dto: ReaggregateDayDto,
@@ -88,7 +88,7 @@ export class DashboardController {
   }
 
   @Get('organization-stats')
-  @ApiOperation({ summary: '조직 일별 통계' })
+  @ApiOperation({ summary: '현장 일별 통계' })
   getOrganizationStats(
     @Req() req: AuthenticatedAdminRequest,
     @Query('organizationId') organizationId?: string,
