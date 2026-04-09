@@ -389,6 +389,10 @@ export class BehaviorConditionsService {
       throw new BadRequestException(`${metricName} 조건이 활성화되어 있으면 기준값이 필요합니다.`);
     }
 
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new BadRequestException(`${metricName} 기준값은 1 이상의 양수여야 합니다.`);
+    }
+
     return value;
   }
 }

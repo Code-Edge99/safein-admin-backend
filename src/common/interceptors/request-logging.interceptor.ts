@@ -9,8 +9,14 @@ import {
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 import { Request, Response } from 'express';
-import { AuditAction } from '@prisma/client';
+import { AuditAction, Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
+import {
+  createRequestLogSummary,
+  isImportantReadRequest,
+  isLowValueRequestPath,
+  stripApiPrefix,
+} from '@/common/utils/system-log-summary.util';
 
 @Injectable()
 export class RequestLoggingInterceptor implements NestInterceptor {
@@ -110,7 +116,7 @@ export class RequestLoggingInterceptor implements NestInterceptor {
   }
 
   private shouldPersist(method: string, statusCode: number, safeUrl: string): boolean {
-    if (safeUrl.startsWith('/api/docs')) {
+    if (safeUrl.startsWith('/api/docs') || isLowValueRequestPath(safeUrl)) {
       return false;
     }
 
@@ -118,7 +124,17 @@ export class RequestLoggingInterceptor implements NestInterceptor {
       return true;
     }
 
-    return ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method.toUpperCase());
+    const normalizedMethod = method.toUpperCase();
+
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(normalizedMethod)) {
+      return true;
+    }
+
+    if (['GET', 'HEAD'].includes(normalizedMethod)) {
+      return isImportantReadRequest(safeUrl);
+    }
+
+    return false;
   }
 
   private resolveAction(method: string, safeUrl: string, statusCode: number): AuditAction {
@@ -149,11 +165,10 @@ export class RequestLoggingInterceptor implements NestInterceptor {
   }
 
   private resolveResource(safeUrl: string): { resourceType: string; resourceId?: string } {
-    const purePath = safeUrl.split('?')[0];
+    const purePath = stripApiPrefix(safeUrl.split('?')[0]);
     const parts = purePath.split('/').filter(Boolean);
-    const apiIndex = parts[0] === 'api' ? 1 : 0;
-    const resourceType = parts[apiIndex] || 'system';
-    const candidateId = parts[apiIndex + 1];
+    const resourceType = parts[0] || 'system';
+    const candidateId = parts[1];
     const resourceId = candidateId && !['create', 'update', 'delete', 'activate', 'deactivate'].includes(candidateId)
       ? candidateId
       : undefined;
@@ -185,6 +200,13 @@ export class RequestLoggingInterceptor implements NestInterceptor {
       : userAgent || null;
     const query = this.sanitizeValue(request.query || {}, 0);
     const requestBody = this.sanitizeValue(request.body || {}, 0);
+    const normalizedMethod = request.method.toUpperCase();
+    const requestSummary = createRequestLogSummary({
+      method: normalizedMethod,
+      path: safeUrl,
+      statusCode,
+      durationMs,
+    });
     const actor = user
       ? this.sanitizeValue(
           {
@@ -210,13 +232,24 @@ export class RequestLoggingInterceptor implements NestInterceptor {
         data: {
           accountId,
           organizationId,
-          action: this.resolveAction(request.method, safeUrl, statusCode),
+          action: this.resolveAction(normalizedMethod, safeUrl, statusCode),
           resourceType,
           resourceId,
-          resourceName: `${request.method.toUpperCase()} ${safeUrl}`,
+          resourceName: `${normalizedMethod} ${safeUrl}`,
           ipAddress: request.ip,
           changesAfter: {
-            method: request.method.toUpperCase(),
+            schemaVersion: 'system-log-v1',
+            eventKind: 'http-request',
+            category: requestSummary.category,
+            summary: {
+              action: requestSummary.action,
+              target: requestSummary.target,
+              details: requestSummary.details,
+              severity: requestSummary.severity,
+              result: requestSummary.result,
+              category: requestSummary.category,
+            } as Prisma.InputJsonObject,
+            method: normalizedMethod,
             path: safeUrl,
             statusCode,
             durationMs,

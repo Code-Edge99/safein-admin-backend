@@ -1,8 +1,10 @@
 import { ConsoleLogger } from '@nestjs/common';
 import { AuditAction, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-
-type PersistLogLevel = 'log' | 'warn' | 'error' | 'debug' | 'verbose';
+import {
+  createApplicationLogSummary,
+  PersistLogLevel,
+} from './system-log-summary.util';
 
 type PersistentAuditLoggerOptions = {
   source: string;
@@ -64,7 +66,17 @@ export class PersistentAuditLogger extends ConsoleLogger {
     }
 
     const normalizedContext = this.normalizeMessage(context) || 'Application';
+    // HTTP 요청 로그는 RequestLoggingInterceptor에서 구조화하여 저장하므로 중복 저장을 방지한다.
+    if (normalizedContext === 'RequestLoggingInterceptor') {
+      return;
+    }
+
     const timestamp = new Date();
+    const summary = createApplicationLogSummary({
+      level,
+      context: normalizedContext,
+      message: normalizedMessage,
+    });
 
     const traceMessage = trace ? this.truncate(this.normalizeMessage(trace), this.maxMessageLength) : null;
 
@@ -74,6 +86,7 @@ export class PersistentAuditLogger extends ConsoleLogger {
       normalizedContext,
       traceMessage,
       timestamp,
+      summary,
     });
   }
 
@@ -83,6 +96,7 @@ export class PersistentAuditLogger extends ConsoleLogger {
     normalizedContext: string;
     traceMessage: string | null;
     timestamp: Date;
+    summary: ReturnType<typeof createApplicationLogSummary>;
   }): Promise<void> {
     const fullData = this.buildAuditLogData(params, false);
 
@@ -111,6 +125,7 @@ export class PersistentAuditLogger extends ConsoleLogger {
       normalizedContext: string;
       traceMessage: string | null;
       timestamp: Date;
+      summary: ReturnType<typeof createApplicationLogSummary>;
     },
     compact: boolean,
   ): Prisma.AuditLogCreateInput {
@@ -127,6 +142,17 @@ export class PersistentAuditLogger extends ConsoleLogger {
         resourceNameLimit,
       ),
       changesAfter: {
+        schemaVersion: 'system-log-v1',
+        eventKind: 'application-log',
+        category: params.summary.category,
+        summary: {
+          action: params.summary.action,
+          target: params.summary.target,
+          details: params.summary.details,
+          severity: params.summary.severity,
+          result: params.summary.result,
+          category: params.summary.category,
+        } as Prisma.InputJsonObject,
         source: this.truncate(this.source, compact ? 32 : 100),
         level: params.level,
         context: this.truncate(params.normalizedContext, contextLimit),

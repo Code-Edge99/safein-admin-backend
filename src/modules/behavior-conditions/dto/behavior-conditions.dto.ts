@@ -32,19 +32,19 @@ export class CreateBehaviorConditionDto {
 
   @ApiPropertyOptional({ description: '이동 거리 임계값 (미터)' })
   @IsNumber()
-  @Min(0)
+  @Min(1)
   @IsOptional()
   distanceThreshold?: number;
 
   @ApiPropertyOptional({ description: '걸음 수 임계값' })
   @IsNumber()
-  @Min(0)
+  @Min(1)
   @IsOptional()
   stepsThreshold?: number;
 
   @ApiPropertyOptional({ description: '속도 임계값 (km/h)' })
   @IsNumber()
-  @Min(0)
+  @Min(1)
   @IsOptional()
   speedThreshold?: number;
 

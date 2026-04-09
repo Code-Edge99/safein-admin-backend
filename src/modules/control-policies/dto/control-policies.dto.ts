@@ -91,6 +91,25 @@ export class ControlPolicyResponseDto {
   @ApiProperty({ description: '활성 상태' })
   isActive: boolean;
 
+  @ApiProperty({
+    description: '정책 상태',
+    enum: ['ACTIVE', 'INACTIVE', 'REVIEW_REQUIRED'],
+  })
+  policyStatus: 'ACTIVE' | 'INACTIVE' | 'REVIEW_REQUIRED';
+
+  @ApiProperty({ description: '정책 적용 여부 (필수 조건 충족 + 활성 상태)' })
+  policyApplied: boolean;
+
+  @ApiProperty({
+    description: '누락된 필수 조건 목록',
+    enum: ['ZONE', 'TIME_POLICY'],
+    isArray: true,
+  })
+  missingRequiredConditions: Array<'ZONE' | 'TIME_POLICY'>;
+
+  @ApiPropertyOptional({ description: '누락 필수 조건 안내 메시지', type: [String] })
+  missingRequiredConditionMessages?: string[];
+
   @ApiPropertyOptional({ description: '조직 정보' })
   organization?: {
     id: string;

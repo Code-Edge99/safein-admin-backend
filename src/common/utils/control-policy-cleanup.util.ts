@@ -24,12 +24,18 @@ export async function deactivatePoliciesWithoutConditions(tx: any, policyIds: st
     )
     .map((p: any) => p.id);
 
-  if (emptyPolicyIds.length === 0) return;
+  const reviewRequiredPolicyIds = policies
+    .filter((p: any) => p._count.zones === 0 || p._count.timePolicies === 0)
+    .map((p: any) => p.id);
 
-  await tx.controlPolicy.updateMany({
-    where: { id: { in: emptyPolicyIds } },
-    data: { isActive: false },
-  });
+  if (reviewRequiredPolicyIds.length > 0) {
+    await tx.controlPolicy.updateMany({
+      where: { id: { in: reviewRequiredPolicyIds } },
+      data: { isActive: false },
+    });
+  }
+
+  if (emptyPolicyIds.length === 0) return;
 
   await tx.controlPolicyEmployee.deleteMany({
     where: { policyId: { in: emptyPolicyIds } },

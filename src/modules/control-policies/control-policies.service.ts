@@ -132,12 +132,7 @@ export class ControlPoliciesService {
       behaviorConditionIds,
     });
 
-    this.ensureAtLeastOneControlConditionInput({
-      zoneIds,
-      timePolicyIds,
-      behaviorConditionIds,
-      allowedAppPresetIds,
-    });
+    this.ensureRequiredConditionInputsOnCreate({ zoneIds, timePolicyIds });
 
     // Create policy with all relations
     const policy = await this.prisma.controlPolicy.create({
@@ -459,11 +454,25 @@ export class ControlPoliciesService {
 
       const currentPolicy = await tx.controlPolicy.findUnique({
         where: { id },
-        select: { organizationId: true },
+        select: {
+          organizationId: true,
+          _count: {
+            select: {
+              zones: true,
+              timePolicies: true,
+            },
+          },
+        },
       });
       if (!currentPolicy) {
         throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
       }
+
+      const hadRequiredConditionMissingBefore =
+        this.resolveMissingRequiredConditionsFromCounts({
+          zones: currentPolicy._count.zones,
+          timePolicies: currentPolicy._count.timePolicies,
+        }).length > 0;
 
       const targetOrganizationId = organizationId ?? currentPolicy.organizationId;
             if (scopeOrganizationIds && !scopeOrganizationIds.includes(targetOrganizationId)) {
@@ -593,7 +602,11 @@ export class ControlPoliciesService {
         });
       }
 
-      await this.ensurePolicyHasControlConditions(tx, id);
+      await this.applyRequiredConditionActivationPolicy(
+        tx,
+        id,
+        hadRequiredConditionMissingBefore,
+      );
     });
     const updatedPolicy = await this.prisma.controlPolicy.findUnique({
       where: { id },
@@ -720,11 +733,33 @@ export class ControlPoliciesService {
         id: { in: uniquePolicyIds },
         ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
       },
-      select: { id: true, isActive: true },
+      select: {
+        id: true,
+        isActive: true,
+        _count: {
+          select: {
+            zones: true,
+            timePolicies: true,
+          },
+        },
+      },
     });
 
+    const activationEligiblePolicyIds = targetPolicies
+      .filter((policy) => {
+        if (!isActive) {
+          return true;
+        }
+
+        return this.resolveMissingRequiredConditionsFromCounts({
+          zones: policy._count.zones,
+          timePolicies: policy._count.timePolicies,
+        }).length === 0;
+      })
+      .map((policy) => policy.id);
+
     const changedTargetPolicyIds = targetPolicies
-      .filter((policy) => policy.isActive !== isActive)
+      .filter((policy) => activationEligiblePolicyIds.includes(policy.id) && policy.isActive !== isActive)
       .map((policy) => policy.id);
 
     if (changedTargetPolicyIds.length === 0) {
@@ -751,9 +786,34 @@ export class ControlPoliciesService {
   async toggleActive(id: string, scopeOrganizationIds?: string[]): Promise<ControlPolicyResponseDto> {
     await this.assertPolicyInScope(id, scopeOrganizationIds);
 
-    const policy = await this.prisma.controlPolicy.findUnique({ where: { id } });
+    const policy = await this.prisma.controlPolicy.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        isActive: true,
+        _count: {
+          select: {
+            zones: true,
+            timePolicies: true,
+          },
+        },
+      },
+    });
     if (!policy) {
       throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
+    }
+
+    if (!policy.isActive) {
+      const missingRequiredConditions = this.resolveMissingRequiredConditionsFromCounts({
+        zones: policy._count.zones,
+        timePolicies: policy._count.timePolicies,
+      });
+
+      if (missingRequiredConditions.length > 0) {
+        throw new BadRequestException(
+          '시간 조건과 구역 조건이 모두 충족되어야 활성화할 수 있습니다. 정책을 수정해 누락 조건을 해소해주세요.',
+        );
+      }
     }
 
     const updated = await this.prisma.controlPolicy.update({
@@ -1312,11 +1372,25 @@ export class ControlPoliciesService {
 
     const policy = await this.prisma.controlPolicy.findUnique({
       where: { id: policyId },
-      select: { organizationId: true },
+      select: {
+        organizationId: true,
+        _count: {
+          select: {
+            zones: true,
+            timePolicies: true,
+          },
+        },
+      },
     });
     if (!policy) {
       throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
     }
+
+    const hadRequiredConditionMissingBefore =
+      this.resolveMissingRequiredConditionsFromCounts({
+        zones: policy._count.zones,
+        timePolicies: policy._count.timePolicies,
+      }).length > 0;
 
     await this.validatePolicyRelations(this.prisma, policy.organizationId, { zoneIds });
 
@@ -1328,7 +1402,11 @@ export class ControlPoliciesService {
         });
       }
 
-      await this.ensurePolicyHasControlConditions(tx, policyId);
+      await this.applyRequiredConditionActivationPolicy(
+        tx,
+        policyId,
+        hadRequiredConditionMissingBefore,
+      );
     });
 
     return this.findOneDetail(policyId, scopeOrganizationIds);
@@ -1343,11 +1421,25 @@ export class ControlPoliciesService {
 
     const policy = await this.prisma.controlPolicy.findUnique({
       where: { id: policyId },
-      select: { organizationId: true },
+      select: {
+        organizationId: true,
+        _count: {
+          select: {
+            zones: true,
+            timePolicies: true,
+          },
+        },
+      },
     });
     if (!policy) {
       throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
     }
+
+    const hadRequiredConditionMissingBefore =
+      this.resolveMissingRequiredConditionsFromCounts({
+        zones: policy._count.zones,
+        timePolicies: policy._count.timePolicies,
+      }).length > 0;
 
     await this.validatePolicyRelations(this.prisma, policy.organizationId, { timePolicyIds });
     this.ensureSingleSelectionConstraints({ timePolicyIds });
@@ -1360,7 +1452,11 @@ export class ControlPoliciesService {
         });
       }
 
-      await this.ensurePolicyHasControlConditions(tx, policyId);
+      await this.applyRequiredConditionActivationPolicy(
+        tx,
+        policyId,
+        hadRequiredConditionMissingBefore,
+      );
     });
 
     return this.findOneDetail(policyId, scopeOrganizationIds);
@@ -1375,11 +1471,25 @@ export class ControlPoliciesService {
 
     const policy = await this.prisma.controlPolicy.findUnique({
       where: { id: policyId },
-      select: { organizationId: true },
+      select: {
+        organizationId: true,
+        _count: {
+          select: {
+            zones: true,
+            timePolicies: true,
+          },
+        },
+      },
     });
     if (!policy) {
       throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
     }
+
+    const hadRequiredConditionMissingBefore =
+      this.resolveMissingRequiredConditionsFromCounts({
+        zones: policy._count.zones,
+        timePolicies: policy._count.timePolicies,
+      }).length > 0;
 
     await this.validatePolicyRelations(this.prisma, policy.organizationId, { behaviorConditionIds });
     this.ensureSingleSelectionConstraints({ behaviorConditionIds });
@@ -1395,7 +1505,11 @@ export class ControlPoliciesService {
         });
       }
 
-      await this.ensurePolicyHasControlConditions(tx, policyId);
+      await this.applyRequiredConditionActivationPolicy(
+        tx,
+        policyId,
+        hadRequiredConditionMissingBefore,
+      );
     });
 
     return this.findOneDetail(policyId, scopeOrganizationIds);
@@ -1410,11 +1524,25 @@ export class ControlPoliciesService {
 
     const policy = await this.prisma.controlPolicy.findUnique({
       where: { id: policyId },
-      select: { organizationId: true },
+      select: {
+        organizationId: true,
+        _count: {
+          select: {
+            zones: true,
+            timePolicies: true,
+          },
+        },
+      },
     });
     if (!policy) {
       throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
     }
+
+    const hadRequiredConditionMissingBefore =
+      this.resolveMissingRequiredConditionsFromCounts({
+        zones: policy._count.zones,
+        timePolicies: policy._count.timePolicies,
+      }).length > 0;
 
     await this.validatePolicyRelations(this.prisma, policy.organizationId, { allowedAppPresetIds });
 
@@ -1426,7 +1554,11 @@ export class ControlPoliciesService {
         });
       }
 
-      await this.ensurePolicyHasControlConditions(tx, policyId);
+      await this.applyRequiredConditionActivationPolicy(
+        tx,
+        policyId,
+        hadRequiredConditionMissingBefore,
+      );
     });
 
     return this.findOneDetail(policyId, scopeOrganizationIds);
@@ -1520,22 +1652,78 @@ export class ControlPoliciesService {
     return Array.from(new Set(ids.filter(Boolean)));
   }
 
-  private ensureAtLeastOneControlConditionInput(params: {
+  private ensureRequiredConditionInputsOnCreate(params: {
     zoneIds?: string[];
     timePolicyIds?: string[];
-    behaviorConditionIds?: string[];
-    allowedAppPresetIds?: string[];
   }): void {
-    const hasAnyCondition =
-      this.normalizeIds(params.zoneIds).length > 0 ||
-      this.normalizeIds(params.timePolicyIds).length > 0 ||
-      this.normalizeIds(params.behaviorConditionIds).length > 0 ||
-      this.normalizeIds(params.allowedAppPresetIds).length > 0;
+    if (this.normalizeIds(params.zoneIds).length === 0) {
+      throw new BadRequestException('정책 생성 시 통제 구역은 최소 1개 이상 필요합니다.');
+    }
 
-    if (!hasAnyCondition) {
-      throw new BadRequestException(
-        '정책에는 최소 1개 이상의 통제 조건(구역/시간 정책/행동 조건/허용앱 프리셋)이 필요합니다.',
-      );
+    if (this.normalizeIds(params.timePolicyIds).length === 0) {
+      throw new BadRequestException('정책 생성 시 시간 조건은 1개 이상 필요합니다.');
+    }
+  }
+
+  private resolveMissingRequiredConditionsFromCounts(counts: {
+    zones: number;
+    timePolicies: number;
+  }): Array<'ZONE' | 'TIME_POLICY'> {
+    const missing: Array<'ZONE' | 'TIME_POLICY'> = [];
+
+    if (counts.zones === 0) {
+      missing.push('ZONE');
+    }
+
+    if (counts.timePolicies === 0) {
+      missing.push('TIME_POLICY');
+    }
+
+    return missing;
+  }
+
+  private async applyRequiredConditionActivationPolicy(
+    tx: any,
+    policyId: string,
+    hadRequiredConditionMissingBefore: boolean,
+  ): Promise<void> {
+    const policy = await tx.controlPolicy.findUnique({
+      where: { id: policyId },
+      select: {
+        isActive: true,
+        _count: {
+          select: {
+            zones: true,
+            timePolicies: true,
+          },
+        },
+      },
+    });
+
+    if (!policy) {
+      throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
+    }
+
+    const missingRequiredConditions = this.resolveMissingRequiredConditionsFromCounts({
+      zones: policy._count.zones,
+      timePolicies: policy._count.timePolicies,
+    });
+
+    if (missingRequiredConditions.length > 0) {
+      if (policy.isActive) {
+        await tx.controlPolicy.update({
+          where: { id: policyId },
+          data: { isActive: false },
+        });
+      }
+      return;
+    }
+
+    if (hadRequiredConditionMissingBefore && !policy.isActive) {
+      await tx.controlPolicy.update({
+        where: { id: policyId },
+        data: { isActive: true },
+      });
     }
   }
 
@@ -1549,38 +1737,6 @@ export class ControlPoliciesService {
 
     if (params.behaviorConditionIds !== undefined && this.normalizeIds(params.behaviorConditionIds).length > 1) {
       throw new BadRequestException('행동 조건은 1개만 설정할 수 있습니다.');
-    }
-  }
-
-  private async ensurePolicyHasControlConditions(tx: any, policyId: string): Promise<void> {
-    const policy = await tx.controlPolicy.findUnique({
-      where: { id: policyId },
-      select: {
-        _count: {
-          select: {
-            zones: true,
-            timePolicies: true,
-            behaviors: true,
-            allowedApps: true,
-          },
-        },
-      },
-    });
-
-    if (!policy) {
-      throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
-    }
-
-    const totalConditions =
-      policy._count.zones +
-      policy._count.timePolicies +
-      policy._count.behaviors +
-      policy._count.allowedApps;
-
-    if (totalConditions === 0) {
-      throw new BadRequestException(
-        '정책에는 최소 1개 이상의 통제 조건(구역/시간 정책/행동 조건/허용앱 프리셋)이 필요합니다.',
-      );
     }
   }
 
