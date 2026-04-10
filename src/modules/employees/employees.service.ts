@@ -225,21 +225,11 @@ export class EmployeesService {
       andConditions.push({
         status: filter.status as EmployeeStatus,
       });
-      if (filter.status === EmployeeStatusEnum.DELETE) {
-        andConditions.push({
-          originalEmployeeId: { not: null } as any,
-        });
-      }
     } else if (filter.statusGroup === EmployeeStatusGroupEnum.DELETED) {
       andConditions.push({
         OR: [
         { status: 'PHONE_INFO_REVIEW' as EmployeeStatus },
-        {
-          AND: [
-            { status: 'DELETE' as EmployeeStatus },
-            { originalEmployeeId: { not: null } as any },
-          ],
-        },
+        { status: 'DELETE' as EmployeeStatus },
         ],
       });
     } else {
@@ -513,7 +503,6 @@ export class EmployeesService {
     const archiveEmployeeId = this.buildDeletedEmployeeArchiveId(employeeId);
     const archivePasswordHash = await bcrypt.hash(randomUUID(), 10);
     const now = new Date();
-    const purgeAfterAt = new Date(now.getTime() + EmployeesService.DELETED_RETENTION_DAYS * 24 * 60 * 60 * 1000);
 
     await this.prisma.$transaction(async (tx) => {
       const employeeDevices = await tx.device.findMany({
@@ -528,11 +517,7 @@ export class EmployeesService {
           name: employeeName || '삭제된 직원',
           organizationId,
           status: 'DELETE' as EmployeeStatus,
-          memo: `삭제 아카이브 계정 (원본 직원ID: ${employeeId})`,
-          deletedAt: now,
-          purgeAfterAt,
-          deletedReason: reason,
-          originalEmployeeId: employeeId,
+          memo: `삭제 아카이브 계정 (원본 직원ID: ${employeeId}) | 사유: ${reason} | 삭제시각: ${now.toISOString()}`,
           phone: null,
           email: null,
           position: null,
@@ -813,10 +798,6 @@ export class EmployeesService {
       throw new BadRequestException('복원 가능한 원본 직원 ID 정보가 없습니다.');
     }
 
-    if (deletedEmployee.purgeAfterAt && new Date(deletedEmployee.purgeAfterAt).getTime() <= Date.now()) {
-      throw new BadRequestException('복원 가능 기간(30일)이 만료되었습니다.');
-    }
-
     const existingEmployee = await this.prisma.employee.findUnique({
       where: { id: originalEmployeeId },
       select: { id: true },
@@ -852,12 +833,8 @@ export class EmployeesService {
         data: {
           referenceId: deletedEmployee.referenceId,
           status: EmployeeStatus.ACTIVE,
-          deletedAt: null,
-          purgeAfterAt: null,
-          deletedReason: null,
-          originalEmployeeId: null,
           updatedAt: new Date(),
-        } as any,
+        },
       });
 
       await tx.employeeAccount.updateMany({
@@ -895,20 +872,12 @@ export class EmployeesService {
     const targetEmployees = await this.prisma.employee.findMany({
       where: {
         status: 'DELETE' as EmployeeStatus,
-        originalEmployeeId: { not: null } as any,
-        OR: [
-          { purgeAfterAt: { lte: now } as any },
-          {
-            AND: [
-              { purgeAfterAt: null },
-              { deletedAt: { lte: fallbackThreshold } as any },
-            ],
-          },
-        ],
+        createdAt: { lte: fallbackThreshold },
+        memo: { contains: '삭제 아카이브 계정' },
         ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
-      } as any,
+      },
       orderBy: {
-        deletedAt: 'asc',
+        createdAt: 'asc',
       },
       take: limit,
       select: {
@@ -1046,19 +1015,26 @@ export class EmployeesService {
         name: true,
         organizationId: true,
         status: true,
-        originalEmployeeId: true,
+        memo: true,
       },
-    }) as {
+    });
+
+    const originalEmployeeId = this.resolveOriginalEmployeeIdForRestore(deletedEmployee);
+
+    if (!deletedEmployee || deletedEmployee.status !== ('DELETE' as EmployeeStatus) || !originalEmployeeId) {
+      throw new NotFoundException('하드삭제 대상 삭제 직원을 찾을 수 없습니다.');
+    }
+
+    const deletedEmployeeWithOriginalId = {
+      ...deletedEmployee,
+      originalEmployeeId,
+    } as {
       id: string;
       name: string;
       organizationId: string;
       status: EmployeeStatus;
       originalEmployeeId: string | null;
-    } | null;
-
-    if (!deletedEmployee || deletedEmployee.status !== ('DELETE' as EmployeeStatus) || !deletedEmployee.originalEmployeeId) {
-      throw new NotFoundException('하드삭제 대상 삭제 직원을 찾을 수 없습니다.');
-    }
+    };
 
     const devices = await this.prisma.device.findMany({
       where: { employeeId: deletedEmployee.id },
@@ -1086,7 +1062,7 @@ export class EmployeesService {
     }
 
     const now = new Date();
-    const hardDeletedAnchorId = this.buildHardDeletedStatsAnchorId(deletedEmployee.id);
+    const hardDeletedAnchorId = this.buildHardDeletedStatsAnchorId(deletedEmployeeWithOriginalId.id);
     const deviceIds = devices.map((device) => device.id);
 
     await this.prisma.$transaction(async (tx) => {
@@ -1094,13 +1070,9 @@ export class EmployeesService {
         data: {
           id: hardDeletedAnchorId,
           name: '하드삭제 사용자',
-          organizationId: deletedEmployee.organizationId,
+          organizationId: deletedEmployeeWithOriginalId.organizationId,
           status: 'DELETE' as EmployeeStatus,
-          memo: `통계 보존용 비식별 사용자(원본 아카이브: ${deletedEmployee.id})`,
-          deletedAt: now,
-          purgeAfterAt: null,
-          deletedReason: 'HARD_DELETE_ANON',
-          originalEmployeeId: null,
+          memo: `통계 보존용 비식별 사용자(원본 아카이브: ${deletedEmployeeWithOriginalId.id}) | 하드삭제시각: ${now.toISOString()}`,
           phone: null,
           email: null,
           position: null,
@@ -1108,13 +1080,13 @@ export class EmployeesService {
         } as any,
       });
 
-      await this.repointEmployeeAnalyticsReferences(tx, deletedEmployee.id, hardDeletedAnchorId);
+      await this.repointEmployeeAnalyticsReferences(tx, deletedEmployeeWithOriginalId.id, hardDeletedAnchorId);
 
-      await tx.controlPolicyEmployee.deleteMany({ where: { employeeId: deletedEmployee.id } });
-      await tx.employeeExclusion.deleteMany({ where: { employeeId: deletedEmployee.id } });
+      await tx.controlPolicyEmployee.deleteMany({ where: { employeeId: deletedEmployeeWithOriginalId.id } });
+      await tx.employeeExclusion.deleteMany({ where: { employeeId: deletedEmployeeWithOriginalId.id } });
 
       await tx.device.updateMany({
-        where: { employeeId: deletedEmployee.id },
+        where: { employeeId: deletedEmployeeWithOriginalId.id },
         data: {
           employeeId: null,
           status: 'INACTIVE' as any,
@@ -1150,11 +1122,11 @@ export class EmployeesService {
         });
 
         await tx.employeeAccount.delete({
-          where: { employeeId: deletedEmployee.id },
+          where: { employeeId: deletedEmployeeWithOriginalId.id },
         });
       }
 
-      await tx.employee.delete({ where: { id: deletedEmployee.id } });
+      await tx.employee.delete({ where: { id: deletedEmployeeWithOriginalId.id } });
     });
 
     return {
@@ -1180,13 +1152,8 @@ export class EmployeesService {
   }
 
   private resolveOriginalEmployeeIdForRestore(employee: any): string | null {
-    const fromColumn = typeof employee?.originalEmployeeId === 'string' ? employee.originalEmployeeId.trim() : '';
-    if (fromColumn) {
-      return fromColumn;
-    }
-
     const memoText = String(employee?.memo ?? '');
-    const matched = memoText.match(/원본\s*직원ID\s*:\s*(\d+)/i);
+    const matched = memoText.match(/원본\s*직원ID\s*:\s*([^\s)]+)/i);
     if (matched?.[1]) {
       return matched[1].trim();
     }
@@ -1522,7 +1489,6 @@ export class EmployeesService {
     const archiveEmployeeId = this.buildDeletedEmployeeArchiveId(employeeId);
     const archivePasswordHash = await bcrypt.hash(randomUUID(), 10);
     const now = new Date();
-    const purgeAfterAt = new Date(now.getTime() + EmployeesService.DELETED_RETENTION_DAYS * 24 * 60 * 60 * 1000);
 
     const employeeDevices = await tx.device.findMany({
       where: { employeeId },
@@ -1544,10 +1510,6 @@ export class EmployeesService {
         createdById: source.createdById,
         updatedById: source.updatedById,
         pendingMdmUdid: source.pendingMdmUdid,
-        deletedAt: now,
-        purgeAfterAt,
-        deletedReason: 'STATUS_DELETE',
-        originalEmployeeId: employeeId,
       },
     });
 
