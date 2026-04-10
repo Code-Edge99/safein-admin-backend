@@ -15,5 +15,9 @@ export function toEmployeeResponseDto(employee: any): EmployeeResponseDto {
     createdAt: employee.createdAt,
     updatedAt: employee.updatedAt,
     pendingMdmUdid: employee.pendingMdmUdid ?? undefined,
+    deletedAt: employee.deletedAt ?? undefined,
+    purgeAfterAt: employee.purgeAfterAt ?? undefined,
+    deletedReason: employee.deletedReason ?? undefined,
+    originalEmployeeId: employee.originalEmployeeId ?? undefined,
   };
 }

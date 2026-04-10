@@ -44,6 +44,12 @@ export enum EmployeeStatusEnum {
   EXCEPTION = 'EXCEPTION',
   LEAVE = 'LEAVE',
   PHONE_INFO_REVIEW = 'PHONE_INFO_REVIEW',
+  DELETE = 'DELETE',
+}
+
+export enum EmployeeStatusGroupEnum {
+  ACTIVE = 'ACTIVE',
+  DELETED = 'DELETED',
 }
 
 export class CreateEmployeeDto {
@@ -104,7 +110,7 @@ export class CreateEmployeeDto {
 
 export class UpdateEmployeeDto extends PartialType(CreateEmployeeDto) {
   @ApiPropertyOptional({
-    description: '아이디 변경 충돌 시 기존 아이디 사용자 처리에 동의했는지 여부',
+    description: '아이디 변경 충돌 시 기존 아이디 사용자를 삭제 상태로 전환하고 재할당하는 것에 동의했는지 여부',
     default: false,
   })
   @IsOptional()
@@ -168,6 +174,18 @@ export class EmployeeResponseDto {
 
   @ApiPropertyOptional({ description: 'MDM 인증 대기 중인 UDID (iOS)' })
   pendingMdmUdid?: string;
+
+  @ApiPropertyOptional({ description: '삭제 일시' })
+  deletedAt?: Date;
+
+  @ApiPropertyOptional({ description: '하드삭제 예정 일시' })
+  purgeAfterAt?: Date;
+
+  @ApiPropertyOptional({ description: '삭제 사유 코드' })
+  deletedReason?: string;
+
+  @ApiPropertyOptional({ description: '원본 직원 ID(삭제 상태 복원용)' })
+  originalEmployeeId?: string;
 }
 
 export class EmployeeDetailDto extends EmployeeResponseDto {
@@ -225,6 +243,11 @@ export class EmployeeFilterDto extends BaseFilterDto {
   @IsOptional()
   @IsEnum(EmployeeStatusEnum)
   status?: EmployeeStatusEnum;
+
+  @ApiPropertyOptional({ description: '상태 그룹 필터', enum: EmployeeStatusGroupEnum })
+  @IsOptional()
+  @IsEnum(EmployeeStatusGroupEnum)
+  statusGroup?: EmployeeStatusGroupEnum;
 }
 
 export class BulkEmployeeActionDto {
@@ -244,6 +267,16 @@ export class BulkEmployeeStatusUpdateDto extends BulkEmployeeActionDto {
   @ApiProperty({ description: '변경할 상태', enum: EmployeeStatusEnum })
   @IsEnum(EmployeeStatusEnum)
   status: EmployeeStatusEnum;
+}
+
+export class HardDeleteExpiredDeletedEmployeesDto {
+  @ApiPropertyOptional({ description: '최대 처리 건수', default: 100 })
+  @IsOptional()
+  limit?: number;
+
+  @ApiPropertyOptional({ description: '실제 삭제 없이 대상만 확인', default: false })
+  @IsOptional()
+  dryRun?: boolean;
 }
 
 export class EmployeeMdmManualUnblockDto {

@@ -29,6 +29,7 @@ import {
   BulkMoveOrganizationDto,
   BulkEmployeeActionDto,
   BulkEmployeeStatusUpdateDto,
+  HardDeleteExpiredDeletedEmployeesDto,
   EmployeeStatusEnum,
 } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -137,6 +138,24 @@ export class EmployeesController {
     return this.employeesService.remove(employeeId, req.organizationScopeIds ?? undefined);
   }
 
+  @Post(':employeeId/restore')
+  @ApiOperation({ summary: '삭제 직원 복원 (30일 이내)' })
+  @ApiParam({ name: 'employeeId', description: '삭제된 직원 식별자(referenceId 또는 직원 ID)' })
+  @ApiResponse({ status: 200, description: '직원 복원 성공', type: EmployeeResponseDto })
+  restore(@Req() req: AuthenticatedAdminRequest, @Param('employeeId') employeeId: string): Promise<EmployeeResponseDto> {
+    return this.employeesService.restoreDeletedEmployee(employeeId, req.organizationScopeIds ?? undefined);
+  }
+
+  @Post('hard-delete-expired')
+  @ApiOperation({ summary: '만료된 삭제 직원 하드삭제 실행 (30일 경과 대상)' })
+  @ApiResponse({ status: 200, description: '하드삭제 처리 결과' })
+  hardDeleteExpired(
+    @Req() req: AuthenticatedAdminRequest,
+    @Body() dto: HardDeleteExpiredDeletedEmployeesDto,
+  ): Promise<{ requested: number; hardDeleted: number; skipped: number; dryRun: boolean; mdmDisconnected: number; mdmDisconnectFailed: number }> {
+    return this.employeesService.hardDeleteExpiredDeletedEmployees(dto, req.organizationScopeIds ?? undefined);
+  }
+
   @Post('bulk/move-organization')
   @ApiOperation({ summary: '일괄 현장 이동' })
   @ApiResponse({ status: 200, description: '처리된 직원 수' })
@@ -156,12 +175,12 @@ export class EmployeesController {
   }
 
   @Post('bulk/deactivate')
-  @ApiOperation({ summary: '일괄 퇴사 처리' })
+  @ApiOperation({ summary: '일괄 삭제 처리' })
   @ApiResponse({ status: 200, description: '처리된 직원 수' })
   bulkDeactivate(@Req() req: AuthenticatedAdminRequest, @Body() dto: BulkEmployeeActionDto): Promise<{ updated: number }> {
     return this.employeesService.bulkUpdateStatus(
       dto.employeeIds,
-      EmployeeStatusEnum.RESIGNED,
+      EmployeeStatusEnum.DELETE,
       req.organizationScopeIds ?? undefined,
     );
   }

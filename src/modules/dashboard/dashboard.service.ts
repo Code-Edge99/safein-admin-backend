@@ -19,6 +19,7 @@ import { ReaggregateDayDto } from './dto/reaggregate-day.dto';
 @Injectable()
 export class DashboardService {
   private readonly logger = new Logger(DashboardService.name);
+  private static readonly NON_REPORTABLE_EMPLOYEE_STATUSES = ['DELETE', 'PHONE_INFO_REVIEW'] as const;
 
   constructor(private prisma: PrismaService) {}
 
@@ -307,6 +308,9 @@ export class DashboardService {
     const monthStart = getKstMonthStart(now);
     const previousMonthStart = getKstMonthStart(now, -1);
     const controlLogScopeCondition = this.buildControlLogOrganizationScopeCondition(targetOrganizationIds);
+    const activeEmployeeStatusCondition = {
+      notIn: [...DashboardService.NON_REPORTABLE_EMPLOYEE_STATUSES],
+    };
 
     const [
       totalEmployees,
@@ -323,8 +327,13 @@ export class DashboardService {
     ] = await Promise.all([
       this.prisma.employee.count({
         where: targetOrganizationIds
-          ? { organizationId: { in: targetOrganizationIds } }
-          : undefined,
+          ? {
+              organizationId: { in: targetOrganizationIds },
+              status: activeEmployeeStatusCondition,
+            }
+          : {
+              status: activeEmployeeStatusCondition,
+            },
       }),
       this.prisma.employee.count({
         where: {
@@ -390,6 +399,9 @@ export class DashboardService {
         by: ['employeeId'],
         where: {
           employeeId: { not: null },
+          employee: {
+            status: activeEmployeeStatusCondition,
+          },
           status: 'NORMAL',
           lastCommunication: { gte: onlineThreshold },
           ...(targetOrganizationIds
@@ -402,6 +414,7 @@ export class DashboardService {
         this.prisma.employee.count({
           where: {
             createdAt: { gte: monthStart },
+            status: activeEmployeeStatusCondition,
             ...(targetOrganizationIds
               ? {
                   organizationId: { in: targetOrganizationIds },
@@ -412,6 +425,7 @@ export class DashboardService {
         this.prisma.employee.count({
           where: {
             createdAt: { gte: previousMonthStart, lt: monthStart },
+            status: activeEmployeeStatusCondition,
             ...(targetOrganizationIds
               ? {
                   organizationId: { in: targetOrganizationIds },
@@ -1032,6 +1046,10 @@ export class DashboardService {
     this.ensureOrganizationInScope(filter.organizationId, filter.scopeOrganizationIds);
 
     const employeeWhere: any = {};
+    employeeWhere.status = {
+      notIn: [...DashboardService.NON_REPORTABLE_EMPLOYEE_STATUSES],
+    };
+
     if (filter.employeeId) {
       const resolvedEmployeeId = await resolveEmployeePrimaryId(this.prisma, filter.employeeId);
       employeeWhere.id = resolvedEmployeeId || '__missing_employee__';
@@ -1213,6 +1231,10 @@ export class DashboardService {
     });
 
     if (!employee) return null;
+
+    if (DashboardService.NON_REPORTABLE_EMPLOYEE_STATUSES.includes(String(employee.status) as any)) {
+      return null;
+    }
 
     this.ensureOrganizationInScope(employee.organizationId, scopeOrganizationIds);
 
@@ -1894,9 +1916,10 @@ export class DashboardService {
       }),
       this.prisma.employee.findMany({
         where: {
-          OR: [
-            { organizationId: { in: relevantOrganizationIds } },
-          ],
+          organizationId: { in: relevantOrganizationIds },
+          status: {
+            notIn: [...DashboardService.NON_REPORTABLE_EMPLOYEE_STATUSES],
+          },
         },
         select: {
           id: true,

@@ -205,20 +205,12 @@ export function createRequestLogSummary(params: {
     action = `관리자 로그아웃${isFailure ? ' 실패' : ''}`;
   }
 
-  const detailParts = [
-    `사용자 동작: ${resource.label} 화면에서 ${actionVerb} 요청`,
-    `처리 결과: ${params.statusCode} (${resolveStatusDescription(params.statusCode)})`,
-    `요청 경로: ${routePath}`,
-  ];
-
-  if (typeof params.durationMs === 'number' && Number.isFinite(params.durationMs)) {
-    detailParts.push(`처리 시간: ${params.durationMs}ms`);
-  }
+  const details = `처리 결과: ${params.statusCode} (${resolveStatusDescription(params.statusCode)})`;
 
   return {
     action,
     target: resource.label,
-    details: detailParts.join(' / '),
+    details,
     severity: severityFromHttpStatus(params.statusCode),
     result: isFailure ? 'failure' : 'success',
     category: resource.category,

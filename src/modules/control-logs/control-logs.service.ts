@@ -18,6 +18,8 @@ import {
 export class ControlLogsService {
   constructor(private prisma: PrismaService) {}
 
+  private static readonly NON_REPORTABLE_EMPLOYEE_STATUSES = ['DELETE', 'PHONE_INFO_REVIEW'] as const;
+
   private async resolveAppNameMap(packageNames: string[]): Promise<Map<string, string>> {
     if (packageNames.length === 0) {
       return new Map();
@@ -274,7 +276,20 @@ export class ControlLogsService {
 
     if (employeeId) {
       const resolvedEmployeeId = await resolveEmployeePrimaryId(this.prisma, employeeId);
-      where.employeeId = resolvedEmployeeId || '__missing_employee__';
+      if (!resolvedEmployeeId) {
+        where.employeeId = '__missing_employee__';
+      } else {
+        const employee = await this.prisma.employee.findUnique({
+          where: { id: resolvedEmployeeId },
+          select: { status: true },
+        });
+
+        if (!employee || ControlLogsService.NON_REPORTABLE_EMPLOYEE_STATUSES.includes(String(employee.status) as any)) {
+          where.employeeId = '__missing_employee__';
+        } else {
+          where.employeeId = resolvedEmployeeId;
+        }
+      }
     }
 
     if (deviceId) {

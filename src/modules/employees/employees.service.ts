@@ -32,6 +32,8 @@ import {
   EmployeeDeviceLogoutUntilNextLoginDto,
   BulkMoveOrganizationDto,
   EmployeeStatusEnum,
+  EmployeeStatusGroupEnum,
+  HardDeleteExpiredDeletedEmployeesDto,
 } from './dto';
 
 class EmployeePolicyPushSendError extends Error {
@@ -47,6 +49,7 @@ class EmployeePolicyPushSendError extends Error {
 @Injectable()
 export class EmployeesService {
   private readonly logger = new Logger(EmployeesService.name);
+  private static readonly DELETED_RETENTION_DAYS = 30;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -95,6 +98,16 @@ export class EmployeesService {
     return trimmed.length > 0 ? trimmed : null;
   }
 
+  private normalizeRequestedStatus(status?: EmployeeStatus): EmployeeStatus | undefined {
+    if (!status) {
+      return status;
+    }
+
+    return status === ('PHONE_INFO_REVIEW' as EmployeeStatus)
+      ? ('DELETE' as EmployeeStatus)
+      : status;
+  }
+
   private async validateEmployeeAssignment(
     organizationId: string,
   ): Promise<void> {
@@ -121,6 +134,7 @@ export class EmployeesService {
     const normalizedRole = this.normalizeOptionalText(dto.role);
     const normalizedEmail = this.normalizeOptionalEmail(dto.email ?? null);
     const normalizedMemo = this.normalizeOptionalText(dto.memo);
+    const normalizedStatus = this.normalizeRequestedStatus(dto.status as EmployeeStatus) ?? EmployeeStatus.ACTIVE;
 
     if (!normalizedEmployeeId) {
       throw new BadRequestException('직원 ID는 필수 입력값입니다.');
@@ -149,7 +163,7 @@ export class EmployeesService {
           role: normalizedRole,
           email: normalizedEmail,
           memo: normalizedMemo,
-          status: (dto.status as EmployeeStatus) || EmployeeStatus.ACTIVE,
+          status: normalizedStatus,
           createdById: actorUserId,
           updatedById: actorUserId,
         } as any,
@@ -184,6 +198,7 @@ export class EmployeesService {
     scopeOrganizationIds?: string[],
   ): Promise<PaginatedResponse<EmployeeResponseDto>> {
     const where: Prisma.EmployeeWhereInput = {};
+    const andConditions: Prisma.EmployeeWhereInput[] = [];
 
     // 현장 필터
     if (filter.organizationId) {
@@ -195,19 +210,48 @@ export class EmployeesService {
 
     // 검색어 필터
     if (filter.search) {
-      where.OR = [
+      andConditions.push({
+        OR: [
         { referenceId: { contains: filter.search, mode: 'insensitive' } },
         { id: { contains: filter.search, mode: 'insensitive' } },
         { name: { contains: filter.search, mode: 'insensitive' } },
         { email: { contains: filter.search, mode: 'insensitive' } },
-      ];
+        ],
+      });
     }
 
     // 상태 필터
     if (filter.status) {
-      where.status = filter.status as EmployeeStatus;
+      andConditions.push({
+        status: filter.status as EmployeeStatus,
+      });
+      if (filter.status === EmployeeStatusEnum.DELETE) {
+        andConditions.push({
+          originalEmployeeId: { not: null } as any,
+        });
+      }
+    } else if (filter.statusGroup === EmployeeStatusGroupEnum.DELETED) {
+      andConditions.push({
+        OR: [
+        { status: 'PHONE_INFO_REVIEW' as EmployeeStatus },
+        {
+          AND: [
+            { status: 'DELETE' as EmployeeStatus },
+            { originalEmployeeId: { not: null } as any },
+          ],
+        },
+        ],
+      });
     } else {
-      where.status = { not: 'DELETE' as EmployeeStatus };
+      andConditions.push({
+        status: {
+          notIn: ['DELETE', 'PHONE_INFO_REVIEW'] as EmployeeStatus[],
+        },
+      });
+    }
+
+    if (andConditions.length > 0) {
+      where.AND = andConditions;
     }
 
     const [employees, total] = await Promise.all([
@@ -327,6 +371,9 @@ export class EmployeesService {
     const normalizedRole = dto.role !== undefined ? this.normalizeOptionalText(dto.role) : undefined;
     const normalizedEmail = dto.email !== undefined ? this.normalizeOptionalEmail(dto.email) : undefined;
     const normalizedMemo = dto.memo !== undefined ? this.normalizeOptionalText(dto.memo) : undefined;
+    const normalizedStatus = dto.status !== undefined
+      ? this.normalizeRequestedStatus(dto.status as EmployeeStatus)
+      : undefined;
     if (requestedEmployeeId !== undefined && !requestedEmployeeId) {
       throw new BadRequestException('직원 ID는 비워둘 수 없습니다.');
     }
@@ -344,18 +391,24 @@ export class EmployeesService {
     );
 
     let employee;
+    const deletedArchiveEmployeeIdsForNotify: string[] = [];
     try {
       employee = await this.prisma.$transaction(async (tx) => {
         let workingEmployeeId = previousEmployee.id;
 
         if (requestedEmployeeId && requestedEmployeeId !== previousEmployee.id) {
-          workingEmployeeId = await this.reassignEmployeeId(
+          const reassigned = await this.reassignEmployeeId(
             tx,
             previousEmployee.id,
             requestedEmployeeId,
             Boolean(dto.confirmIdReassignment),
             previousEmployee.referenceId,
           );
+
+          workingEmployeeId = reassigned.employeeId;
+          if (reassigned.archivedEmployeeId) {
+            deletedArchiveEmployeeIdsForNotify.push(reassigned.archivedEmployeeId);
+          }
         }
 
         const updatedEmployee = await tx.employee.update({
@@ -367,7 +420,7 @@ export class EmployeesService {
             role: normalizedRole,
             email: normalizedEmail,
             memo: normalizedMemo,
-            status: dto.status as EmployeeStatus | undefined,
+            status: normalizedStatus,
             updatedById: actorUserId,
           } as any,
           include: {
@@ -397,11 +450,20 @@ export class EmployeesService {
 
     if (
       previousEmployee
-      && dto.status
-      && this.isNonActiveEmployeeStatus(dto.status as EmployeeStatus)
-      && previousEmployee.status !== (dto.status as EmployeeStatus)
+      && normalizedStatus
+      && this.isNonActiveEmployeeStatus(normalizedStatus)
+      && previousEmployee.status !== normalizedStatus
     ) {
       await this.notifyPolicyChangedForEmployees([employee.id], 'employee_status_non_active');
+    }
+
+    if (deletedArchiveEmployeeIdsForNotify.length > 0) {
+      await this.notifyDeletedPolicyUnavailableForEmployees(
+        deletedArchiveEmployeeIdsForNotify,
+        'STATUS_DELETE',
+      ).catch((error) => {
+        this.logger.warn(`아이디 재할당 삭제 처리 후 policy_changed 전송 실패: ${String(error)}`);
+      });
     }
 
     if (actorUserId) {
@@ -439,16 +501,19 @@ export class EmployeesService {
 
     this.assertOrganizationInScope(employee.organizationId, scopeOrganizationIds);
 
-    await this.removeEmployeeById(employee.id, employee.name ?? '삭제된 직원', employee.organizationId);
+    await this.removeEmployeeById(employee.id, employee.name ?? '삭제된 직원', employee.organizationId, 'ADMIN_DELETE');
   }
 
   private async removeEmployeeById(
     employeeId: string,
     employeeName: string,
     organizationId: string,
+    reason: 'ADMIN_DELETE' | 'RESIGNED' | 'SELF_WITHDRAW' | 'STATUS_DELETE' = 'ADMIN_DELETE',
   ): Promise<void> {
     const archiveEmployeeId = this.buildDeletedEmployeeArchiveId(employeeId);
     const archivePasswordHash = await bcrypt.hash(randomUUID(), 10);
+    const now = new Date();
+    const purgeAfterAt = new Date(now.getTime() + EmployeesService.DELETED_RETENTION_DAYS * 24 * 60 * 60 * 1000);
 
     await this.prisma.$transaction(async (tx) => {
       const employeeDevices = await tx.device.findMany({
@@ -464,11 +529,15 @@ export class EmployeesService {
           organizationId,
           status: 'DELETE' as EmployeeStatus,
           memo: `삭제 아카이브 계정 (원본 직원ID: ${employeeId})`,
+          deletedAt: now,
+          purgeAfterAt,
+          deletedReason: reason,
+          originalEmployeeId: employeeId,
           phone: null,
           email: null,
           position: null,
           role: null,
-        },
+        } as any,
       });
 
       await tx.controlPolicyEmployee.deleteMany({
@@ -482,12 +551,15 @@ export class EmployeesService {
       await tx.device.updateMany({
         where: { employeeId },
         data: {
-          employeeId: null,
-          deviceStatus: DeviceOperationStatus.UNASSIGNED,
+          employeeId: archiveEmployeeId,
+          status: 'INACTIVE' as any,
+          deviceStatus: DeviceOperationStatus.LOGGED_OUT,
+          deactivatedAt: now,
+          deactivatedReason: `deleted:${reason}`,
           mdmManualUnblockUntilLogin: false,
           mdmManualUnblockReason: null,
           mdmManualUnblockSetAt: null,
-        },
+        } as any,
       });
 
       await tx.deviceToken.updateMany({
@@ -544,6 +616,11 @@ export class EmployeesService {
         where: { id: employeeId },
       });
     });
+
+    await this.notifyDeletedPolicyUnavailableForEmployees([archiveEmployeeId], reason)
+      .catch((error) => {
+        this.logger.warn(`삭제 상태 FCM 전송 실패(employeeId=${archiveEmployeeId}): ${String(error)}`);
+      });
   }
 
   private buildDeletedEmployeeArchiveId(employeeId: string): string {
@@ -606,7 +683,7 @@ export class EmployeesService {
     const resolvedEmployeeIds = await resolveEmployeePrimaryIds(this.prisma, employeeIds);
     const uniqueEmployeeIds = Array.from(new Set(resolvedEmployeeIds.filter(Boolean)));
     const requested = uniqueEmployeeIds.length;
-    const normalizedStatus = status as EmployeeStatus;
+    const normalizedStatus = this.normalizeRequestedStatus(status as EmployeeStatus) as EmployeeStatus;
 
     if (uniqueEmployeeIds.length === 0) {
       return { requested: 0, updated: 0, skipped: 0 };
@@ -622,6 +699,29 @@ export class EmployeesService {
         status: true,
       },
     });
+
+    if (normalizedStatus === ('DELETE' as EmployeeStatus)) {
+      const deletableEmployees = targetEmployees.filter((employee) => employee.status !== ('DELETE' as EmployeeStatus));
+
+      await this.runInBatches(deletableEmployees, this.resolveBulkDeleteConcurrency(), async (employee) => {
+        const source = await this.prisma.employee.findUnique({
+          where: { id: employee.id },
+          select: { id: true, name: true, organizationId: true },
+        });
+
+        if (!source) {
+          return;
+        }
+
+        await this.removeEmployeeById(source.id, source.name ?? '삭제된 직원', source.organizationId, 'STATUS_DELETE');
+      });
+
+      return {
+        requested,
+        updated: deletableEmployees.length,
+        skipped: Math.max(0, requested - deletableEmployees.length),
+      };
+    }
 
     const shouldNotifyEmployeeIds = this.isNonActiveEmployeeStatus(normalizedStatus)
       ? targetEmployees
@@ -678,13 +778,179 @@ export class EmployeesService {
     });
 
     await this.runInBatches(targetEmployees, this.resolveBulkDeleteConcurrency(), async (employee) => {
-      await this.removeEmployeeById(employee.id, employee.name ?? '삭제된 직원', employee.organizationId);
+      await this.removeEmployeeById(employee.id, employee.name ?? '삭제된 직원', employee.organizationId, 'ADMIN_DELETE');
     });
 
     return {
       requested,
       deleted: targetEmployees.length,
       skipped: Math.max(0, requested - targetEmployees.length),
+    };
+  }
+
+  async restoreDeletedEmployee(
+    employeeId: string,
+    scopeOrganizationIds?: string[],
+  ): Promise<EmployeeResponseDto> {
+    const deletedEmployee = await findEmployeeByIdentifier(this.prisma, employeeId, {
+      include: {
+        organization: true,
+      },
+    });
+
+    if (!deletedEmployee) {
+      throw new NotFoundException('삭제된 직원을 찾을 수 없습니다.');
+    }
+
+    this.assertOrganizationInScope(deletedEmployee.organizationId, scopeOrganizationIds);
+
+    if (deletedEmployee.status !== ('DELETE' as EmployeeStatus)) {
+      throw new BadRequestException('삭제 상태의 직원만 복원할 수 있습니다.');
+    }
+
+    const originalEmployeeId = this.resolveOriginalEmployeeIdForRestore(deletedEmployee);
+    if (!originalEmployeeId) {
+      throw new BadRequestException('복원 가능한 원본 직원 ID 정보가 없습니다.');
+    }
+
+    if (deletedEmployee.purgeAfterAt && new Date(deletedEmployee.purgeAfterAt).getTime() <= Date.now()) {
+      throw new BadRequestException('복원 가능 기간(30일)이 만료되었습니다.');
+    }
+
+    const existingEmployee = await this.prisma.employee.findUnique({
+      where: { id: originalEmployeeId },
+      select: { id: true },
+    });
+
+    if (existingEmployee) {
+      throw new ConflictException('동일 번호의 활성 사용자 계정이 존재하여 복원할 수 없습니다.');
+    }
+
+    const restored = await this.prisma.$transaction(async (tx) => {
+      await tx.employee.create({
+        data: {
+          id: originalEmployeeId,
+          name: deletedEmployee.name,
+          organizationId: deletedEmployee.organizationId,
+          position: deletedEmployee.position,
+          role: deletedEmployee.role,
+          status: EmployeeStatus.ACTIVE,
+          phone: deletedEmployee.phone,
+          email: deletedEmployee.email,
+          memo: deletedEmployee.memo,
+          createdById: deletedEmployee.createdById,
+          updatedById: deletedEmployee.updatedById,
+          pendingMdmUdid: deletedEmployee.pendingMdmUdid,
+        } as any,
+      });
+
+      await this.repointEmployeeReferences(tx, deletedEmployee.id, originalEmployeeId);
+
+      await tx.employee.delete({ where: { id: deletedEmployee.id } });
+      await tx.employee.update({
+        where: { id: originalEmployeeId },
+        data: {
+          referenceId: deletedEmployee.referenceId,
+          status: EmployeeStatus.ACTIVE,
+          deletedAt: null,
+          purgeAfterAt: null,
+          deletedReason: null,
+          originalEmployeeId: null,
+          updatedAt: new Date(),
+        } as any,
+      });
+
+      await tx.employeeAccount.updateMany({
+        where: { employeeId: originalEmployeeId },
+        data: { isActive: true },
+      });
+
+      await tx.device.updateMany({
+        where: { employeeId: originalEmployeeId },
+        data: {
+          status: 'NORMAL' as any,
+          deviceStatus: DeviceOperationStatus.LOGGED_OUT,
+          deactivatedReason: null,
+        } as any,
+      });
+
+      return tx.employee.findUnique({
+        where: { id: originalEmployeeId },
+        include: { organization: true },
+      });
+    });
+
+    return this.toResponseDto(restored);
+  }
+
+  async hardDeleteExpiredDeletedEmployees(
+    dto: HardDeleteExpiredDeletedEmployeesDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<{ requested: number; hardDeleted: number; skipped: number; dryRun: boolean; mdmDisconnected: number; mdmDisconnectFailed: number }> {
+    const now = new Date();
+    const fallbackThreshold = new Date(now.getTime() - EmployeesService.DELETED_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    const limit = Math.max(1, Math.min(Number(dto?.limit) || 100, 1000));
+    const dryRun = Boolean(dto?.dryRun);
+
+    const targetEmployees = await this.prisma.employee.findMany({
+      where: {
+        status: 'DELETE' as EmployeeStatus,
+        originalEmployeeId: { not: null } as any,
+        OR: [
+          { purgeAfterAt: { lte: now } as any },
+          {
+            AND: [
+              { purgeAfterAt: null },
+              { deletedAt: { lte: fallbackThreshold } as any },
+            ],
+          },
+        ],
+        ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+      } as any,
+      orderBy: {
+        deletedAt: 'asc',
+      },
+      take: limit,
+      select: {
+        id: true,
+      },
+    });
+
+    if (dryRun) {
+      return {
+        requested: targetEmployees.length,
+        hardDeleted: 0,
+        skipped: 0,
+        dryRun: true,
+        mdmDisconnected: 0,
+        mdmDisconnectFailed: 0,
+      };
+    }
+
+    let hardDeleted = 0;
+    let skipped = 0;
+    let mdmDisconnected = 0;
+    let mdmDisconnectFailed = 0;
+
+    for (const employee of targetEmployees) {
+      try {
+        const result = await this.hardDeleteDeletedEmployeeById(employee.id);
+        hardDeleted += 1;
+        mdmDisconnected += result.mdmDisconnected;
+        mdmDisconnectFailed += result.mdmDisconnectFailed;
+      } catch (error) {
+        skipped += 1;
+        this.logger.warn(`삭제 만료 하드삭제 실패(employeeId=${employee.id}): ${String(error)}`);
+      }
+    }
+
+    return {
+      requested: targetEmployees.length,
+      hardDeleted,
+      skipped,
+      dryRun: false,
+      mdmDisconnected,
+      mdmDisconnectFailed,
     };
   }
 
@@ -715,6 +981,9 @@ export class EmployeesService {
       this.prisma.device.count({
         where: {
           employeeId: { not: null },
+          employee: {
+            status: { not: 'DELETE' as EmployeeStatus },
+          },
           ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
         },
       }),
@@ -767,6 +1036,162 @@ export class EmployeesService {
       const chunk = items.slice(index, index + safeConcurrency);
       await Promise.all(chunk.map((item) => worker(item)));
     }
+  }
+
+  private async hardDeleteDeletedEmployeeById(employeeId: string): Promise<{ mdmDisconnected: number; mdmDisconnectFailed: number }> {
+    const deletedEmployee = await this.prisma.employee.findUnique({
+      where: { id: employeeId },
+      select: {
+        id: true,
+        name: true,
+        organizationId: true,
+        status: true,
+        originalEmployeeId: true,
+      },
+    }) as {
+      id: string;
+      name: string;
+      organizationId: string;
+      status: EmployeeStatus;
+      originalEmployeeId: string | null;
+    } | null;
+
+    if (!deletedEmployee || deletedEmployee.status !== ('DELETE' as EmployeeStatus) || !deletedEmployee.originalEmployeeId) {
+      throw new NotFoundException('하드삭제 대상 삭제 직원을 찾을 수 없습니다.');
+    }
+
+    const devices = await this.prisma.device.findMany({
+      where: { employeeId: deletedEmployee.id },
+      select: { id: true, deviceId: true, udid: true, os: true },
+    });
+
+    let mdmDisconnected = 0;
+    let mdmDisconnectFailed = 0;
+
+    for (const device of devices) {
+      if (device.os !== DeviceOS.iOS) {
+        continue;
+      }
+
+      try {
+        await this.callAppBackendDisconnectMdmDevice({
+          deviceId: device.deviceId,
+          udid: device.udid ?? undefined,
+        });
+        mdmDisconnected += 1;
+      } catch (error) {
+        mdmDisconnectFailed += 1;
+        this.logger.warn(`하드삭제 iOS MDM 연결해제 실패(deviceId=${device.deviceId}): ${String(error)}`);
+      }
+    }
+
+    const now = new Date();
+    const hardDeletedAnchorId = this.buildHardDeletedStatsAnchorId(deletedEmployee.id);
+    const deviceIds = devices.map((device) => device.id);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.employee.create({
+        data: {
+          id: hardDeletedAnchorId,
+          name: '하드삭제 사용자',
+          organizationId: deletedEmployee.organizationId,
+          status: 'DELETE' as EmployeeStatus,
+          memo: `통계 보존용 비식별 사용자(원본 아카이브: ${deletedEmployee.id})`,
+          deletedAt: now,
+          purgeAfterAt: null,
+          deletedReason: 'HARD_DELETE_ANON',
+          originalEmployeeId: null,
+          phone: null,
+          email: null,
+          position: null,
+          role: null,
+        } as any,
+      });
+
+      await this.repointEmployeeAnalyticsReferences(tx, deletedEmployee.id, hardDeletedAnchorId);
+
+      await tx.controlPolicyEmployee.deleteMany({ where: { employeeId: deletedEmployee.id } });
+      await tx.employeeExclusion.deleteMany({ where: { employeeId: deletedEmployee.id } });
+
+      await tx.device.updateMany({
+        where: { employeeId: deletedEmployee.id },
+        data: {
+          employeeId: null,
+          status: 'INACTIVE' as any,
+          deviceStatus: DeviceOperationStatus.UNASSIGNED,
+          mdmEnrollmentStatus: 'REMOVED' as any,
+          deactivatedAt: now,
+          deactivatedReason: 'hard_deleted_employee',
+          mdmManualUnblockUntilLogin: false,
+          mdmManualUnblockReason: null,
+          mdmManualUnblockSetAt: null,
+        } as any,
+      });
+
+      if (deviceIds.length > 0) {
+        await tx.deviceToken.updateMany({
+          where: { deviceId: { in: deviceIds } },
+          data: {
+            isValid: false,
+            refreshToken: null,
+            expiresAt: now,
+          },
+        });
+      }
+
+      const account = await tx.employeeAccount.findUnique({
+        where: { employeeId: deletedEmployee.id },
+        select: { id: true },
+      });
+
+      if (account) {
+        await tx.employeeLoginHistory.deleteMany({
+          where: { employeeAccountId: account.id },
+        });
+
+        await tx.employeeAccount.delete({
+          where: { employeeId: deletedEmployee.id },
+        });
+      }
+
+      await tx.employee.delete({ where: { id: deletedEmployee.id } });
+    });
+
+    return {
+      mdmDisconnected,
+      mdmDisconnectFailed,
+    };
+  }
+
+  private async repointEmployeeAnalyticsReferences(
+    tx: Prisma.TransactionClient,
+    fromEmployeeId: string,
+    toEmployeeId: string,
+  ): Promise<void> {
+    await tx.controlLog.updateMany({ where: { employeeId: fromEmployeeId }, data: { employeeId: toEmployeeId } });
+    await tx.employeeDailyStat.updateMany({ where: { employeeId: fromEmployeeId }, data: { employeeId: toEmployeeId } });
+    await tx.zoneVisitSession.updateMany({ where: { employeeId: fromEmployeeId }, data: { employeeId: toEmployeeId } });
+    await tx.appUsageSession.updateMany({ where: { employeeId: fromEmployeeId }, data: { employeeId: toEmployeeId } });
+    await tx.workSession.updateMany({ where: { employeeId: fromEmployeeId }, data: { employeeId: toEmployeeId } });
+  }
+
+  private buildHardDeletedStatsAnchorId(fromEmployeeId: string): string {
+    return `hard-deleted:${fromEmployeeId}:${randomUUID()}`;
+  }
+
+  private resolveOriginalEmployeeIdForRestore(employee: any): string | null {
+    const fromColumn = typeof employee?.originalEmployeeId === 'string' ? employee.originalEmployeeId.trim() : '';
+    if (fromColumn) {
+      return fromColumn;
+    }
+
+    const memoText = String(employee?.memo ?? '');
+    const matched = memoText.match(/원본\s*직원ID\s*:\s*(\d+)/i);
+    if (matched?.[1]) {
+      return matched[1].trim();
+    }
+
+    return null;
   }
 
   async assignDevice(
@@ -1021,20 +1446,22 @@ export class EmployeesService {
     requestedEmployeeId: string,
     confirmed: boolean,
     preservedReferenceId: string,
-  ): Promise<string> {
+  ): Promise<{ employeeId: string; archivedEmployeeId?: string }> {
     const existingTarget = await tx.employee.findUnique({
       where: { id: requestedEmployeeId },
       select: { id: true },
     });
 
+    let archivedEmployeeId: string | undefined;
+
     if (existingTarget) {
       if (!confirmed) {
         throw new ConflictException(
-          '입력한 아이디를 이미 사용하는 직원이 있습니다. 기존 사용자를 "아이디 정보 확인" 상태로 전환하고 아이디를 재할당하려면 confirmIdReassignment=true로 다시 요청하세요.',
+          '입력한 아이디를 이미 사용하는 직원이 있습니다. 기존 사용자를 "삭제" 상태로 전환하고 아이디를 재할당하려면 confirmIdReassignment=true로 다시 요청하세요.',
         );
       }
 
-      await this.moveEmployeeToPhoneInfoReview(
+      archivedEmployeeId = await this.moveEmployeeToDeletedArchive(
         tx,
         requestedEmployeeId,
         `관리자 아이디 변경으로 기존 아이디 재할당됨(신규 대상: ${currentEmployeeId})`,
@@ -1061,40 +1488,116 @@ export class EmployeesService {
       data: { referenceId: preservedReferenceId },
     });
 
-    return requestedEmployeeId;
+    return {
+      employeeId: requestedEmployeeId,
+      archivedEmployeeId,
+    };
   }
 
-  private async moveEmployeeToPhoneInfoReview(
+  private async moveEmployeeToDeletedArchive(
     tx: Prisma.TransactionClient,
     employeeId: string,
     reason: string,
-  ): Promise<void> {
-    const source = await tx.employee.findUnique({ where: { id: employeeId } });
+  ): Promise<string | undefined> {
+    const source = await tx.employee.findUnique({
+      where: { id: employeeId },
+      select: {
+        id: true,
+        name: true,
+        organizationId: true,
+        position: true,
+        role: true,
+        email: true,
+        memo: true,
+        createdById: true,
+        updatedById: true,
+        pendingMdmUdid: true,
+        phone: true,
+      },
+    });
     if (!source) {
-      return;
+      return undefined;
     }
 
-    const reviewEmployeeId = this.buildPhoneReviewEmployeeId(employeeId);
+    const archiveEmployeeId = this.buildDeletedEmployeeArchiveId(employeeId);
+    const archivePasswordHash = await bcrypt.hash(randomUUID(), 10);
+    const now = new Date();
+    const purgeAfterAt = new Date(now.getTime() + EmployeesService.DELETED_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+
+    const employeeDevices = await tx.device.findMany({
+      where: { employeeId },
+      select: { id: true },
+    });
+    const employeeDeviceIds = employeeDevices.map((device) => device.id);
 
     await tx.employee.create({
       data: {
-        id: reviewEmployeeId,
+        id: archiveEmployeeId,
         name: source.name,
         organizationId: source.organizationId,
         position: source.position,
         role: source.role,
-        status: 'PHONE_INFO_REVIEW' as EmployeeStatus,
+        status: 'DELETE' as EmployeeStatus,
+        phone: source.phone,
         email: source.email,
-        memo: [source.memo, reason].filter(Boolean).join(' | '),
+        memo: [source.memo, reason, `삭제 아카이브 계정 (원본 직원ID: ${employeeId})`].filter(Boolean).join(' | '),
+        createdById: source.createdById,
+        updatedById: source.updatedById,
+        pendingMdmUdid: source.pendingMdmUdid,
+        deletedAt: now,
+        purgeAfterAt,
+        deletedReason: 'STATUS_DELETE',
+        originalEmployeeId: employeeId,
       },
     });
 
-    await this.repointEmployeeReferences(tx, employeeId, reviewEmployeeId);
-    await tx.employee.delete({ where: { id: employeeId } });
-    await tx.employee.update({
-      where: { id: reviewEmployeeId },
-      data: { referenceId: source.referenceId },
+    await tx.controlPolicyEmployee.deleteMany({ where: { employeeId } });
+    await tx.employeeExclusion.deleteMany({ where: { employeeId } });
+
+    await tx.device.updateMany({
+      where: { employeeId },
+      data: {
+        employeeId: archiveEmployeeId,
+        status: 'INACTIVE' as any,
+        deviceStatus: DeviceOperationStatus.LOGGED_OUT,
+        deactivatedAt: now,
+        deactivatedReason: 'deleted:STATUS_DELETE',
+        mdmManualUnblockUntilLogin: false,
+        mdmManualUnblockReason: null,
+        mdmManualUnblockSetAt: null,
+      } as any,
     });
+
+    await tx.deviceToken.updateMany({
+      where: { deviceId: { in: employeeDeviceIds } },
+      data: {
+        isValid: false,
+        refreshToken: null,
+        expiresAt: now,
+      },
+    });
+
+    await tx.controlLog.updateMany({ where: { employeeId }, data: { employeeId: archiveEmployeeId } });
+    await tx.employeeDailyStat.updateMany({ where: { employeeId }, data: { employeeId: archiveEmployeeId } });
+    await tx.zoneVisitSession.updateMany({ where: { employeeId }, data: { employeeId: archiveEmployeeId } });
+    await tx.appUsageSession.updateMany({ where: { employeeId }, data: { employeeId: archiveEmployeeId } });
+    await tx.workSession.updateMany({ where: { employeeId }, data: { employeeId: archiveEmployeeId } });
+
+    const account = await tx.employeeAccount.findUnique({ where: { employeeId }, select: { id: true } });
+    if (account) {
+      await tx.employeeAccount.update({
+        where: { employeeId },
+        data: {
+          employeeId: archiveEmployeeId,
+          isActive: false,
+          passwordHash: archivePasswordHash,
+        },
+      });
+    }
+
+    await tx.employee.delete({ where: { id: employeeId } });
+
+    return archiveEmployeeId;
   }
 
   private async repointEmployeeReferences(
@@ -1115,10 +1618,6 @@ export class EmployeesService {
     if (account) {
       await tx.employeeAccount.update({ where: { employeeId: fromEmployeeId }, data: { employeeId: toEmployeeId } });
     }
-  }
-
-  private buildPhoneReviewEmployeeId(previousEmployeeId: string): string {
-    return `phone-review:${previousEmployeeId}:${randomUUID()}`;
   }
 
   private handleUniqueConstraintError(error: unknown): void {
@@ -1168,6 +1667,37 @@ export class EmployeesService {
       const responseText = await response.text();
       throw new BadGatewayException(
         `app-backend 차단앱 해제 호출 실패(status=${response.status}): ${responseText || 'empty response'}`,
+      );
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      return response.json();
+    }
+
+    return { ok: true };
+  }
+
+  private async callAppBackendDisconnectMdmDevice(payload: { deviceId?: string; udid?: string }) {
+    const endpointUrl = `${this.getAppBackendBaseUrl()}/mdm/send/disconnect-device`;
+    const secret = this.getAppBackendMdmAdminSecret();
+
+    const response = await fetch(endpointUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(secret ? { 'x-admin-internal-secret': secret } : {}),
+      },
+      body: JSON.stringify({
+        deviceId: payload.deviceId,
+        udid: payload.udid,
+      }),
+    });
+
+    if (!response.ok) {
+      const responseText = await response.text();
+      throw new BadGatewayException(
+        `app-backend MDM 연결해제 호출 실패(status=${response.status}): ${responseText || 'empty response'}`,
       );
     }
 
@@ -1259,6 +1789,9 @@ export class EmployeesService {
       os: DeviceOS;
       trigger: string;
       policyApplied: boolean;
+      policyApplyMessage?: string;
+      notificationTitle?: string;
+      notificationBody?: string;
     },
   ): Promise<void> {
     const response = await fetch(endpointUrl, {
@@ -1276,8 +1809,17 @@ export class EmployeesService {
               reason: params.trigger,
               trigger: params.trigger,
               policyApplied: params.policyApplied ? 'true' : 'false',
+              ...(params.policyApplyMessage ? { policyApplyMessage: params.policyApplyMessage } : {}),
             },
           },
+          ...(params.notificationTitle || params.notificationBody
+            ? {
+              notification: {
+                ...(params.notificationTitle ? { title: params.notificationTitle } : {}),
+                ...(params.notificationBody ? { body: params.notificationBody } : {}),
+              },
+            }
+            : {}),
           ...(params.os === DeviceOS.Android
             ? {
               android: {
@@ -1325,5 +1867,50 @@ export class EmployeesService {
       || body.includes('registration-token-not-registered')
       || body.includes('not a valid fcm registration token')
       || body.includes('registration token is not a valid');
+  }
+
+  private async notifyDeletedPolicyUnavailableForEmployees(
+    employeeIds: string[],
+    reason: 'ADMIN_DELETE' | 'RESIGNED' | 'SELF_WITHDRAW' | 'STATUS_DELETE',
+  ): Promise<void> {
+    const uniqueEmployeeIds = Array.from(new Set(employeeIds.filter(Boolean)));
+    if (uniqueEmployeeIds.length === 0) {
+      return;
+    }
+
+    const devices = await this.prisma.device.findMany({
+      where: {
+        employeeId: { in: uniqueEmployeeIds },
+        pushToken: { not: null },
+        pushTokenStatus: { not: PushTokenStatus.ERROR },
+      },
+      select: {
+        id: true,
+        os: true,
+        pushToken: true,
+      },
+    });
+
+    const endpointUrl = `${this.getAppBackendBaseUrl()}/internal/push/fcm/send`;
+    const message = '삭제된 사용자로 인하여 정책을 적용할 수 없습니다. 정책 미적용 상태로 전환됩니다.';
+
+    for (const device of devices) {
+      const token = device.pushToken?.trim();
+      if (!token) {
+        continue;
+      }
+
+      await this.sendPolicyChangedPush(endpointUrl, {
+        token,
+        os: device.os,
+        trigger: `employee_deleted:${reason.toLowerCase()}`,
+        policyApplied: false,
+        policyApplyMessage: message,
+        notificationTitle: 'SAFEIN 정책 안내',
+        notificationBody: '삭제된 사용자로 인해 정책이 미적용됩니다.',
+      }).catch((error) => {
+        this.logger.warn(`삭제 상태 policy_changed 전송 실패(deviceId=${device.id}): ${String(error)}`);
+      });
+    }
   }
 }
