@@ -364,6 +364,14 @@ export class EmployeesService {
     const normalizedStatus = dto.status !== undefined
       ? this.normalizeRequestedStatus(dto.status as EmployeeStatus)
       : undefined;
+    const shouldRestoreToActiveAfterIdFix = Boolean(
+      requestedEmployeeId
+      && requestedEmployeeId !== previousEmployee.id
+      && previousEmployee.status === ('PHONE_INFO_REVIEW' as EmployeeStatus),
+    );
+    const statusForUpdate = shouldRestoreToActiveAfterIdFix
+      ? EmployeeStatus.ACTIVE
+      : normalizedStatus;
     if (requestedEmployeeId !== undefined && !requestedEmployeeId) {
       throw new BadRequestException('직원 ID는 비워둘 수 없습니다.');
     }
@@ -410,7 +418,7 @@ export class EmployeesService {
             role: normalizedRole,
             email: normalizedEmail,
             memo: normalizedMemo,
-            status: normalizedStatus,
+            status: statusForUpdate,
             updatedById: actorUserId,
           } as any,
           include: {
@@ -440,9 +448,9 @@ export class EmployeesService {
 
     if (
       previousEmployee
-      && normalizedStatus
-      && this.isNonActiveEmployeeStatus(normalizedStatus)
-      && previousEmployee.status !== normalizedStatus
+      && statusForUpdate
+      && this.isNonActiveEmployeeStatus(statusForUpdate)
+      && previousEmployee.status !== statusForUpdate
     ) {
       await this.notifyPolicyChangedForEmployees([employee.id], 'employee_status_non_active');
     }
