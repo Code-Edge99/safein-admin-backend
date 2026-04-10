@@ -10,6 +10,9 @@ const sourceAtPrismaClientDir = path.resolve(prismaProjectDir, 'node_modules', '
 
 const targetPrismaClientDir = path.resolve(backendRoot, 'node_modules', '.prisma', 'client');
 const targetAtPrismaClientDir = path.resolve(backendRoot, 'node_modules', '@prisma', 'client');
+const prismaSchemaPath = path.resolve(prismaProjectDir, 'prisma', 'schema.prisma');
+const prismaMigrationsDir = path.resolve(prismaProjectDir, 'prisma', 'migrations');
+const generatedClientIndexPath = path.resolve(sourcePrismaClientDir, 'index.d.ts');
 
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
@@ -32,16 +35,53 @@ function copyDir(source, target) {
   }
 }
 
+function getLatestModifiedTime(targetPath) {
+  if (!fs.existsSync(targetPath)) {
+    return 0;
+  }
+
+  const stats = fs.statSync(targetPath);
+  let latest = stats.mtimeMs;
+
+  if (!stats.isDirectory()) {
+    return latest;
+  }
+
+  for (const entry of fs.readdirSync(targetPath)) {
+    const entryPath = path.join(targetPath, entry);
+    const entryLatest = getLatestModifiedTime(entryPath);
+    if (entryLatest > latest) {
+      latest = entryLatest;
+    }
+  }
+
+  return latest;
+}
+
+function isGeneratedClientStale() {
+  if (!fs.existsSync(generatedClientIndexPath)) {
+    return true;
+  }
+
+  const generatedAt = fs.statSync(generatedClientIndexPath).mtimeMs;
+  const schemaUpdatedAt = getLatestModifiedTime(prismaSchemaPath);
+  const migrationsUpdatedAt = getLatestModifiedTime(prismaMigrationsDir);
+
+  return Math.max(schemaUpdatedAt, migrationsUpdatedAt) > generatedAt;
+}
+
 function ensurePrismaProjectReady() {
   if (!fs.existsSync(prismaProjectDir)) {
-    throw new Error('safein-prisma ?�더�?찾을 ???�습?�다. 백엔???�버?�도 safein-prisma�??�께 배포?�세??');
+    throw new Error('safein-prisma 폴더를 찾을 수 없습니다. 백엔드 서버와 safein-prisma를 함께 배포하세요.');
   }
 
   const hasSourceClient = fs.existsSync(sourcePrismaClientDir) && fs.existsSync(sourceAtPrismaClientDir);
-  if (hasSourceClient) return;
+  if (hasSourceClient && !isGeneratedClientStale()) return;
 
   console.log('[setup-prisma-client] Generating Prisma client in safein-prisma...');
-  execSync('npm install --no-audit --no-fund', { cwd: prismaProjectDir, stdio: 'inherit' });
+  if (!hasSourceClient) {
+    execSync('npm install --no-audit --no-fund', { cwd: prismaProjectDir, stdio: 'inherit' });
+  }
   execSync('npm run -s prisma:generate', { cwd: prismaProjectDir, stdio: 'inherit' });
 }
 

@@ -10,6 +10,8 @@
   },
   "scripts": {
     "postinstall": "node scripts/setup-prisma-client.js",
+    "prisma:sync": "node scripts/setup-prisma-client.js",
+    "prebuild": "npm run -s prisma:sync",
     "build": "nest build",
     "dev": "nest start --watch",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
