@@ -10,7 +10,9 @@ import { PaginatedResponse } from '../../common/dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
 import {
+  CleanupNoticeUploadsResponseDto,
   CreateNoticeDto,
+  NoticeCleanupUploadFileDto,
   NoticeAttachmentPayloadDto,
   NoticeFilterDto,
   NoticeResponseDto,
@@ -30,7 +32,7 @@ import {
 type NoticeWithRelations = Prisma.NoticeGetPayload<{
   include: {
     organization: { select: { id: true; name: true } };
-    createdBy: { select: { id: true; name: true; username: true } };
+    createdBy: { select: { id: true; name: true; username: true; role: true } };
     attachments: true;
   };
 }>;
@@ -210,6 +212,41 @@ export class NoticesService {
     }
   }
 
+  private async removeUnreferencedUploadFile(item: NoticeCleanupUploadFileDto): Promise<'deleted' | 'referenced' | 'missing'> {
+    const safeFileName = sanitizeStoredFileName(item.fileName);
+    const referenced = await this.prisma.noticeAttachment.findFirst({
+      where: { fileName: safeFileName },
+      select: { id: true },
+    });
+
+    if (referenced) {
+      return 'referenced';
+    }
+
+    const storagePaths = typeof item.isInlineImage === 'boolean'
+      ? [buildNoticeStoragePath(safeFileName, item.isInlineImage)]
+      : [
+          buildNoticeStoragePath(safeFileName, true),
+          buildNoticeStoragePath(safeFileName, false),
+        ];
+
+    const candidatePaths = Array.from(new Set(
+      storagePaths.flatMap((storagePath) => resolveNoticeAbsolutePathCandidates(storagePath)),
+    ));
+
+    let deleted = false;
+    for (const absolutePath of candidatePaths) {
+      try {
+        await unlink(absolutePath);
+        deleted = true;
+      } catch {
+        // 파일 정리는 best-effort로 수행
+      }
+    }
+
+    return deleted ? 'deleted' : 'missing';
+  }
+
   private toResponseDto(notice: NoticeWithRelations, currentUserId?: string, currentUserRole?: string): NoticeResponseDto {
     return {
       id: notice.id,
@@ -220,6 +257,7 @@ export class NoticesService {
       contentText: notice.contentText ?? undefined,
       createdById: notice.createdById ?? undefined,
       createdByName: notice.createdBy?.name ?? undefined,
+      createdByRole: notice.createdBy?.role ?? undefined,
       isEditableByMe: this.isSuperAdmin(currentUserRole) || Boolean(currentUserId && notice.createdById === currentUserId),
       attachments: notice.attachments.map((attachment) => ({
         id: attachment.id,
@@ -265,7 +303,7 @@ export class NoticesService {
         where,
         include: {
           organization: { select: { id: true, name: true } },
-          createdBy: { select: { id: true, name: true, username: true } },
+          createdBy: { select: { id: true, name: true, username: true, role: true } },
           attachments: {
             orderBy: { createdAt: 'asc' },
           },
@@ -295,7 +333,7 @@ export class NoticesService {
       where: { id },
       include: {
         organization: { select: { id: true, name: true } },
-        createdBy: { select: { id: true, name: true, username: true } },
+        createdBy: { select: { id: true, name: true, username: true, role: true } },
         attachments: {
           orderBy: { createdAt: 'asc' },
         },
@@ -357,7 +395,7 @@ export class NoticesService {
       },
       include: {
         organization: { select: { id: true, name: true } },
-        createdBy: { select: { id: true, name: true, username: true } },
+        createdBy: { select: { id: true, name: true, username: true, role: true } },
         attachments: {
           orderBy: { createdAt: 'asc' },
         },
@@ -457,7 +495,7 @@ export class NoticesService {
         },
         include: {
           organization: { select: { id: true, name: true } },
-          createdBy: { select: { id: true, name: true, username: true } },
+          createdBy: { select: { id: true, name: true, username: true, role: true } },
           attachments: {
             orderBy: { createdAt: 'asc' },
           },
@@ -519,6 +557,41 @@ export class NoticesService {
       size: file.size,
       isInlineImage,
       url: `/api/notices/files/${encodeURIComponent(safeFileName)}`,
+    };
+  }
+
+  async cleanupUnreferencedUploads(files: NoticeCleanupUploadFileDto[] | undefined): Promise<CleanupNoticeUploadsResponseDto> {
+    const normalized = Array.isArray(files) ? files : [];
+    const unique = Array.from(new Map(
+      normalized
+        .filter((item) => Boolean(item?.fileName))
+        .map((item) => [`${item.fileName}|${String(item.isInlineImage)}`, item]),
+    ).values());
+
+    let deleted = 0;
+    let skippedReferenced = 0;
+    let skippedMissing = 0;
+
+    for (const item of unique) {
+      const result = await this.removeUnreferencedUploadFile(item);
+      if (result === 'deleted') {
+        deleted += 1;
+        continue;
+      }
+
+      if (result === 'referenced') {
+        skippedReferenced += 1;
+        continue;
+      }
+
+      skippedMissing += 1;
+    }
+
+    return {
+      requested: unique.length,
+      deleted,
+      skippedReferenced,
+      skippedMissing,
     };
   }
 

@@ -51,6 +51,9 @@ export class NoticeResponseDto {
   @ApiPropertyOptional()
   createdByName?: string;
 
+  @ApiPropertyOptional({ description: '작성자 역할' })
+  createdByRole?: string;
+
   @ApiProperty()
   isEditableByMe: boolean;
 

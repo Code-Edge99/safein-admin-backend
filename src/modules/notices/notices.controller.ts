@@ -24,6 +24,8 @@ import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard'
 import { AuthenticatedAdminRequest } from '../../common/types/authenticated-request.type';
 import { NoticesService } from './notices.service';
 import {
+  CleanupNoticeUploadsDto,
+  CleanupNoticeUploadsResponseDto,
   CreateNoticeDto,
   NoticeFilterDto,
   NoticeResponseDto,
@@ -145,6 +147,15 @@ export class NoticesController {
     }
 
     return this.noticesService.buildUploadResponse(file, true);
+  }
+
+  @Post('uploads/cleanup')
+  @UseGuards(JwtAuthGuard, OrganizationScopeGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '저장되지 않은 공지 업로드 파일 정리' })
+  @ApiResponse({ status: 200, description: '정리 결과', type: CleanupNoticeUploadsResponseDto })
+  cleanupUploads(@Body() dto: CleanupNoticeUploadsDto): Promise<CleanupNoticeUploadsResponseDto> {
+    return this.noticesService.cleanupUnreferencedUploads(dto.files);
   }
 
   @Get('files/:fileName')
