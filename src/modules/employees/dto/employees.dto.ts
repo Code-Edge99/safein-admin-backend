@@ -40,6 +40,7 @@ function normalizeOptionalEmail(value: unknown): unknown {
 
 export enum EmployeeStatusEnum {
   ACTIVE = 'ACTIVE',
+  WITHDRAW_REQUEST = 'WITHDRAW_REQUEST',
   RESIGNED = 'RESIGNED',
   EXCEPTION = 'EXCEPTION',
   LEAVE = 'LEAVE',

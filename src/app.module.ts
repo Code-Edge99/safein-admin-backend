@@ -20,6 +20,7 @@ import { LoginHistoryModule } from './modules/login-history/login-history.module
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { PermissionsModule } from './modules/permissions/permissions.module';
 import { MapsModule } from './modules/maps/maps.module';
+import { NoticesModule } from './modules/notices/notices.module';
 import { RequestLoggingInterceptor } from './common/interceptors/request-logging.interceptor';
 
 @Module({
@@ -51,6 +52,7 @@ import { RequestLoggingInterceptor } from './common/interceptors/request-logging
     DashboardModule,
     PermissionsModule,
     MapsModule,
+    NoticesModule,
   ],
   controllers: [],
   providers: [RequestLoggingInterceptor],

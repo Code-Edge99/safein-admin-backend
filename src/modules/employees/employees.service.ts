@@ -1680,7 +1680,9 @@ export class EmployeesService {
   }
 
   private isNonActiveEmployeeStatus(status?: EmployeeStatus): boolean {
-    return !!status && status !== EmployeeStatus.ACTIVE;
+    return !!status
+      && status !== EmployeeStatus.ACTIVE
+      && status !== ('WITHDRAW_REQUEST' as EmployeeStatus);
   }
 
   private async notifyPolicyChangedForEmployees(
