@@ -1,16 +1,57 @@
-import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(PrismaService.name);
+
   constructor() {
     super({
       log: ['error'],
+    });
+
+    this.$use(async (params, next) => {
+      if (params.action === 'create' || params.action === 'createMany') {
+        const fillTimestamp = (item: any, model?: string) => {
+          if (!item || typeof item !== 'object' || !model) {
+            return;
+          }
+
+          if (model === 'AuditLog' && !item.timestamp) {
+            item.timestamp = new Date();
+          }
+
+          if (model === 'AdminLoginHistory' && !item.loginTime) {
+            item.loginTime = new Date();
+          }
+
+          if (model === 'EmployeeLoginHistory' && !item.loginTime) {
+            item.loginTime = new Date();
+          }
+        };
+
+        const payload = params.args?.data;
+        if (Array.isArray(payload)) {
+          payload.forEach((item) => fillTimestamp(item, params.model));
+        } else {
+          fillTimestamp(payload, params.model);
+        }
+      }
+
+      return next(params);
     });
   }
 
   async onModuleInit() {
     await this.$connect();
+
+    // Keep session timezone deterministic so NOW()/CURRENT_TIMESTAMP are UTC.
+    await this.$executeRawUnsafe("SET TIME ZONE 'UTC'");
+    const timezoneRow = await this.$queryRawUnsafe<Array<Record<string, unknown>>>('SHOW TIME ZONE');
+    const timezone = String(Object.values(timezoneRow?.[0] ?? {})[0] ?? '');
+    if (timezone.toUpperCase() !== 'UTC') {
+      this.logger.warn(`Database session timezone is not UTC (current: ${timezone}).`);
+    }
   }
 
   async onModuleDestroy() {

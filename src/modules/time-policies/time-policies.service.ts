@@ -405,7 +405,13 @@ export class TimePoliciesService {
 
   // Helper: Parse HH:MM string to Date with time
   private parseTimeToDate(timeStr: string): Date {
-    const [hours, minutes] = timeStr.split(':').map(Number);
+    const match = timeStr.match(/^(?:([01]\d|2[0-3])):([0-5]\d)$/);
+    if (!match) {
+      throw new BadRequestException('시간은 HH:MM 형식이어야 합니다.');
+    }
+
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
     const date = new Date(Date.UTC(1970, 0, 1, 0, 0, 0, 0));
     date.setUTCHours(hours, minutes, 0, 0);
     return date;

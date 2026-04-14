@@ -11,8 +11,11 @@ import {
   Min,
   Max,
   ValidateIf,
+  Matches,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+
+const TIME_ONLY_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
 export enum DayOfWeek {
   MONDAY = 'MONDAY',
@@ -27,10 +30,12 @@ export enum DayOfWeek {
 export class TimeSlotDto {
   @ApiProperty({ description: '시작 시간 (HH:MM 형식)', example: '09:00' })
   @IsString()
+  @Matches(TIME_ONLY_PATTERN, { message: '시작 시간은 HH:MM 형식이어야 합니다.' })
   startTime: string;
 
   @ApiProperty({ description: '종료 시간 (HH:MM 형식)', example: '18:00' })
   @IsString()
+  @Matches(TIME_ONLY_PATTERN, { message: '종료 시간은 HH:MM 형식이어야 합니다.' })
   endTime: string;
 
   @ApiProperty({ description: '적용 요일', enum: DayOfWeek, isArray: true })
@@ -48,21 +53,25 @@ export class ExcludePeriodDto {
   @ApiPropertyOptional({ description: '시작 시간 (HH:MM 형식)', example: '12:00' })
   @ValidateIf((value: ExcludePeriodDto) => !value.startTime)
   @IsString()
+  @Matches(TIME_ONLY_PATTERN, { message: '예외 시작 시간은 HH:MM 형식이어야 합니다.' })
   start?: string;
 
   @ApiPropertyOptional({ description: '시작 시간 별칭 (HH:MM 형식)', example: '12:00' })
   @ValidateIf((value: ExcludePeriodDto) => !value.start)
   @IsString()
+  @Matches(TIME_ONLY_PATTERN, { message: '예외 시작 시간은 HH:MM 형식이어야 합니다.' })
   startTime?: string;
 
   @ApiPropertyOptional({ description: '종료 시간 (HH:MM 형식)', example: '13:00' })
   @ValidateIf((value: ExcludePeriodDto) => !value.endTime)
   @IsString()
+  @Matches(TIME_ONLY_PATTERN, { message: '예외 종료 시간은 HH:MM 형식이어야 합니다.' })
   end?: string;
 
   @ApiPropertyOptional({ description: '종료 시간 별칭 (HH:MM 형식)', example: '13:00' })
   @ValidateIf((value: ExcludePeriodDto) => !value.end)
   @IsString()
+  @Matches(TIME_ONLY_PATTERN, { message: '예외 종료 시간은 HH:MM 형식이어야 합니다.' })
   endTime?: string;
 }
 
@@ -104,11 +113,13 @@ export class CreateTimePolicyDto {
 
   @ApiPropertyOptional({ description: '시작 시간 레거시 필드(HH:MM). timeSlots 미사용 시 허용' })
   @IsString()
+  @Matches(TIME_ONLY_PATTERN, { message: '시작 시간은 HH:MM 형식이어야 합니다.' })
   @IsOptional()
   startTime?: string;
 
   @ApiPropertyOptional({ description: '종료 시간 레거시 필드(HH:MM). timeSlots 미사용 시 허용' })
   @IsString()
+  @Matches(TIME_ONLY_PATTERN, { message: '종료 시간은 HH:MM 형식이어야 합니다.' })
   @IsOptional()
   endTime?: string;
 

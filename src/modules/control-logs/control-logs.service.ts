@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
 import { decryptLocation, encryptLocation } from '../../common/security/location-crypto';
@@ -197,6 +197,9 @@ export class ControlLogsService {
   async create(createDto: CreateControlLogDto): Promise<ControlLogResponseDto> {
     const resolvedDevice = await this.resolveDeviceContext(createDto.deviceId);
     const eventTimestamp = new Date(createDto.timestamp);
+    if (Number.isNaN(eventTimestamp.getTime())) {
+      throw new BadRequestException('timestamp는 유효한 UTC 기준 ISO 8601 날짜 형식이어야 합니다.');
+    }
     const encryptedLocation = createDto.latitude !== undefined && createDto.longitude !== undefined
       ? encryptLocation({ latitude: createDto.latitude, longitude: createDto.longitude })
       : {

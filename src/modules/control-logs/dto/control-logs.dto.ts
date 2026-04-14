@@ -6,8 +6,11 @@ import {
   IsEnum,
   IsNumber,
   IsDateString,
+  Matches,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+
+const UTC_TIMESTAMP_PATTERN = /(Z|[+-]00:00|[+-]0000)$/i;
 
 export enum ControlLogTypeEnum {
   BEHAVIOR = 'behavior',
@@ -50,6 +53,9 @@ export class CreateControlLogDto {
 
   @ApiProperty({ description: '발생 시간' })
   @IsDateString()
+  @Matches(UTC_TIMESTAMP_PATTERN, {
+    message: 'timestamp는 UTC 기준 ISO 8601 날짜 형식이어야 합니다. (예: 2026-02-09T10:00:00.000Z)',
+  })
   timestamp: string;
 
   @ApiPropertyOptional({ description: '위도' })

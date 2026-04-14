@@ -2,14 +2,28 @@ import { ControlLogResponseDto } from './dto';
 import { decryptLocation } from '../../common/security/location-crypto';
 import { preferKstTimestamp } from '../../common/utils/kst-time.util';
 
+function toUtcIsoString(value: unknown): string | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  }
+
+  return null;
+}
+
 export function toControlLogResponseDto(log: any): ControlLogResponseDto {
   const location = decryptLocation(log);
+  const timestampUtc = toUtcIsoString(log.timestamp);
 
   return {
     id: log.id,
     type: log.type,
     action: log.action,
-    timestamp: preferKstTimestamp(log.timestampKst, log.timestamp) || '',
+    timestamp: timestampUtc || preferKstTimestamp(log.timestampKst, log.timestamp) || '',
     originalTimestamp: log.originalTimestamp || undefined,
     latitude: location?.latitude,
     longitude: location?.longitude,

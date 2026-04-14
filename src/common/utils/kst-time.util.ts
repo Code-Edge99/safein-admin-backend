@@ -1,5 +1,8 @@
+import { BadRequestException } from '@nestjs/common';
+
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const TIMEZONE_AWARE_DATETIME_PATTERN = /(Z|[+-]\d{2}:\d{2}|[+-]\d{4})$/i;
 
 function pad2(value: number): string {
   return String(value).padStart(2, '0');
@@ -69,14 +72,20 @@ export function preferKstTimestamp(storedValue: string | null | undefined, fallb
 }
 
 export function parseDateInputAsUtc(input: string, boundary: 'start' | 'end' = 'start'): Date {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(input)) {
+  const normalized = input.trim();
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
     const time = boundary === 'start' ? '00:00:00.000' : '23:59:59.999';
-    return new Date(`${input}T${time}+09:00`);
+    return new Date(`${normalized}T${time}+09:00`);
   }
 
-  const parsed = new Date(input);
+  if (!TIMEZONE_AWARE_DATETIME_PATTERN.test(normalized)) {
+    throw new BadRequestException(`Invalid date input (timezone required): ${input}`);
+  }
+
+  const parsed = new Date(normalized);
   if (Number.isNaN(parsed.getTime())) {
-    throw new Error(`Invalid date input: ${input}`);
+    throw new BadRequestException(`Invalid date input: ${input}`);
   }
 
   return parsed;
