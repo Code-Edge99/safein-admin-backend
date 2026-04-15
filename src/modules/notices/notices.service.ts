@@ -8,7 +8,7 @@ import { AdminRole, NoticeAttachment, Prisma } from '@prisma/client';
 import { access, unlink } from 'fs/promises';
 import { PaginatedResponse } from '../../common/dto';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import { resolveOrganizationClassification } from '../../common/utils/organization-scope.util';
 import {
   CleanupNoticeUploadsResponseDto,
   CreateNoticeDto,
@@ -104,14 +104,125 @@ export class NoticesService {
     return Array.from(visited);
   }
 
-  private assertReadableOrganization(organizationId: string, readableOrganizationIds?: string[]): void {
-    if (!readableOrganizationIds) {
+  private async collectDescendantOrganizationIds(rootOrganizationId: string): Promise<string[]> {
+    const visited = new Set<string>([rootOrganizationId]);
+    let frontier = [rootOrganizationId];
+
+    while (frontier.length > 0) {
+      const children = await this.prisma.organization.findMany({
+        where: {
+          parentId: { in: frontier },
+        },
+        select: { id: true },
+      });
+
+      const nextFrontier: string[] = [];
+      for (const child of children) {
+        if (!visited.has(child.id)) {
+          visited.add(child.id);
+          nextFrontier.push(child.id);
+        }
+      }
+
+      frontier = nextFrontier;
+    }
+
+    return Array.from(visited);
+  }
+
+  private async resolveAncestorCompanyId(organizationId: string): Promise<string | null> {
+    const visited = new Set<string>();
+    let currentOrganizationId: string | null = organizationId;
+    let depth = 0;
+
+    while (currentOrganizationId && !visited.has(currentOrganizationId) && depth < 40) {
+      visited.add(currentOrganizationId);
+
+      const organization: { id: string; parentId: string | null; teamCode: string | null } | null = await this.prisma.organization.findUnique({
+        where: { id: currentOrganizationId },
+        select: { id: true, parentId: true, teamCode: true },
+      });
+
+      if (!organization) {
+        break;
+      }
+
+      if (resolveOrganizationClassification(organization) === 'COMPANY') {
+        return organization.id;
+      }
+
+      currentOrganizationId = organization.parentId;
+      depth += 1;
+    }
+
+    return null;
+  }
+
+  private async resolveActorCompanyOrganizationIds(
+    actorUserId?: string,
+    actorUserRole?: string,
+  ): Promise<string[] | undefined> {
+    if (this.isSuperAdmin(actorUserRole)) {
+      return undefined;
+    }
+
+    if (!actorUserId) {
+      throw new ForbiddenException('사용자 정보를 확인할 수 없습니다.');
+    }
+
+    const account = await this.prisma.account.findUnique({
+      where: { id: actorUserId },
+      select: { organizationId: true },
+    });
+
+    if (!account?.organizationId) {
+      throw new ForbiddenException('소속 회사 정보를 확인할 수 없습니다.');
+    }
+
+    const companyOrganizationId = await this.resolveAncestorCompanyId(account.organizationId);
+    if (!companyOrganizationId) {
+      throw new ForbiddenException('소속 회사 정보를 확인할 수 없습니다.');
+    }
+
+    return this.collectDescendantOrganizationIds(companyOrganizationId);
+  }
+
+  private assertOrganizationInCompanyScope(organizationId: string, companyOrganizationIds?: string[]): void {
+    if (!companyOrganizationIds) {
       return;
     }
 
-    if (!readableOrganizationIds.includes(organizationId)) {
-      throw new ForbiddenException('요청한 현장은 접근 권한 범위를 벗어났습니다.');
+    if (!companyOrganizationIds.includes(organizationId)) {
+      throw new ForbiddenException('다른 회사 공지사항에는 접근할 수 없습니다.');
     }
+  }
+
+  private canReadNotice(
+    organizationId: string,
+    createdByRole?: string | null,
+    companyOrganizationIds?: string[],
+  ): boolean {
+    if (!companyOrganizationIds) {
+      return true;
+    }
+
+    if (createdByRole === AdminRole.SUPER_ADMIN || createdByRole === 'SUPER_ADMIN') {
+      return true;
+    }
+
+    return companyOrganizationIds.includes(organizationId);
+  }
+
+  private assertReadableOrganization(
+    organizationId: string,
+    createdByRole?: string | null,
+    companyOrganizationIds?: string[],
+  ): void {
+    if (this.canReadNotice(organizationId, createdByRole, companyOrganizationIds)) {
+      return;
+    }
+
+    throw new ForbiddenException('다른 회사 공지사항에는 접근할 수 없습니다.');
   }
 
   private extractContentText(contentHtml: string, requestedContentText?: string): string {
@@ -281,23 +392,43 @@ export class NoticesService {
     currentUserId?: string,
     currentUserRole?: string,
   ): Promise<PaginatedResponse<NoticeResponseDto>> {
-    const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
-    const where: Prisma.NoticeWhereInput = {};
+    const companyOrganizationIds = await this.resolveActorCompanyOrganizationIds(currentUserId, currentUserRole);
+    const whereConditions: Prisma.NoticeWhereInput[] = [];
+
+    if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !companyOrganizationIds) {
+      const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
+      if (readableOrganizationIds) {
+        whereConditions.push({ organizationId: { in: readableOrganizationIds } });
+      }
+    }
+
+    if (companyOrganizationIds) {
+      whereConditions.push({
+        OR: [
+          { organizationId: { in: companyOrganizationIds } },
+          { createdBy: { is: { role: AdminRole.SUPER_ADMIN } } },
+        ],
+      });
+    }
 
     if (filter.organizationId) {
-      this.assertReadableOrganization(filter.organizationId, readableOrganizationIds);
-      where.organizationId = filter.organizationId;
-    } else if (readableOrganizationIds) {
-      where.organizationId = { in: readableOrganizationIds };
+      this.assertOrganizationInCompanyScope(filter.organizationId, companyOrganizationIds);
+      whereConditions.push({ organizationId: filter.organizationId });
     }
 
     const trimmedSearch = filter.search?.trim();
     if (trimmedSearch) {
-      where.OR = [
-        { title: { contains: trimmedSearch, mode: 'insensitive' } },
-        { contentText: { contains: trimmedSearch, mode: 'insensitive' } },
-      ];
+      whereConditions.push({
+        OR: [
+          { title: { contains: trimmedSearch, mode: 'insensitive' } },
+          { contentText: { contains: trimmedSearch, mode: 'insensitive' } },
+        ],
+      });
     }
+
+    const where: Prisma.NoticeWhereInput = whereConditions.length > 0
+      ? { AND: whereConditions }
+      : {};
 
     const [rows, total] = await Promise.all([
       this.prisma.notice.findMany({
@@ -348,8 +479,13 @@ export class NoticesService {
       throw new NotFoundException('공지사항을 찾을 수 없습니다.');
     }
 
-    const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
-    this.assertReadableOrganization(row.organizationId, readableOrganizationIds);
+    const companyOrganizationIds = await this.resolveActorCompanyOrganizationIds(currentUserId, currentUserRole);
+    this.assertReadableOrganization(row.organizationId, row.createdBy?.role, companyOrganizationIds);
+
+    if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !companyOrganizationIds) {
+      const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
+      this.assertReadableOrganization(row.organizationId, row.createdBy?.role, readableOrganizationIds);
+    }
 
     return this.toResponseDto(row, currentUserId, currentUserRole);
   }
@@ -364,7 +500,13 @@ export class NoticesService {
       throw new ForbiddenException('사용자 정보를 확인할 수 없습니다.');
     }
 
-    ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
+    const companyOrganizationIds = await this.resolveActorCompanyOrganizationIds(actorUserId, actorUserRole);
+    this.assertOrganizationInCompanyScope(dto.organizationId, companyOrganizationIds);
+
+    if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !companyOrganizationIds) {
+      const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
+      this.assertOrganizationInCompanyScope(dto.organizationId, readableOrganizationIds);
+    }
 
     const organization = await this.prisma.organization.findUnique({
       where: { id: dto.organizationId },
@@ -425,7 +567,7 @@ export class NoticesService {
       where: { id },
       include: {
         organization: { select: { id: true, name: true } },
-        createdBy: { select: { id: true, name: true, username: true } },
+        createdBy: { select: { id: true, name: true, username: true, role: true } },
         attachments: {
           orderBy: { createdAt: 'asc' },
         },
@@ -436,15 +578,25 @@ export class NoticesService {
       throw new NotFoundException('공지사항을 찾을 수 없습니다.');
     }
 
-    const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
-    this.assertReadableOrganization(existing.organizationId, readableOrganizationIds);
+    const companyOrganizationIds = await this.resolveActorCompanyOrganizationIds(actorUserId, actorUserRole);
+    this.assertReadableOrganization(existing.organizationId, existing.createdBy?.role, companyOrganizationIds);
+
+    if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !companyOrganizationIds) {
+      const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
+      this.assertReadableOrganization(existing.organizationId, existing.createdBy?.role, readableOrganizationIds);
+    }
 
     if (!this.isSuperAdmin(actorUserRole) && existing.createdById !== actorUserId) {
       throw new ForbiddenException('작성자 본인 또는 슈퍼관리자만 수정할 수 있습니다.');
     }
 
     if (dto.organizationId) {
-      ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
+      this.assertOrganizationInCompanyScope(dto.organizationId, companyOrganizationIds);
+
+      if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !companyOrganizationIds) {
+        const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
+        this.assertOrganizationInCompanyScope(dto.organizationId, readableOrganizationIds);
+      }
     }
 
     const targetOrganizationId = dto.organizationId ?? existing.organizationId;
@@ -530,6 +682,9 @@ export class NoticesService {
     const existing = await this.prisma.notice.findUnique({
       where: { id },
       include: {
+        createdBy: {
+          select: { role: true },
+        },
         attachments: true,
       },
     });
@@ -538,8 +693,13 @@ export class NoticesService {
       throw new NotFoundException('공지사항을 찾을 수 없습니다.');
     }
 
-    const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
-    this.assertReadableOrganization(existing.organizationId, readableOrganizationIds);
+    const companyOrganizationIds = await this.resolveActorCompanyOrganizationIds(actorUserId, actorUserRole);
+    this.assertReadableOrganization(existing.organizationId, existing.createdBy?.role, companyOrganizationIds);
+
+    if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !companyOrganizationIds) {
+      const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
+      this.assertReadableOrganization(existing.organizationId, existing.createdBy?.role, readableOrganizationIds);
+    }
 
     if (!this.isSuperAdmin(actorUserRole) && existing.createdById !== actorUserId) {
       throw new ForbiddenException('작성자 본인 또는 슈퍼관리자만 삭제할 수 있습니다.');
