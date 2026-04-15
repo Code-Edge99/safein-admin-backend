@@ -26,12 +26,12 @@ export class CreateControlLogDto {
   @ApiProperty({ description: '직원 ID' })
   @IsString()
   @IsNotEmpty()
-  employeeId: string;
+  employeeId!: string;
 
   @ApiProperty({ description: '디바이스 ID' })
   @IsString()
   @IsNotEmpty()
-  deviceId: string;
+  deviceId!: string;
 
   @ApiPropertyOptional({ description: '정책 ID' })
   @IsString()
@@ -45,18 +45,18 @@ export class CreateControlLogDto {
 
   @ApiProperty({ description: '로그 유형', enum: ControlLogTypeEnum })
   @IsEnum(ControlLogTypeEnum)
-  type: ControlLogTypeEnum;
+  type!: ControlLogTypeEnum;
 
   @ApiProperty({ description: '동작', enum: ControlLogActionEnum })
   @IsEnum(ControlLogActionEnum)
-  action: ControlLogActionEnum;
+  action!: ControlLogActionEnum;
 
   @ApiProperty({ description: '발생 시간' })
   @IsDateString()
   @Matches(UTC_TIMESTAMP_PATTERN, {
     message: 'timestamp는 UTC 기준 ISO 8601 날짜 형식이어야 합니다. (예: 2026-02-09T10:00:00.000Z)',
   })
-  timestamp: string;
+  timestamp!: string;
 
   @ApiPropertyOptional({ description: '위도' })
   @IsNumber()
@@ -101,16 +101,16 @@ export class CreateControlLogDto {
 
 export class ControlLogResponseDto {
   @ApiProperty({ description: '로그 ID' })
-  id: string;
+  id!: string;
 
   @ApiProperty({ description: '로그 유형' })
-  type: string;
+  type!: string;
 
   @ApiProperty({ description: '동작' })
-  action: string;
+  action!: string;
 
   @ApiProperty({ description: '발생 시간' })
-  timestamp: string;
+  timestamp!: string;
 
   @ApiPropertyOptional({ description: '앱이 보낸 원본 발생 시각(UTC 기준 ISO 8601)' })
   originalTimestamp?: string;
@@ -179,7 +179,7 @@ export class ControlLogResponseDto {
   zoneName?: string;
 
   @ApiProperty({ description: '생성일시' })
-  createdAt: Date;
+  createdAt!: Date;
 }
 
 export class ControlLogFilterDto {
@@ -192,6 +192,16 @@ export class ControlLogFilterDto {
   @IsString()
   @IsOptional()
   organizationId?: string;
+
+  @ApiPropertyOptional({ description: '그룹 ID' })
+  @IsString()
+  @IsOptional()
+  groupId?: string;
+
+  @ApiPropertyOptional({ description: '단위 ID' })
+  @IsString()
+  @IsOptional()
+  unitId?: string;
 
   @ApiPropertyOptional({ description: '직원 ID' })
   @IsString()
@@ -248,50 +258,50 @@ export class ControlLogFilterDto {
 
 export class ControlLogListResponseDto {
   @ApiProperty({ type: [ControlLogResponseDto] })
-  data: ControlLogResponseDto[];
+  data!: ControlLogResponseDto[];
 
   @ApiProperty()
-  total: number;
+  total!: number;
 
   @ApiProperty()
-  page: number;
+  page!: number;
 
   @ApiProperty()
-  limit: number;
+  limit!: number;
 
   @ApiProperty()
-  totalPages: number;
+  totalPages!: number;
 }
 
 export class ControlLogStatsDto {
   @ApiProperty({ description: '전체 로그 수' })
-  totalLogs: number;
+  totalLogs!: number;
 
   @ApiProperty({ description: '차단된 로그 수' })
-  blockedCount: number;
+  blockedCount!: number;
 
   @ApiProperty({ description: '허용된 로그 수' })
-  allowedCount: number;
+  allowedCount!: number;
 
   @ApiProperty({ description: '유형별 로그 수' })
-  byType: Record<string, number>;
+  byType!: Record<string, number>;
 
   @ApiProperty({ description: '일별 로그 수 (최근 7일)' })
-  dailyStats: { date: string; count: number }[];
+  dailyStats!: { date: string; count: number }[];
 }
 
 export class EmployeeLogStatsDto {
   @ApiProperty({ description: '직원 ID' })
-  employeeId: string;
+  employeeId!: string;
 
   @ApiProperty({ description: '직원 이름' })
-  employeeName: string;
+  employeeName!: string;
 
   @ApiProperty({ description: '전체 로그 수' })
-  totalLogs: number;
+  totalLogs!: number;
 
   @ApiProperty({ description: '차단 횟수' })
-  blockedCount: number;
+  blockedCount!: number;
 
   @ApiProperty({ description: '마지막 로그 시간' })
   lastLogAt?: Date;
