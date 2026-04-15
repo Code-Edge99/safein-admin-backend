@@ -55,7 +55,7 @@ const CATEGORY_ORDER: Record<string, number> = {
   시스템: 6,
 };
 
-function getDefaultEnabled(code: string, role: 'SUPER_ADMIN' | 'SITE_ADMIN' | 'VIEWER'): boolean {
+function getDefaultEnabled(code: string, role: 'SUPER_ADMIN' | 'SITE_ADMIN'): boolean {
   if (role === 'SUPER_ADMIN') {
     return true;
   }
@@ -71,10 +71,6 @@ function getDefaultEnabled(code: string, role: 'SUPER_ADMIN' | 'SITE_ADMIN' | 'V
       return true;
     }
 
-    return readOnlyCode;
-  }
-
-  if (role === 'VIEWER') {
     return readOnlyCode;
   }
 
@@ -213,7 +209,7 @@ export class PermissionsService {
         continue;
       }
 
-      for (const role of ['SUPER_ADMIN', 'SITE_ADMIN', 'VIEWER'] as const) {
+      for (const role of ['SUPER_ADMIN', 'SITE_ADMIN'] as const) {
         if (!getDefaultEnabled(permission.code, role)) {
           continue;
         }
@@ -285,7 +281,6 @@ export class PermissionsService {
           description: permission.description,
           superAdmin: rolePermMap.get('SUPER_ADMIN')?.has(resolvedPermissionId) ?? true,
           manager: rolePermMap.get('SITE_ADMIN')?.has(resolvedPermissionId) ?? false,
-          viewer: rolePermMap.get('VIEWER')?.has(resolvedPermissionId) ?? false,
           lastModified: syncedPermission?.updatedAt || syncedPermission?.createdAt,
           modifiedBy: '시스템',
         };
@@ -313,7 +308,7 @@ export class PermissionsService {
       throw new NotFoundException('권한을 찾을 수 없습니다.');
     }
 
-    const role = data.role as 'SUPER_ADMIN' | 'SITE_ADMIN' | 'VIEWER';
+    const role = data.role as 'SUPER_ADMIN' | 'SITE_ADMIN';
     const existingRolePermission = await this.prisma.rolePermission.findUnique({
       where: {
         role_permissionId: {

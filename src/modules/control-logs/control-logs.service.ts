@@ -1,6 +1,11 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
+import {
+  assertGroupOrganization,
+  assertUnitOrganization,
+  ensureOrganizationInScope,
+  resolveOrganizationClassification,
+} from '../../common/utils/organization-scope.util';
 import { decryptLocation, encryptLocation } from '../../common/security/location-crypto';
 import { formatKstDateKey, formatKstTimestampString, getKstDaysAgoStart, parseDateInputAsUtc } from '../../common/utils/kst-time.util';
 import { resolveEmployeePrimaryId } from '../../common/utils/employee-identifier.util';
@@ -19,6 +24,8 @@ export class ControlLogsService {
   constructor(private prisma: PrismaService) {}
 
   private static readonly NON_REPORTABLE_EMPLOYEE_STATUSES = ['DELETE', 'PHONE_INFO_REVIEW'] as const;
+
+  private static readonly ROOT_PARENT_KEY = '__root__';
 
   private async resolveAppNameMap(packageNames: string[]): Promise<Map<string, string>> {
     if (packageNames.length === 0) {
@@ -142,6 +149,20 @@ export class ControlLogsService {
     };
   }
 
+  private buildOrganizationIdsCondition(organizationIds: string[]) {
+    return {
+      OR: [
+        { organizationId: { in: organizationIds } },
+        {
+          AND: [
+            { organizationId: null },
+            { device: { organizationId: { in: organizationIds } } },
+          ],
+        },
+      ],
+    };
+  }
+
   private appendWhereCondition(where: any, condition: any): void {
     if (!where.AND) {
       where.AND = [];
@@ -163,6 +184,76 @@ export class ControlLogsService {
     }
 
     this.appendWhereCondition(where, this.buildScopeCondition(scopeOrganizationIds));
+  }
+
+  private async getOrganizationNodes(scopeOrganizationIds?: string[]): Promise<Array<{
+    id: string;
+    parentId: string | null;
+    teamCode: string | null;
+  }>> {
+    return this.prisma.organization.findMany({
+      where: scopeOrganizationIds
+        ? {
+            id: { in: scopeOrganizationIds },
+          }
+        : undefined,
+      select: {
+        id: true,
+        parentId: true,
+        teamCode: true,
+      },
+    });
+  }
+
+  private resolveDescendantUnitIds(
+    organizationId: string,
+    organizations: Array<{ id: string; parentId: string | null; teamCode: string | null }>,
+  ): string[] {
+    if (!organizationId || organizations.length === 0) {
+      return [];
+    }
+
+    const organizationsById = new Map(organizations.map((org) => [org.id, org] as const));
+    const childrenByParentId = new Map<string, Array<{ id: string; parentId: string | null; teamCode: string | null }>>();
+
+    organizations.forEach((org) => {
+      const parentKey = org.parentId || ControlLogsService.ROOT_PARENT_KEY;
+      const siblings = childrenByParentId.get(parentKey) || [];
+      siblings.push(org);
+      childrenByParentId.set(parentKey, siblings);
+    });
+
+    const unitIds: string[] = [];
+    const visited = new Set<string>();
+    const frontier: string[] = [organizationId];
+
+    while (frontier.length > 0) {
+      const currentId = frontier.shift() as string;
+      if (visited.has(currentId)) {
+        continue;
+      }
+
+      visited.add(currentId);
+      const current = organizationsById.get(currentId);
+      if (!current) {
+        continue;
+      }
+
+      const classification = resolveOrganizationClassification(current);
+      if (classification === 'UNIT') {
+        unitIds.push(current.id);
+        continue;
+      }
+
+      const children = childrenByParentId.get(current.id) || [];
+      children.forEach((child) => {
+        if (!visited.has(child.id)) {
+          frontier.push(child.id);
+        }
+      });
+    }
+
+    return unitIds;
   }
 
   private async resolveDeviceInternalId(rawDeviceId: string): Promise<string> {
@@ -262,6 +353,8 @@ export class ControlLogsService {
     const {
       search,
       organizationId,
+      groupId,
+      unitId,
       employeeId,
       deviceId,
       policyId,
@@ -325,9 +418,38 @@ export class ControlLogsService {
       }
     }
 
-    if (organizationId) {
-      this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
-      this.appendWhereCondition(where, this.buildOrganizationCondition(organizationId));
+    const normalizedOrganizationId = organizationId?.trim();
+    const normalizedGroupId = groupId?.trim();
+    const normalizedUnitId = unitId?.trim();
+
+    if (normalizedUnitId) {
+      this.ensureOrganizationInScope(normalizedUnitId, scopeOrganizationIds);
+      await assertUnitOrganization(this.prisma, normalizedUnitId);
+
+      if (normalizedGroupId) {
+        this.ensureOrganizationInScope(normalizedGroupId, scopeOrganizationIds);
+        await assertGroupOrganization(this.prisma, normalizedGroupId);
+
+        const organizations = await this.getOrganizationNodes(scopeOrganizationIds);
+        const groupUnitIds = this.resolveDescendantUnitIds(normalizedGroupId, organizations);
+        if (!groupUnitIds.includes(normalizedUnitId)) {
+          throw new BadRequestException('선택한 단위가 선택한 그룹에 속하지 않습니다.');
+        }
+      }
+
+      this.appendWhereCondition(where, this.buildOrganizationCondition(normalizedUnitId));
+    } else if (normalizedGroupId) {
+      this.ensureOrganizationInScope(normalizedGroupId, scopeOrganizationIds);
+      await assertGroupOrganization(this.prisma, normalizedGroupId);
+
+      const organizations = await this.getOrganizationNodes(scopeOrganizationIds);
+      const descendantUnitIds = this.resolveDescendantUnitIds(normalizedGroupId, organizations);
+      const targetOrganizationIds = Array.from(new Set([normalizedGroupId, ...descendantUnitIds]));
+
+      this.appendWhereCondition(where, this.buildOrganizationIdsCondition(targetOrganizationIds));
+    } else if (normalizedOrganizationId) {
+      this.ensureOrganizationInScope(normalizedOrganizationId, scopeOrganizationIds);
+      this.appendWhereCondition(where, this.buildOrganizationCondition(normalizedOrganizationId));
     }
 
     if (search) {

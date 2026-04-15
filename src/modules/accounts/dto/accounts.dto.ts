@@ -16,7 +16,6 @@ import { normalizeOptionalPhoneNumber } from '../../../common/utils/phone.util';
 export enum AdminRoleEnum {
   SUPER_ADMIN = 'SUPER_ADMIN',
   SITE_ADMIN = 'SITE_ADMIN',
-  VIEWER = 'VIEWER',
 }
 
 export enum AccountStatusEnum {

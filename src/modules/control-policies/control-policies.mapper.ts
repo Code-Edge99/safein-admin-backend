@@ -66,6 +66,7 @@ function mapAllowedAppPresets(allowedApps: any[] | undefined) {
 
 export function toControlPolicyResponseDto(policy: any): ControlPolicyResponseDto {
   const requiredConditionState = resolveRequiredConditionState(policy);
+  const targetOrganizationIds = Array.isArray(policy.targetUnitIds) ? policy.targetUnitIds : [];
 
   return {
     id: policy.id,
@@ -87,6 +88,8 @@ export function toControlPolicyResponseDto(policy: any): ControlPolicyResponseDt
     behaviorConditionCount: policy._count?.behaviors ?? policy.behaviors?.length ?? 0,
     allowedAppCount: policy._count?.allowedApps ?? policy.allowedApps?.length ?? 0,
     targetEmployeeCount: policy._count?.targetEmployees ?? 0,
+    targetOrganizationCount: targetOrganizationIds.length,
+    targetOrganizationIds,
     createdAt: policy.createdAt,
     updatedAt: policy.updatedAt,
   };
@@ -94,6 +97,7 @@ export function toControlPolicyResponseDto(policy: any): ControlPolicyResponseDt
 
 export function toControlPolicyDetailDto(policy: any): ControlPolicyDetailDto {
   const requiredConditionState = resolveRequiredConditionState(policy);
+  const targetOrganizationIds = Array.isArray(policy.targetUnitIds) ? policy.targetUnitIds : [];
 
   return {
     id: policy.id,
@@ -111,6 +115,8 @@ export function toControlPolicyDetailDto(policy: any): ControlPolicyDetailDto {
     behaviorConditionCount: policy.behaviors?.length ?? 0,
     allowedAppCount: policy.allowedApps?.length ?? 0,
     targetEmployeeCount: policy.targetEmployees?.length ?? 0,
+    targetOrganizationCount: targetOrganizationIds.length,
+    targetOrganizationIds,
     zones: policy.zones?.map((z: any) => z.zone) ?? [],
     timePolicies: policy.timePolicies?.map((t: any) => t.timePolicy) ?? [],
     behaviorConditions: policy.behaviors?.map((b: any) => b.behaviorCondition) ?? [],

@@ -45,6 +45,7 @@ export class OrganizationsController {
       createOrganizationDto,
       req.organizationScopeIds ?? undefined,
       req.user?.id,
+      req.user?.role,
     );
   }
 
@@ -109,6 +110,7 @@ export class OrganizationsController {
       updateOrganizationDto,
       req.organizationScopeIds ?? undefined,
       req.user?.id,
+      req.user?.role,
     );
   }
 

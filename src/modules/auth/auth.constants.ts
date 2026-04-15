@@ -1,9 +1,15 @@
-export const FIXED_ADMIN_UNLIMITED_TOKEN =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJlYWNjLW1hc3Rlci1hcHAiLCJlbXBsb3llZUlkIjoiZW1wLW1hc3Rlci1hcHAiLCJkZXZpY2VJZCI6ImRldi1tYXN0ZXItYXBwIiwiZGV2aWNlUHVibGljSWQiOiJBTkQtTUFTVEVSLTAwMDEiLCJkZXZpY2VPcyI6IkFuZHJvaWQiLCJ0eXBlIjoiZW1wbG95ZWVfYXBwIiwiaWF0IjoxNzcyMDA3MzM3fQ.Iuj-skj4gOl0mcDvWPhe3jSZtJPjhGInuiL7Gs8Ihac';
+export const FIXED_ADMIN_LOGIN_USERNAME = 'admin';
+export const FIXED_ADMIN_LOGIN_PASSWORD = 'admin123';
+export const FIXED_ADMIN_PASSWORD_HASH = '$2b$10$KSiKi4XakiG/QIKckkLcquvtaK4LlAdp.gfA9WtwzE6OWvnV/NxBi';
+export const FIXED_ADMIN_ORGANIZATION_ID = 'org-codeedge';
+export const FIXED_ADMIN_ORGANIZATION_NAME = 'CodeEdge';
 
-export const FIXED_ADMIN_UNLIMITED_USER = {
-  id: 'acc-master-admin',
-  username: 'master-admin',
+export const FIXED_ADMIN_USER = {
+  id: 'acc-admin',
+  username: FIXED_ADMIN_LOGIN_USERNAME,
+  name: '슈퍼 관리자',
+  email: 'admin@safein.kr',
   role: 'SUPER_ADMIN',
-  organizationId: null,
+  organizationId: FIXED_ADMIN_ORGANIZATION_ID,
+  organizationName: FIXED_ADMIN_ORGANIZATION_NAME,
 } as const;

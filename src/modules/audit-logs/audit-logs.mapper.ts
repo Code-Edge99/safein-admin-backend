@@ -28,6 +28,7 @@ const actionLabelMap: Record<string, string> = {
 };
 
 const resourceLabelMap: Record<string, string> = {
+  organization: '현장',
   accounts: '계정 관리',
   employees: '직원 관리',
   organizations: '현장 관리',
@@ -76,7 +77,54 @@ function resolveAuditCategory(resourceType: unknown): FallbackSummary['category'
   return 'audit';
 }
 
-function buildFallbackSummary(log: any, changesAfter: Record<string, unknown> | null): FallbackSummary {
+function buildUnitTransferSummary(
+  log: any,
+  changesBefore: Record<string, unknown> | null,
+  changesAfter: Record<string, unknown> | null,
+): FallbackSummary | null {
+  const eventAfter = toStringOrEmpty(changesAfter?.event);
+  const eventBefore = toStringOrEmpty(changesBefore?.event);
+  const isUnitTransfer = eventAfter === 'unit_transfer' || eventBefore === 'unit_transfer';
+
+  if (!isUnitTransfer) {
+    return null;
+  }
+
+  const sourceGroupName = toStringOrEmpty(changesBefore?.parentName) || '-';
+  const sourceGroupId = toStringOrEmpty(changesBefore?.parentId) || '-';
+  const targetGroupName = toStringOrEmpty(changesAfter?.parentName) || '-';
+  const targetGroupId = toStringOrEmpty(changesAfter?.parentId) || '-';
+  const transferredById = toStringOrEmpty(changesAfter?.transferredById);
+
+  const detailsParts = [
+    `원본 그룹: ${sourceGroupName} (${sourceGroupId})`,
+    `대상 그룹: ${targetGroupName} (${targetGroupId})`,
+  ];
+
+  if (transferredById) {
+    detailsParts.push(`수행자 ID: ${transferredById}`);
+  }
+
+  return {
+    action: '단위 이관',
+    target: resolveResourceLabel(log.resourceType, log.resourceName),
+    details: detailsParts.join(' / '),
+    severity: 'info',
+    result: 'success',
+    category: 'audit',
+  };
+}
+
+function buildFallbackSummary(
+  log: any,
+  changesBefore: Record<string, unknown> | null,
+  changesAfter: Record<string, unknown> | null,
+): FallbackSummary {
+  const unitTransferSummary = buildUnitTransferSummary(log, changesBefore, changesAfter);
+  if (unitTransferSummary) {
+    return unitTransferSummary;
+  }
+
   const action = resolveActionLabel(log.action);
   const target = resolveResourceLabel(log.resourceType, log.resourceName);
   const category = resolveAuditCategory(log.resourceType);
@@ -117,12 +165,13 @@ function hasSummary(value: Record<string, unknown> | null): boolean {
 
 function enrichChangesAfter(log: any): unknown {
   const base = toObject(log.changesAfter);
+  const before = toObject(log.changesBefore);
   if (!base) {
     return {
       schemaVersion: 'system-log-v1',
       eventKind: 'audit-event',
       category: resolveAuditCategory(log.resourceType),
-      summary: buildFallbackSummary(log, null),
+      summary: buildFallbackSummary(log, before, null),
     };
   }
 
@@ -135,7 +184,7 @@ function enrichChangesAfter(log: any): unknown {
     schemaVersion: toStringOrEmpty(base.schemaVersion) || 'system-log-v1',
     eventKind: toStringOrEmpty(base.eventKind) || 'audit-event',
     category: toStringOrEmpty(base.category) || resolveAuditCategory(log.resourceType),
-    summary: buildFallbackSummary(log, base),
+    summary: buildFallbackSummary(log, before, base),
   };
 }
 

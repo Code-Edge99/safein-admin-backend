@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException 
 import { AuditAction } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
-import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertLeafOrganization } from '../../common/utils/organization-scope.util';
+import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertCompanyOrGroupOrganization } from '../../common/utils/organization-scope.util';
 import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toTimePolicyResponseDto } from './time-policies.mapper';
 import {
@@ -50,7 +50,7 @@ export class TimePoliciesService {
       throw new BadRequestException('현장을 찾을 수 없습니다.');
     }
 
-    await assertLeafOrganization(this.prisma, organizationId);
+    await assertCompanyOrGroupOrganization(this.prisma, organizationId);
 
     const normalizedSlot = this.resolvePrimaryTimeSlot(createTimePolicyDto);
     if (!normalizedSlot) {
@@ -204,6 +204,7 @@ export class TimePoliciesService {
       if (!org) {
         throw new BadRequestException('현장을 찾을 수 없습니다.');
       }
+      await assertCompanyOrGroupOrganization(this.prisma, organizationId);
       updateData.organizationId = organizationId;
     }
 

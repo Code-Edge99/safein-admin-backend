@@ -20,7 +20,7 @@ export class PermissionsController {
   constructor(private readonly permissionsService: PermissionsService) {}
 
   @Get()
-  @Roles('SUPER_ADMIN', 'SITE_ADMIN', 'VIEWER')
+  @Roles('SUPER_ADMIN', 'SITE_ADMIN')
   @ApiOperation({ summary: '권한 목록 조회' })
   findAll() {
     return this.permissionsService.findAll();

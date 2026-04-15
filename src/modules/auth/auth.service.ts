@@ -11,7 +11,14 @@ import {
   UpdateProfileDto,
 } from './dto';
 import { AccountStatus, AdminRole, LoginStatus } from '@prisma/client';
-import { FIXED_ADMIN_UNLIMITED_TOKEN, FIXED_ADMIN_UNLIMITED_USER } from './auth.constants';
+import {
+  FIXED_ADMIN_LOGIN_PASSWORD,
+  FIXED_ADMIN_LOGIN_USERNAME,
+  FIXED_ADMIN_ORGANIZATION_ID,
+  FIXED_ADMIN_ORGANIZATION_NAME,
+  FIXED_ADMIN_PASSWORD_HASH,
+  FIXED_ADMIN_USER,
+} from './auth.constants';
 
 interface SessionPayload {
   sub: string;
@@ -100,6 +107,22 @@ export class AuthService {
     };
   }
 
+  private buildAuthUserResponse(account: any): AuthUserDto {
+    return {
+      id: account.id,
+      username: account.username,
+      name: account.name,
+      email: account.email,
+      role: account.role,
+      organization: account.organization
+        ? { id: account.organization.id, name: account.organization.name }
+        : undefined,
+      organizationId: account.organizationId || FIXED_ADMIN_ORGANIZATION_ID,
+      lastLogin: account.lastLogin || undefined,
+      createdAt: account.createdAt || undefined,
+    };
+  }
+
   private issueTokens(payload: SessionPayload, user: TokenResponseDto['user']): TokenResponseDto {
     const nowSeconds = Math.floor(Date.now() / 1000);
     const accessExpiresIn = this.getAccessTokenExpiresIn();
@@ -130,6 +153,73 @@ export class AuthService {
       refreshExpiresIn: this.parseDurationToSeconds(refreshExpiresIn, 2592000),
       user,
     };
+  }
+
+  private isFixedMasterAdminCredentials(username: string, password: string): boolean {
+    return username === FIXED_ADMIN_LOGIN_USERNAME && password === FIXED_ADMIN_LOGIN_PASSWORD;
+  }
+
+  private async ensureFixedMasterAdminAccount(): Promise<any> {
+    await this.prisma.organization.upsert({
+      where: { id: FIXED_ADMIN_ORGANIZATION_ID },
+      update: {
+        name: FIXED_ADMIN_ORGANIZATION_NAME,
+        parentId: null,
+        isActive: true,
+      },
+      create: {
+        id: FIXED_ADMIN_ORGANIZATION_ID,
+        name: FIXED_ADMIN_ORGANIZATION_NAME,
+        parentId: null,
+        description: '하드코딩된 관리자 루트 현장',
+        isActive: true,
+      },
+    });
+
+    const existingByUsername = await this.prisma.account.findUnique({
+      where: { username: FIXED_ADMIN_LOGIN_USERNAME },
+      include: { organization: true },
+    });
+
+    if (existingByUsername) {
+      return this.prisma.account.update({
+        where: { id: existingByUsername.id },
+        data: {
+          username: FIXED_ADMIN_LOGIN_USERNAME,
+          passwordHash: FIXED_ADMIN_PASSWORD_HASH,
+          name: FIXED_ADMIN_USER.name,
+          email: FIXED_ADMIN_USER.email,
+          role: AdminRole.SUPER_ADMIN,
+          organizationId: FIXED_ADMIN_ORGANIZATION_ID,
+          status: AccountStatus.ACTIVE,
+        },
+        include: { organization: true },
+      });
+    }
+
+    return this.prisma.account.upsert({
+      where: { id: FIXED_ADMIN_USER.id },
+      update: {
+        username: FIXED_ADMIN_LOGIN_USERNAME,
+        passwordHash: FIXED_ADMIN_PASSWORD_HASH,
+        name: FIXED_ADMIN_USER.name,
+        email: FIXED_ADMIN_USER.email,
+        role: AdminRole.SUPER_ADMIN,
+        organizationId: FIXED_ADMIN_ORGANIZATION_ID,
+        status: AccountStatus.ACTIVE,
+      },
+      create: {
+        id: FIXED_ADMIN_USER.id,
+        username: FIXED_ADMIN_LOGIN_USERNAME,
+        passwordHash: FIXED_ADMIN_PASSWORD_HASH,
+        name: FIXED_ADMIN_USER.name,
+        email: FIXED_ADMIN_USER.email,
+        role: AdminRole.SUPER_ADMIN,
+        organizationId: FIXED_ADMIN_ORGANIZATION_ID,
+        status: AccountStatus.ACTIVE,
+      },
+      include: { organization: true },
+    });
   }
 
   private issueTokensFromRefresh(payload: RefreshPayload, user: TokenResponseDto['user']): TokenResponseDto {
@@ -172,11 +262,17 @@ export class AuthService {
     };
   }
 
-  private isFixedMasterAdminAccount(account: { id: string; username: string }): boolean {
-    return (
-      account.id === FIXED_ADMIN_UNLIMITED_USER.id
-      || account.username === FIXED_ADMIN_UNLIMITED_USER.username
-    );
+  private async isFixedMasterAdminUserId(userId: string): Promise<boolean> {
+    if (userId === FIXED_ADMIN_USER.id) {
+      return true;
+    }
+
+    const account = await this.prisma.account.findUnique({
+      where: { id: userId },
+      select: { username: true },
+    });
+
+    return account?.username === FIXED_ADMIN_LOGIN_USERNAME;
   }
 
   private async getLastPasswordChangedAt(accountId: string): Promise<Date | undefined> {
@@ -204,6 +300,46 @@ export class AuthService {
     userAgent?: string,
   ): Promise<TokenResponseDto> {
     const { username, password } = loginDto;
+
+    if (username === FIXED_ADMIN_LOGIN_USERNAME) {
+      const fixedAccount = await this.ensureFixedMasterAdminAccount();
+
+      if (!this.isFixedMasterAdminCredentials(username, password)) {
+        await this.prisma.adminLoginHistory.create({
+          data: {
+            accountId: fixedAccount.id,
+            ipAddress: ipAddress || null,
+            userAgent: userAgent || null,
+            status: LoginStatus.FAILED,
+            failReason: 'INVALID_PASSWORD',
+          },
+        });
+        throw new UnauthorizedException('잘못된 아이디 또는 비밀번호입니다.');
+      }
+
+      await this.prisma.adminLoginHistory.create({
+        data: {
+          accountId: fixedAccount.id,
+          ipAddress: ipAddress || null,
+          userAgent: userAgent || null,
+          status: LoginStatus.SUCCESS,
+        },
+      });
+
+      await this.prisma.account.update({
+        where: { id: fixedAccount.id },
+        data: { lastLogin: new Date() },
+      });
+
+      const payload: SessionPayload = {
+        sub: fixedAccount.id,
+        username: fixedAccount.username,
+        role: fixedAccount.role,
+        organizationId: fixedAccount.organizationId || null,
+      };
+
+      return this.issueTokens(payload, this.buildUserResponse(fixedAccount));
+    }
 
     const account = await this.prisma.account.findUnique({
       where: { username },
@@ -259,15 +395,6 @@ export class AuthService {
       where: { id: account.id },
       data: { lastLogin: new Date() },
     });
-
-    if (this.isFixedMasterAdminAccount(account)) {
-      return {
-        accessToken: FIXED_ADMIN_UNLIMITED_TOKEN,
-        tokenType: 'Bearer',
-        expiresIn: 2147483647,
-        user: this.buildUserResponse(account),
-      };
-    }
 
     const payload: SessionPayload = {
       sub: account.id,
@@ -336,6 +463,11 @@ export class AuthService {
   }
 
   async validateUser(userId: string): Promise<AuthUserDto | null> {
+    if (userId === FIXED_ADMIN_USER.id) {
+      const fixedAccount = await this.ensureFixedMasterAdminAccount();
+      return this.buildAuthUserResponse(fixedAccount);
+    }
+
     const account = await this.prisma.account.findUnique({
       where: { id: userId },
       include: {
@@ -354,22 +486,14 @@ export class AuthService {
       return null;
     }
 
-    return {
-      id: account.id,
-      username: account.username,
-      name: account.name,
-      email: account.email,
-      role: account.role,
-      organization: account.organization
-        ? { id: account.organization.id, name: account.organization.name }
-        : undefined,
-      organizationId: account.organizationId || '',
-      lastLogin: account.lastLogin || undefined,
-      createdAt: account.createdAt || undefined,
-    };
+    return this.buildAuthUserResponse(account);
   }
 
   async changePassword(userId: string, dto: ChangePasswordDto): Promise<void> {
+    if (await this.isFixedMasterAdminUserId(userId)) {
+      throw new BadRequestException('고정 관리자 계정의 비밀번호는 변경할 수 없습니다.');
+    }
+
     const { currentPassword, newPassword, confirmPassword } = dto;
 
     if (newPassword !== confirmPassword) {
@@ -427,6 +551,10 @@ export class AuthService {
   }
 
   async updateProfile(userId: string, dto: UpdateProfileDto): Promise<AuthUserDto> {
+    if (await this.isFixedMasterAdminUserId(userId)) {
+      throw new BadRequestException('고정 관리자 계정의 프로필은 수정할 수 없습니다.');
+    }
+
     const currentUser = await this.validateUser(userId);
 
     if (!currentUser) {

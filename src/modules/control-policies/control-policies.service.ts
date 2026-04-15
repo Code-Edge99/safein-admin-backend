@@ -8,7 +8,11 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { AuditAction, DeviceOS, EmployeeStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ensureOrganizationInScope, assertLeafOrganization } from '../../common/utils/organization-scope.util';
+import {
+  ensureOrganizationInScope,
+  assertCompanyOrGroupOrganization,
+  resolveOrganizationClassification,
+} from '../../common/utils/organization-scope.util';
 import { resolveEmployeePrimaryIds } from '../../common/utils/employee-identifier.util';
 import { toControlPolicyDetailDto, toControlPolicyResponseDto } from './control-policies.mapper';
 import { readStageConfig } from '../../common/config/stage.config';
@@ -75,7 +79,7 @@ export class ControlPoliciesService {
 
     const policy = await this.prisma.controlPolicy.findUnique({
       where: { id: policyId },
-      select: { organizationId: true },
+      select: { organizationId: true, targetUnitIds: true },
     });
 
     if (!policy || !scopeOrganizationIds.includes(policy.organizationId)) {
@@ -95,6 +99,7 @@ export class ControlPoliciesService {
       behaviorConditionIds,
       allowedAppPresetIds,
       employeeIds,
+      targetOrganizationIds,
       ...rest
     } = createDto;
     const resolvedEmployeeIds = await resolveEmployeePrimaryIds(this.prisma, employeeIds);
@@ -109,14 +114,20 @@ export class ControlPoliciesService {
       throw new BadRequestException('현장을 찾을 수 없습니다.');
     }
 
-    await assertLeafOrganization(this.prisma, organizationId);
+    await assertCompanyOrGroupOrganization(this.prisma, organizationId);
 
-    // 현장과 정책은 1:1 매핑 — 이미 정책이 있으면 생성 불가
+    const resolvedTargetUnitIds = await this.resolveTargetUnitIds(
+      this.prisma,
+      organizationId,
+      targetOrganizationIds,
+    );
+
     const existingPolicy = await this.prisma.controlPolicy.findFirst({
       where: { organizationId },
+      select: { id: true },
     });
     if (existingPolicy) {
-      throw new BadRequestException('해당 현장에는 이미 통제정책이 존재합니다. 현장당 하나의 정책만 허용됩니다.');
+      throw new BadRequestException('정책 소유 현장(회사/그룹)당 통제 정책은 1개만 생성할 수 있습니다. 기존 정책을 수정해주세요.');
     }
 
     await this.validatePolicyRelations(this.prisma, organizationId, {
@@ -125,6 +136,7 @@ export class ControlPoliciesService {
       behaviorConditionIds,
       allowedAppPresetIds,
       employeeIds,
+      targetOrganizationIds: resolvedTargetUnitIds,
     });
 
     this.ensureSingleSelectionConstraints({
@@ -139,6 +151,7 @@ export class ControlPoliciesService {
       data: {
         ...rest,
         organizationId,
+        targetUnitIds: resolvedTargetUnitIds,
         createdById: actorUserId,
         updatedById: actorUserId,
         zones: zoneIds?.length
@@ -444,6 +457,7 @@ export class ControlPoliciesService {
       behaviorConditionIds,
       allowedAppPresetIds,
       employeeIds,
+      targetOrganizationIds,
       ...rest
     } = updateDto;
 
@@ -456,6 +470,7 @@ export class ControlPoliciesService {
         where: { id },
         select: {
           organizationId: true,
+          targetUnitIds: true,
           _count: {
             select: {
               zones: true,
@@ -478,6 +493,7 @@ export class ControlPoliciesService {
             if (scopeOrganizationIds && !scopeOrganizationIds.includes(targetOrganizationId)) {
               throw new ForbiddenException('요청한 현장은 접근 권한 범위를 벗어났습니다.');
             }
+      await assertCompanyOrGroupOrganization(tx, targetOrganizationId);
 
       const organizationChanged =
         organizationId !== undefined && organizationId !== currentPolicy.organizationId;
@@ -485,18 +501,30 @@ export class ControlPoliciesService {
       if (organizationId) {
         const org = await tx.organization.findUnique({ where: { id: organizationId } });
         if (!org) throw new BadRequestException('현장을 찾을 수 없습니다.');
+        await assertCompanyOrGroupOrganization(tx, organizationId);
 
         if (organizationChanged) {
           const existingPolicyOnTarget = await tx.controlPolicy.findFirst({
-            where: { organizationId },
+            where: {
+              organizationId,
+              id: { not: id },
+            },
+            select: { id: true },
           });
           if (existingPolicyOnTarget) {
-            throw new BadRequestException('대상 현장에는 이미 통제정책이 존재합니다. 현장당 하나의 정책만 허용됩니다.');
+            throw new BadRequestException('이동 대상 현장에는 이미 통제 정책이 있습니다. 회사/그룹당 1개 정책만 허용됩니다.');
           }
         }
 
         updateData.organizationId = organizationId;
       }
+
+      const resolvedTargetUnitIds = await this.resolveTargetUnitIds(
+        tx,
+        targetOrganizationId,
+        targetOrganizationIds,
+      );
+      updateData.targetUnitIds = resolvedTargetUnitIds;
 
       await this.validatePolicyRelations(tx, targetOrganizationId, {
         zoneIds,
@@ -504,6 +532,7 @@ export class ControlPoliciesService {
         behaviorConditionIds,
         allowedAppPresetIds,
         employeeIds,
+        targetOrganizationIds: resolvedTargetUnitIds,
       });
 
       this.ensureSingleSelectionConstraints({
@@ -596,7 +625,7 @@ export class ControlPoliciesService {
           where: {
             policyId: id,
             employee: {
-              organizationId: { not: targetOrganizationId },
+              organizationId: { notIn: resolvedTargetUnitIds },
             },
           },
         });
@@ -973,6 +1002,31 @@ export class ControlPoliciesService {
     return 5;
   }
 
+  private async resolvePolicyDispatchTargetOrganizationIds(
+    ownerOrganizationId: string,
+    configuredTargetUnitIds?: string[],
+  ): Promise<string[]> {
+    const normalizedConfigured = this.normalizeIds(configuredTargetUnitIds);
+    if (normalizedConfigured.length > 0) {
+      return normalizedConfigured;
+    }
+
+    const owner = await this.prisma.organization.findUnique({
+      where: { id: ownerOrganizationId },
+      select: { id: true, teamCode: true },
+    });
+
+    if (!owner) {
+      return [];
+    }
+
+    if (owner.teamCode) {
+      return [owner.id];
+    }
+
+    return this.getDescendantUnitOrganizationIds(this.prisma, owner.id);
+  }
+
   private async notifyPolicyChangedForOrganization(params: {
     policyId: string;
     organizationId: string;
@@ -989,9 +1043,26 @@ export class ControlPoliciesService {
         `[policy_changed] dispatch start dispatchId=${dispatchId}, trigger=${params.trigger}, policyId=${params.policyId}, org=${params.organizationId}, endpoint=${endpointUrl}, concurrency=${dispatchConcurrency}, endpointHint=${endpointHint}`,
       );
 
+      const policy = await this.prisma.controlPolicy.findUnique({
+        where: { id: params.policyId },
+        select: { targetUnitIds: true },
+      });
+
+      const targetOrganizationIds = await this.resolvePolicyDispatchTargetOrganizationIds(
+        params.organizationId,
+        policy?.targetUnitIds,
+      );
+
+      if (targetOrganizationIds.length === 0) {
+        this.logger.warn(
+          `[policy_changed] target organization empty; skip dispatch policyId=${params.policyId}, org=${params.organizationId}`,
+        );
+        return;
+      }
+
       const totalTargetEmployees = await this.prisma.employee.count({
         where: {
-          organizationId: params.organizationId,
+          organizationId: { in: targetOrganizationIds },
           status: EmployeeStatus.ACTIVE,
         },
       });
@@ -1009,7 +1080,7 @@ export class ControlPoliciesService {
           d."pushToken"
         FROM devices d
         JOIN employees e ON e.id = d."employeeId"
-        WHERE d."organizationId" = ${params.organizationId}
+        WHERE d."organizationId" IN (${Prisma.join(targetOrganizationIds)})
           AND e.status = CAST(${EmployeeStatus.ACTIVE} AS "EmployeeStatus")
           AND d."pushToken" IS NOT NULL
           AND (d."pushTokenStatus" IS NULL OR d."pushTokenStatus" <> 'ERROR')
@@ -1125,6 +1196,7 @@ export class ControlPoliciesService {
         trigger: params.trigger,
         policyId: params.policyId,
         organizationId: params.organizationId,
+        targetOrganizationIds,
         endpointUrl,
         endpointHint,
         dispatchConcurrency,
@@ -1573,7 +1645,7 @@ export class ControlPoliciesService {
 
     const policy = await this.prisma.controlPolicy.findUnique({
       where: { id: policyId },
-      select: { organizationId: true },
+      select: { organizationId: true, targetUnitIds: true },
     });
     if (!policy) {
       throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
@@ -1581,7 +1653,10 @@ export class ControlPoliciesService {
 
     const resolvedEmployeeIds = await resolveEmployeePrimaryIds(this.prisma, employeeIds);
 
-    await this.validatePolicyRelations(this.prisma, policy.organizationId, { employeeIds });
+    await this.validatePolicyRelations(this.prisma, policy.organizationId, {
+      employeeIds,
+      targetOrganizationIds: policy.targetUnitIds,
+    });
 
     await this.prisma.$transaction(async (tx) => {
       await tx.controlPolicyEmployee.deleteMany({ where: { policyId } });
@@ -1749,6 +1824,7 @@ export class ControlPoliciesService {
       behaviorConditionIds?: string[];
       allowedAppPresetIds?: string[];
       employeeIds?: string[];
+      targetOrganizationIds?: string[];
     },
   ): Promise<void> {
     const {
@@ -1757,24 +1833,22 @@ export class ControlPoliciesService {
       behaviorConditionIds,
       allowedAppPresetIds,
       employeeIds,
+      targetOrganizationIds,
     } = relationIds;
-
-    const allowedPolicySourceOrganizationIds = await this.getSelfAndAncestorOrganizationIds(
-      tx,
-      organizationId,
-    );
+    const targetUnitIds = this.normalizeIds(targetOrganizationIds);
+    const relationSourceOrganizationIds = await this.resolveRelationSourceOrganizationIds(tx, organizationId);
 
     const uniqueZoneIds = this.normalizeIds(zoneIds);
     if (uniqueZoneIds.length > 0) {
       const zoneCount = await tx.zone.count({
         where: {
           id: { in: uniqueZoneIds },
-          organizationId: { in: allowedPolicySourceOrganizationIds },
+          organizationId: { in: relationSourceOrganizationIds },
           deletedAt: null,
         },
       });
       if (zoneCount !== uniqueZoneIds.length) {
-        throw new BadRequestException('구역 ID가 유효하지 않거나 정책 현장/상위 현장과 일치하지 않습니다.');
+        throw new BadRequestException('구역 ID가 유효하지 않거나 정책 소유 범위(그룹/회사)와 일치하지 않습니다.');
       }
     }
 
@@ -1783,11 +1857,11 @@ export class ControlPoliciesService {
       const timePolicyCount = await tx.timePolicy.count({
         where: {
           id: { in: uniqueTimePolicyIds },
-          organizationId: { in: allowedPolicySourceOrganizationIds },
+          organizationId: { in: relationSourceOrganizationIds },
         },
       });
       if (timePolicyCount !== uniqueTimePolicyIds.length) {
-        throw new BadRequestException('시간 정책 ID가 유효하지 않거나 정책 현장/상위 현장과 일치하지 않습니다.');
+        throw new BadRequestException('시간 정책 ID가 유효하지 않거나 정책 소유 범위(그룹/회사)와 일치하지 않습니다.');
       }
     }
 
@@ -1796,11 +1870,11 @@ export class ControlPoliciesService {
       const behaviorConditionCount = await tx.behaviorCondition.count({
         where: {
           id: { in: uniqueBehaviorConditionIds },
-          organizationId: { in: allowedPolicySourceOrganizationIds },
+          organizationId: { in: relationSourceOrganizationIds },
         },
       });
       if (behaviorConditionCount !== uniqueBehaviorConditionIds.length) {
-        throw new BadRequestException('행동 조건 ID가 유효하지 않거나 정책 현장/상위 현장과 일치하지 않습니다.');
+        throw new BadRequestException('행동 조건 ID가 유효하지 않거나 정책 소유 범위(그룹/회사)와 일치하지 않습니다.');
       }
     }
 
@@ -1809,50 +1883,117 @@ export class ControlPoliciesService {
       const presetCount = await tx.allowedAppPreset.count({
         where: {
           id: { in: uniquePresetIds },
-          organizationId: { in: allowedPolicySourceOrganizationIds },
+          organizationId: { in: relationSourceOrganizationIds },
         },
       });
       if (presetCount !== uniquePresetIds.length) {
-        throw new BadRequestException('허용앱 프리셋 ID가 유효하지 않거나 정책 현장/상위 현장과 일치하지 않습니다.');
+        throw new BadRequestException('허용앱 프리셋 ID가 유효하지 않거나 정책 소유 범위(그룹/회사)와 일치하지 않습니다.');
       }
     }
 
     const rawEmployeeIds = this.normalizeIds(employeeIds);
     const uniqueEmployeeIds = await resolveEmployeePrimaryIds(tx, rawEmployeeIds);
     if (rawEmployeeIds.length > 0 && uniqueEmployeeIds.length !== rawEmployeeIds.length) {
-      throw new BadRequestException('직원 ID가 유효하지 않거나 정책 현장과 일치하지 않습니다.');
+      throw new BadRequestException('직원 ID가 유효하지 않거나 적용 단위와 일치하지 않습니다.');
     }
 
     if (uniqueEmployeeIds.length > 0) {
+      if (targetUnitIds.length === 0) {
+        throw new BadRequestException('직원 개별 지정 시 적용 단위를 먼저 선택해주세요.');
+      }
+
       const employeeCount = await tx.employee.count({
-        where: { id: { in: uniqueEmployeeIds }, organizationId },
+        where: { id: { in: uniqueEmployeeIds }, organizationId: { in: targetUnitIds } },
       });
       if (employeeCount !== uniqueEmployeeIds.length) {
-        throw new BadRequestException('직원 ID가 유효하지 않거나 정책 현장과 일치하지 않습니다.');
+        throw new BadRequestException('직원 ID가 유효하지 않거나 적용 단위와 일치하지 않습니다.');
       }
     }
   }
 
-  private async getSelfAndAncestorOrganizationIds(tx: any, organizationId: string): Promise<string[]> {
-    const organizations = await tx.organization.findMany({
-      select: { id: true, parentId: true },
+  private async resolveRelationSourceOrganizationIds(tx: any, organizationId: string): Promise<string[]> {
+    const owner = await tx.organization.findUnique({
+      where: { id: organizationId },
+      select: { id: true, parentId: true, teamCode: true },
     });
 
-    const organizationMap = new Map<string, { id: string; parentId: string | null }>(
-      organizations.map((organization: { id: string; parentId: string | null }) => [organization.id, organization]),
-    );
+    if (!owner) {
+      throw new NotFoundException('현장을 찾을 수 없습니다.');
+    }
 
-    const result: string[] = [];
-    let currentId: string | null = organizationId;
+    const ids = new Set<string>([organizationId]);
+    const ownerClassification = resolveOrganizationClassification(owner);
+    if (ownerClassification !== 'GROUP') {
+      return Array.from(ids);
+    }
 
-    while (currentId) {
-      const current = organizationMap.get(currentId);
-      if (!current) {
-        break;
+    if (!owner.parentId) {
+      return Array.from(ids);
+    }
+
+    const parent = await tx.organization.findUnique({
+      where: { id: owner.parentId },
+      select: { id: true, parentId: true, teamCode: true },
+    });
+
+    if (parent && resolveOrganizationClassification(parent) === 'COMPANY') {
+      ids.add(parent.id);
+    }
+
+    return Array.from(ids);
+  }
+
+  private async resolveTargetUnitIds(
+    tx: any,
+    groupOrganizationId: string,
+    requestedTargetOrganizationIds?: string[],
+  ): Promise<string[]> {
+    const availableUnitIds = await this.getDescendantUnitOrganizationIds(tx, groupOrganizationId);
+    const availableUnitSet = new Set(availableUnitIds);
+
+    const requested = this.normalizeIds(requestedTargetOrganizationIds);
+    if (requested.length === 0) {
+      return availableUnitIds;
+    }
+
+    const invalidTargetIds = requested.filter((id) => !availableUnitSet.has(id));
+    if (invalidTargetIds.length > 0) {
+      throw new BadRequestException('적용 대상 단위가 유효하지 않거나 선택한 그룹 하위가 아닙니다.');
+    }
+
+    return requested;
+  }
+
+  private async getDescendantUnitOrganizationIds(tx: any, groupOrganizationId: string): Promise<string[]> {
+    const organizations = await tx.organization.findMany({
+      select: { id: true, parentId: true, teamCode: true },
+    });
+
+    const childrenByParent = new Map<string, Array<{ id: string; parentId: string | null; teamCode: string | null }>>();
+    for (const organization of organizations) {
+      if (!organization.parentId) {
+        continue;
       }
 
-      result.push(current.id);
-      currentId = current.parentId;
+      const bucket = childrenByParent.get(organization.parentId) ?? [];
+      bucket.push(organization);
+      childrenByParent.set(organization.parentId, bucket);
+    }
+
+    const result: string[] = [];
+    const queue: string[] = [groupOrganizationId];
+
+    while (queue.length > 0) {
+      const parentId = queue.shift() as string;
+      const children = childrenByParent.get(parentId) ?? [];
+      for (const child of children) {
+        if (child.teamCode) {
+          result.push(child.id);
+          continue;
+        }
+
+        queue.push(child.id);
+      }
     }
 
     return result;

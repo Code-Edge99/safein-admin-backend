@@ -58,6 +58,12 @@ export class CreateNoticeDto {
   @MaxLength(120)
   organizationId: string;
 
+  @ApiPropertyOptional({ description: '상단 고정 여부', default: false })
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  isPinned?: boolean;
+
   @ApiProperty({ description: '제목', maxLength: 200 })
   @IsString()
   @IsNotEmpty()

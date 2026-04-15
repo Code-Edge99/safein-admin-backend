@@ -33,6 +33,9 @@ export class NoticeResponseDto {
   @ApiProperty()
   organizationId: string;
 
+  @ApiProperty({ description: '상단 고정 여부' })
+  isPinned: boolean;
+
   @ApiPropertyOptional()
   organizationName?: string;
 

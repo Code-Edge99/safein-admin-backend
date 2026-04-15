@@ -3,7 +3,7 @@ import { AuditAction } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { preferKstTimestamp } from '../../common/utils/kst-time.util';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
-import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertLeafOrganization } from '../../common/utils/organization-scope.util';
+import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertCompanyOrGroupOrganization } from '../../common/utils/organization-scope.util';
 import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toZoneResponseDto } from './zones.mapper';
 import {
@@ -51,7 +51,7 @@ export class ZonesService {
       throw new BadRequestException('현장을 찾을 수 없습니다.');
     }
 
-    await assertLeafOrganization(this.prisma, organizationId);
+    await assertCompanyOrGroupOrganization(this.prisma, organizationId);
 
     // 좌표 정규화: lat/lng 또는 latitude/longitude 모두 수용
     const normalizedCoords = this.normalizeCoordinates(coordinates);
@@ -212,6 +212,7 @@ export class ZonesService {
         if (!org) {
           throw new BadRequestException('현장을 찾을 수 없습니다.');
         }
+        await assertCompanyOrGroupOrganization(this.prisma, organizationId);
       }
       updateData.organizationId = organizationId;
     }

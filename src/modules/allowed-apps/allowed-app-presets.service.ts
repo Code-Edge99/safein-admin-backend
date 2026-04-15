@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException 
 import { AuditAction } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
-import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertLeafOrganization } from '../../common/utils/organization-scope.util';
+import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertCompanyOrGroupOrganization } from '../../common/utils/organization-scope.util';
 import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toAllowedAppPresetDetailDto, toAllowedAppPresetResponseDto } from './allowed-app-presets.mapper';
 import {
@@ -107,7 +107,7 @@ export class AllowedAppPresetsService {
 
     this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
 
-    await assertLeafOrganization(this.prisma, dto.organizationId);
+    await assertCompanyOrGroupOrganization(this.prisma, dto.organizationId);
 
     const apps = await this.findAppsOrThrow(dto.appIds);
     const explicitPlatform = dto.platform === undefined ? undefined : this.normalizePlatform(dto.platform);
@@ -241,6 +241,9 @@ export class AllowedAppPresetsService {
     const existingPreset = await this.findOne(id, scopeOrganizationIds);
 
     this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
+    if (dto.organizationId) {
+      await assertCompanyOrGroupOrganization(this.prisma, dto.organizationId);
+    }
 
     const explicitPlatform = dto.platform === undefined ? undefined : this.normalizePlatform(dto.platform);
 

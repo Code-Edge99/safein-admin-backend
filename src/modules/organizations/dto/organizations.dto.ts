@@ -1,7 +1,19 @@
-import { IsString, IsNotEmpty, IsOptional, IsBoolean } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsEnum } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { normalizeOptionalPhoneNumber } from '../../../common/utils/phone.util';
+
+export enum OrganizationClassificationEnum {
+  ADMIN = 'ADMIN',
+  COMPANY = 'COMPANY',
+  GROUP = 'GROUP',
+  UNIT = 'UNIT',
+}
+
+export enum CreateOrganizationNodeTypeEnum {
+  GROUP = 'GROUP',
+  UNIT = 'UNIT',
+}
 
 export class CreateOrganizationDto {
   @ApiProperty({ description: '현장명' })
@@ -13,6 +25,15 @@ export class CreateOrganizationDto {
   @IsOptional()
   @IsString()
   parentId?: string;
+
+  @ApiPropertyOptional({
+    description: '생성할 하위 현장 유형 (GROUP: 그룹, UNIT: 단위)',
+    enum: CreateOrganizationNodeTypeEnum,
+    default: CreateOrganizationNodeTypeEnum.UNIT,
+  })
+  @IsOptional()
+  @IsEnum(CreateOrganizationNodeTypeEnum)
+  nodeType?: CreateOrganizationNodeTypeEnum;
 
   @ApiPropertyOptional({ description: '주소' })
   @IsOptional()
@@ -59,6 +80,12 @@ export class OrganizationResponseDto {
 
   @ApiProperty({ description: '현장명' })
   name: string;
+
+  @ApiProperty({
+    description: '현장 분류 (관리자/회사/그룹/단위)',
+    enum: OrganizationClassificationEnum,
+  })
+  classification: OrganizationClassificationEnum;
 
   @ApiPropertyOptional({ description: '상위 현장 ID' })
   parentId: string | null;

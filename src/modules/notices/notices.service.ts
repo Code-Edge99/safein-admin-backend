@@ -251,6 +251,7 @@ export class NoticesService {
     return {
       id: notice.id,
       organizationId: notice.organizationId,
+      isPinned: notice.isPinned,
       organizationName: notice.organization?.name,
       title: notice.title,
       contentHtml: notice.contentHtml,
@@ -310,7 +311,10 @@ export class NoticesService {
         },
         skip: filter.skip,
         take: filter.take,
-        orderBy: { createdAt: 'desc' },
+        orderBy: [
+          { isPinned: 'desc' },
+          { createdAt: 'desc' },
+        ],
       }),
       this.prisma.notice.count({ where }),
     ]);
@@ -382,6 +386,7 @@ export class NoticesService {
     const created = await this.prisma.notice.create({
       data: {
         organizationId: dto.organizationId,
+        isPinned: dto.isPinned === true,
         title,
         contentHtml,
         contentText: this.extractContentText(contentHtml, dto.contentText),
@@ -455,6 +460,7 @@ export class NoticesService {
 
     const title = dto.title !== undefined ? dto.title.trim() : existing.title;
     const contentHtml = dto.contentHtml !== undefined ? dto.contentHtml.trim() : existing.contentHtml;
+    const isPinned = dto.isPinned !== undefined ? dto.isPinned === true : existing.isPinned;
 
     if (!title || !contentHtml) {
       throw new BadRequestException('제목과 본문은 필수입니다.');
@@ -488,6 +494,7 @@ export class NoticesService {
         where: { id: existing.id },
         data: {
           organizationId: targetOrganizationId,
+          isPinned,
           title,
           contentHtml,
           contentText: this.extractContentText(contentHtml, dto.contentText),

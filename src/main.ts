@@ -7,7 +7,6 @@ import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { RequestLoggingInterceptor } from './common/interceptors/request-logging.interceptor';
-import { FIXED_ADMIN_UNLIMITED_TOKEN } from './modules/auth/auth.constants';
 import { readStageConfig, resolveRuntimeStage } from './common/config/stage.config';
 import { PrismaService } from './prisma/prisma.service';
 import {
@@ -16,12 +15,7 @@ import {
   parsePersistLogLevels,
 } from './common/utils/persistent-audit.logger';
 
-const MASTER_ADMIN_USERNAME = 'master-admin';
-
-function createUnlimitedAdminToken(configService: ConfigService): string | null {
-  const token = FIXED_ADMIN_UNLIMITED_TOKEN?.trim();
-  return token ? token : null;
-}
+const MASTER_ADMIN_USERNAME = 'admin';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -94,22 +88,18 @@ async function bootstrap() {
   );
 
   // Swagger
-  const unlimitedAdminToken = createUnlimitedAdminToken(configService);
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Safein Admin API')
     .setDescription(
       `Safein Admin Backend API Documentation\n\n` +
-      `개발용 마스터 계정: ${MASTER_ADMIN_USERNAME} / Safein!2345\n` +
-      `무제한 Bearer 토큰은 아래 Authorize 설명 또는 서버 로그를 확인하세요.`,
+      `개발용 마스터 계정: ${MASTER_ADMIN_USERNAME} / admin123`,
     )
     .setVersion('1.0')
     .addBearerAuth({
       type: 'http',
       scheme: 'bearer',
       bearerFormat: 'JWT',
-      description: unlimitedAdminToken
-        ? `개발용 무제한 토큰 (만료 없음)\n${unlimitedAdminToken}`
-        : '무제한 토큰이 비어있습니다. auth.constants 설정을 확인하세요.',
+      description: '로그인 API로 발급된 액세스 토큰을 입력하세요.',
     })
     .build();
   const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);

@@ -1,12 +1,19 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { DeviceStatus, Prisma } from '@prisma/client';
+import { AuditAction, DeviceStatus, EmployeeStatus, Prisma } from '@prisma/client';
 import { randomInt } from 'crypto';
-import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertLeafOrganization } from '../../common/utils/organization-scope.util';
+import {
+  CODEEDGE_ROOT_ORGANIZATION_ID,
+  assertOrganizationInScopeOrThrow,
+  assertUnitOrganization,
+  ensureOrganizationInScope,
+  resolveOrganizationClassification,
+} from '../../common/utils/organization-scope.util';
 import { normalizePhoneNumber } from '../../common/utils/phone.util';
 import { toOrganizationResponseDto } from './organizations.mapper';
 import {
   CreateOrganizationDto,
+  CreateOrganizationNodeTypeEnum,
   UpdateOrganizationDto,
   OrganizationResponseDto,
   OrganizationTreeDto,
@@ -30,56 +37,101 @@ export class OrganizationsService {
     return value;
   }
 
-  private async issueLeafTeamCodeIfMissing(organizationId: string): Promise<string | null> {
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      const teamCode = this.generateTeamCodeCandidate();
+  private resolveNodeTypeByTeamCode(organization: { id: string; parentId: string | null; teamCode: string | null }): 'GROUP' | 'UNIT' | 'OTHER' {
+    const classification = resolveOrganizationClassification(organization);
+    if (classification === 'UNIT') {
+      return 'UNIT';
+    }
 
-      try {
-        return await this.prisma.$transaction(async (tx) => {
-          const current = await tx.organization.findUnique({
-            where: { id: organizationId },
-            select: {
-              teamCode: true,
-              _count: {
-                select: {
-                  children: true,
-                },
-              },
-            },
-          });
+    if (classification === 'GROUP') {
+      return 'GROUP';
+    }
 
-          if (!current) {
-            return null;
-          }
+    return 'OTHER';
+  }
 
-          // 팀코드는 말단(리프) 현장에만 유지한다.
-          if (current._count.children > 0) {
-            return null;
-          }
+  private resolveAncestorCompanyId(
+    organizationMap: Map<string, { id: string; parentId: string | null; teamCode: string | null }>,
+    organizationId: string,
+  ): string | null {
+    const visited = new Set<string>();
+    let current = organizationMap.get(organizationId) || null;
 
-          if (current.teamCode) {
-            return current.teamCode;
-          }
-
-          await tx.organization.update({
-            where: { id: organizationId },
-            data: {
-              teamCode,
-            },
-          });
-
-          return teamCode;
-        });
-      } catch (error) {
-        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-          continue;
-        }
-
-        throw error;
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      const classification = resolveOrganizationClassification(current);
+      if (classification === 'COMPANY') {
+        return current.id;
       }
+
+      if (!current.parentId) {
+        break;
+      }
+
+      current = organizationMap.get(current.parentId) || null;
     }
 
     return null;
+  }
+
+  private async assertParentSupportsChildType(
+    parentId: string,
+    childNodeType: CreateOrganizationNodeTypeEnum,
+  ): Promise<void> {
+    const parent = await this.prisma.organization.findUnique({
+      where: { id: parentId },
+      include: {
+        _count: {
+          select: {
+            children: true,
+            employees: true,
+            zones: true,
+            timePolicies: true,
+            behaviorConditions: true,
+            allowedAppPresets: true,
+            controlPolicies: true,
+          },
+        },
+      },
+    });
+
+    if (!parent) {
+      throw new NotFoundException('상위 현장을 찾을 수 없습니다.');
+    }
+
+    if (this.resolveNodeTypeByTeamCode(parent) === 'UNIT') {
+      throw new BadRequestException('단위 현장에는 하위 현장을 생성할 수 없습니다.');
+    }
+
+    const parentClassification = resolveOrganizationClassification(parent);
+    if (parentClassification === 'ADMIN' && childNodeType !== CreateOrganizationNodeTypeEnum.GROUP) {
+      throw new BadRequestException('관리자 루트 하위에는 회사 현장만 생성할 수 있습니다.');
+    }
+
+    if (parentClassification === 'COMPANY' && childNodeType !== CreateOrganizationNodeTypeEnum.GROUP) {
+      throw new BadRequestException('회사 하위에는 그룹만 생성할 수 있습니다.');
+    }
+
+    if (parentClassification === 'GROUP' && childNodeType !== CreateOrganizationNodeTypeEnum.UNIT) {
+      throw new BadRequestException('그룹 하위에는 단위만 생성할 수 있습니다.');
+    }
+
+    if (parent._count.children === 0) {
+      const c = parent._count;
+      if (
+        c.employees > 0
+        || c.zones > 0
+        || c.timePolicies > 0
+        || c.behaviorConditions > 0
+        || c.allowedAppPresets > 0
+        || c.controlPolicies > 0
+      ) {
+        throw new BadRequestException(
+          '해당 현장에 직원이나 정책이 배정되어 있어 하위 현장을 생성할 수 없습니다. 직원과 정책을 먼저 제거해주세요.',
+        );
+      }
+    }
+
   }
 
   private ensureOrganizationInScope(
@@ -96,85 +148,94 @@ export class OrganizationsService {
     assertOrganizationInScopeOrThrow(organization.id, scopeOrganizationIds, '현장을 찾을 수 없습니다.');
   }
 
-  async create(dto: CreateOrganizationDto, scopeOrganizationIds?: string[], actorUserId?: string): Promise<OrganizationResponseDto> {
+  async create(
+    dto: CreateOrganizationDto,
+    scopeOrganizationIds?: string[],
+    actorUserId?: string,
+    actorRole?: string,
+  ): Promise<OrganizationResponseDto> {
     this.ensureOrganizationInScope(dto.parentId || undefined, scopeOrganizationIds);
     const normalizedManagerPhone = normalizePhoneNumber(dto.managerPhone);
+    let childNodeType = dto.nodeType ?? CreateOrganizationNodeTypeEnum.UNIT;
 
-    // 상위 현장 검증
     if (dto.parentId) {
       const parent = await this.prisma.organization.findUnique({
         where: { id: dto.parentId },
-        include: {
-          _count: {
-            select: {
-              children: true,
-              employees: true,
-              zones: true,
-              timePolicies: true,
-              behaviorConditions: true,
-              allowedAppPresets: true,
-              controlPolicies: true,
-            },
-          },
-        },
+        select: { id: true, parentId: true, teamCode: true },
       });
+
       if (!parent) {
         throw new NotFoundException('상위 현장을 찾을 수 없습니다.');
       }
-      // 상위가 단위(리프)이고 직원이나 정책이 있으면 하위 생성 차단
-      if (parent._count.children === 0) {
-        const c = parent._count;
-        if (c.employees > 0 || c.zones > 0 || c.timePolicies > 0 ||
-            c.behaviorConditions > 0 || c.allowedAppPresets > 0 || c.controlPolicies > 0) {
-          throw new BadRequestException(
-            '해당 현장에 직원이나 정책이 배정되어 있어 하위 현장을 생성할 수 없습니다. 직원과 정책을 먼저 제거해주세요.',
-          );
+
+      const parentClassification = resolveOrganizationClassification(parent);
+      if (parentClassification === 'ADMIN') {
+        if (actorRole !== 'SUPER_ADMIN') {
+          throw new ForbiddenException('회사 현장은 슈퍼관리자만 생성할 수 있습니다.');
         }
+        childNodeType = CreateOrganizationNodeTypeEnum.GROUP;
       }
+
+      await this.assertParentSupportsChildType(
+        dto.parentId,
+        childNodeType,
+      );
     }
 
+    const isGroupNode = childNodeType === CreateOrganizationNodeTypeEnum.GROUP;
+
     const organization = await this.prisma.$transaction(async (tx) => {
+      const createOrganization = async (teamCode: string | null) => {
+        const created = await tx.organization.create({
+          data: {
+            name: dto.name,
+            address: dto.address,
+            detailAddress: dto.detailAddress,
+            description: dto.description,
+            managerName: dto.managerName,
+            managerPhone: normalizedManagerPhone || undefined,
+            emergencyContact: dto.emergencyContact,
+            teamCode,
+            createdById: actorUserId,
+            updatedById: actorUserId,
+            parentId: dto.parentId || null,
+            isActive: dto.isActive ?? true,
+          } as any,
+          include: {
+            createdBy: { select: { id: true, name: true, username: true } },
+            updatedBy: { select: { id: true, name: true, username: true } },
+            _count: { select: { children: true } },
+          },
+        });
+
+        // 부모가 기존 단위였다면 하위 현장 생성과 함께 그룹으로 전환되므로 팀코드를 제거한다.
+        if (dto.parentId) {
+          await tx.organization.update({
+            where: { id: dto.parentId },
+            data: {
+              teamCode: null,
+              updatedById: actorUserId,
+            },
+          });
+        }
+
+        return created;
+      };
+
+      if (isGroupNode) {
+        return createOrganization(null);
+      }
+
       for (let attempt = 0; attempt < 30; attempt += 1) {
         const teamCode = this.generateTeamCodeCandidate();
 
         try {
-          const created = await tx.organization.create({
-            data: {
-              name: dto.name,
-              address: dto.address,
-              detailAddress: dto.detailAddress,
-              description: dto.description,
-              managerName: dto.managerName,
-              managerPhone: normalizedManagerPhone || undefined,
-              emergencyContact: dto.emergencyContact,
-              teamCode,
-              createdById: actorUserId,
-              updatedById: actorUserId,
-              parentId: dto.parentId || null,
-              isActive: dto.isActive ?? true,
-            } as any,
-            include: {
-              createdBy: { select: { id: true, name: true, username: true } },
-              updatedBy: { select: { id: true, name: true, username: true } },
-            },
-          });
-
-          // 부모가 기존 단위였다면 하위 현장 생성과 함께 그룹으로 전환되므로 팀코드를 제거한다.
-          if (dto.parentId) {
-            await tx.organization.update({
-              where: { id: dto.parentId },
-              data: {
-                teamCode: null,
-                updatedById: actorUserId,
-              },
-            });
-          }
-
-          return created;
+          return await createOrganization(teamCode);
         } catch (error) {
           if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
             continue;
           }
+
           throw error;
         }
       }
@@ -201,6 +262,11 @@ export class OrganizationsService {
             id: true,
             name: true,
             username: true,
+          },
+        },
+        _count: {
+          select: {
+            children: true,
           },
         },
       },
@@ -232,6 +298,7 @@ export class OrganizationsService {
           select: {
             employees: true,
             devices: true,
+            children: true,
           },
         },
       },
@@ -288,18 +355,16 @@ export class OrganizationsService {
             username: true,
           },
         },
+        _count: {
+          select: {
+            children: true,
+          },
+        },
       },
     });
 
     if (!organization) {
       throw new NotFoundException('현장을 찾을 수 없습니다.');
-    }
-
-    if (!organization.teamCode) {
-      const issuedTeamCode = await this.issueLeafTeamCodeIfMissing(organization.id);
-      if (issuedTeamCode) {
-        organization.teamCode = issuedTeamCode;
-      }
     }
 
     return this.toResponseDto(organization);
@@ -348,57 +413,80 @@ export class OrganizationsService {
     dto: UpdateOrganizationDto,
     scopeOrganizationIds?: string[],
     actorUserId?: string,
+    actorRole?: string,
   ): Promise<OrganizationResponseDto> {
     await this.findOne(id, scopeOrganizationIds); // 존재 여부 확인
     const normalizedManagerPhone = normalizePhoneNumber(dto.managerPhone);
+    const currentOrganization = await this.prisma.organization.findUnique({
+      where: { id },
+      select: { id: true, parentId: true, teamCode: true },
+    });
+
+    if (!currentOrganization) {
+      throw new NotFoundException('현장을 찾을 수 없습니다.');
+    }
+
+    const movingNodeType = this.resolveNodeTypeByTeamCode(currentOrganization);
+    const nextParentId = dto.parentId;
+    const isUnitTransfer = Boolean(
+      movingNodeType === 'UNIT'
+      && nextParentId
+      && nextParentId !== currentOrganization.parentId,
+    );
 
     // 순환 참조 방지
-    if (dto.parentId) {
-      this.ensureOrganizationInScope(dto.parentId, scopeOrganizationIds);
-      if (dto.parentId === id) {
+    if (nextParentId) {
+      this.ensureOrganizationInScope(nextParentId, scopeOrganizationIds);
+      if (nextParentId === id) {
         throw new BadRequestException('현장은 자기 자신을 상위 현장으로 설정할 수 없습니다.');
+      }
+
+      const targetParent = await this.prisma.organization.findUnique({
+        where: { id: nextParentId },
+        select: { id: true, parentId: true, teamCode: true },
+      });
+
+      if (!targetParent) {
+        throw new NotFoundException('상위 현장을 찾을 수 없습니다.');
+      }
+
+      if (resolveOrganizationClassification(targetParent) === 'ADMIN' && actorRole !== 'SUPER_ADMIN') {
+        throw new ForbiddenException('회사 현장은 슈퍼관리자만 생성할 수 있습니다.');
       }
 
       // 하위 현장을 상위로 설정하는지 확인
       const descendants = await this.getDescendants(id, scopeOrganizationIds);
-      if (descendants.some((d) => d.id === dto.parentId)) {
+      if (descendants.some((d) => d.id === nextParentId)) {
         throw new BadRequestException('하위 현장을 상위 현장으로 설정할 수 없습니다.');
       }
 
-      const parent = await this.prisma.organization.findUnique({
-        where: { id: dto.parentId },
-        include: {
-          _count: {
-            select: {
-              children: true,
-              employees: true,
-              zones: true,
-              timePolicies: true,
-              behaviorConditions: true,
-              allowedAppPresets: true,
-              controlPolicies: true,
-            },
-          },
-        },
-      });
-      if (!parent) {
-        throw new NotFoundException('상위 현장을 찾을 수 없습니다.');
+      if (movingNodeType === 'OTHER' && nextParentId !== currentOrganization.parentId) {
+        throw new BadRequestException('관리자/회사 레벨 현장은 구조 이동을 지원하지 않습니다.');
       }
 
-      if (parent._count.children === 0) {
-        const c = parent._count;
-        if (
-          c.employees > 0
-          || c.zones > 0
-          || c.timePolicies > 0
-          || c.behaviorConditions > 0
-          || c.allowedAppPresets > 0
-          || c.controlPolicies > 0
-        ) {
-          throw new BadRequestException(
-            '해당 현장에 직원이나 정책이 배정되어 있어 하위 현장을 생성할 수 없습니다. 직원과 정책을 먼저 제거해주세요.',
-          );
+      if (movingNodeType === 'UNIT' && nextParentId !== currentOrganization.parentId) {
+        const organizations = await this.prisma.organization.findMany({
+          select: {
+            id: true,
+            parentId: true,
+            teamCode: true,
+          },
+        });
+
+        const organizationMap = new Map(organizations.map((organization) => [organization.id, organization] as const));
+        const sourceCompanyId = this.resolveAncestorCompanyId(organizationMap, currentOrganization.id);
+        const targetCompanyId = this.resolveAncestorCompanyId(organizationMap, nextParentId);
+
+        if (!sourceCompanyId || !targetCompanyId || sourceCompanyId !== targetCompanyId) {
+          throw new BadRequestException('단위 현장은 같은 회사 내 그룹으로만 이관할 수 있습니다.');
         }
+      }
+
+      if (movingNodeType !== 'OTHER') {
+        await this.assertParentSupportsChildType(
+          nextParentId,
+          movingNodeType === 'UNIT' ? CreateOrganizationNodeTypeEnum.UNIT : CreateOrganizationNodeTypeEnum.GROUP,
+        );
       }
     }
 
@@ -414,7 +502,7 @@ export class OrganizationsService {
           managerPhone: dto.managerPhone === undefined ? undefined : normalizedManagerPhone || null,
           emergencyContact: dto.emergencyContact,
           updatedById: actorUserId,
-          parentId: dto.parentId,
+          parentId: nextParentId,
           isActive: dto.isActive,
         } as any,
         include: {
@@ -432,13 +520,18 @@ export class OrganizationsService {
               username: true,
             },
           },
+          _count: {
+            select: {
+              children: true,
+            },
+          },
         },
       });
 
       // 상위 현장이 생기면 그룹으로 전환되므로 팀코드를 제거한다.
-      if (dto.parentId) {
+      if (nextParentId) {
         await tx.organization.update({
-          where: { id: dto.parentId },
+          where: { id: nextParentId },
           data: {
             teamCode: null,
             updatedById: actorUserId,
@@ -448,6 +541,42 @@ export class OrganizationsService {
 
       return updated;
     });
+
+    if (isUnitTransfer && actorUserId) {
+      const parentIds = [currentOrganization.parentId, nextParentId]
+        .filter((parentId): parentId is string => Boolean(parentId));
+
+      const parentRows = parentIds.length > 0
+        ? await this.prisma.organization.findMany({
+            where: { id: { in: parentIds } },
+            select: { id: true, name: true },
+          })
+        : [];
+
+      const parentNameById = new Map(parentRows.map((parent) => [parent.id, parent.name] as const));
+
+      void this.prisma.auditLog.create({
+        data: {
+          accountId: actorUserId,
+          organizationId: organization.id,
+          action: AuditAction.UPDATE,
+          resourceType: 'Organization',
+          resourceId: organization.id,
+          resourceName: organization.name,
+          changesBefore: {
+            event: 'unit_transfer',
+            parentId: currentOrganization.parentId,
+            parentName: currentOrganization.parentId ? (parentNameById.get(currentOrganization.parentId) || null) : null,
+          },
+          changesAfter: {
+            event: 'unit_transfer',
+            parentId: nextParentId,
+            parentName: nextParentId ? (parentNameById.get(nextParentId) || null) : null,
+            transferredById: actorUserId,
+          },
+        },
+      }).catch(() => undefined);
+    }
 
     return this.toResponseDto(organization);
   }
@@ -482,8 +611,49 @@ export class OrganizationsService {
       throw new BadRequestException('하위 현장이 있는 현장은 삭제할 수 없습니다.');
     }
 
-    if (organization._count.employees > 0) {
+    const blockingEmployeeCount = await this.prisma.employee.count({
+      where: {
+        organizationId: id,
+        status: {
+          notIn: [EmployeeStatus.DELETE, EmployeeStatus.PHONE_INFO_REVIEW],
+        },
+      },
+    });
+
+    if (blockingEmployeeCount > 0) {
       throw new BadRequestException('직원이 소속된 현장은 삭제할 수 없습니다.');
+    }
+
+    const archivedEmployees = await this.prisma.employee.findMany({
+      where: {
+        organizationId: id,
+        status: {
+          in: [EmployeeStatus.DELETE, EmployeeStatus.PHONE_INFO_REVIEW],
+        },
+      },
+      select: { id: true },
+    });
+
+    if (archivedEmployees.length > 0 && id !== CODEEDGE_ROOT_ORGANIZATION_ID) {
+      const rootOrganization = await this.prisma.organization.findUnique({
+        where: { id: CODEEDGE_ROOT_ORGANIZATION_ID },
+        select: { id: true },
+      });
+
+      if (!rootOrganization) {
+        throw new BadRequestException('루트 조직 정보가 없어 삭제 대기 직원 데이터를 이관할 수 없습니다.');
+      }
+
+      await this.prisma.employee.updateMany({
+        where: {
+          id: {
+            in: archivedEmployees.map((employee) => employee.id),
+          },
+        },
+        data: {
+          organizationId: CODEEDGE_ROOT_ORGANIZATION_ID,
+        },
+      });
     }
 
     if (
@@ -506,6 +676,13 @@ export class OrganizationsService {
 
     const allOrgs = await this.prisma.organization.findMany({
       where: scopeOrganizationIds ? { id: { in: scopeOrganizationIds } } : undefined,
+      include: {
+        _count: {
+          select: {
+            children: true,
+          },
+        },
+      },
     });
     const descendants: OrganizationResponseDto[] = [];
 
@@ -527,11 +704,25 @@ export class OrganizationsService {
     const ancestors: OrganizationResponseDto[] = [];
     let current = await this.prisma.organization.findUnique({
       where: { id },
+      include: {
+        _count: {
+          select: {
+            children: true,
+          },
+        },
+      },
     });
 
     while (current?.parentId) {
       const parent = await this.prisma.organization.findUnique({
         where: { id: current.parentId },
+        include: {
+          _count: {
+            select: {
+              children: true,
+            },
+          },
+        },
       });
       if (parent) {
         if (scopeOrganizationIds && !scopeOrganizationIds.includes(parent.id)) {
@@ -571,7 +762,8 @@ export class OrganizationsService {
     if (!source) throw new NotFoundException('원본 현장을 찾을 수 없습니다.');
     if (!target) throw new NotFoundException('대상 현장을 찾을 수 없습니다.');
 
-    await assertLeafOrganization(this.prisma, dto.targetOrganizationId);
+    await assertUnitOrganization(this.prisma, sourceOrganizationId);
+    await assertUnitOrganization(this.prisma, dto.targetOrganizationId);
 
     const result = await this.prisma.$transaction(async (tx) => {
       const employees = await tx.employee.updateMany({

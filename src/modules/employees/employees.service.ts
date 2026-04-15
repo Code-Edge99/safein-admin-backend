@@ -16,7 +16,8 @@ import { PaginatedResponse } from '../../common/dto';
 import {
   assertOrganizationInScopeOrThrow,
   ensureOrganizationInScope,
-  assertLeafOrganization,
+  assertUnitOrganization,
+  resolveOrganizationClassification,
 } from '../../common/utils/organization-scope.util';
 import { findEmployeeByIdentifier, normalizePhoneEmployeeId, resolveEmployeePrimaryIds } from '../../common/utils/employee-identifier.util';
 import { parseDateInputAsUtc } from '../../common/utils/kst-time.util';
@@ -120,7 +121,71 @@ export class EmployeesService {
       throw new NotFoundException('현장을 찾을 수 없습니다.');
     }
 
-    await assertLeafOrganization(this.prisma, organizationId);
+    await assertUnitOrganization(this.prisma, organizationId);
+  }
+
+  private async getOrganizationNodes(): Promise<Array<{ id: string; parentId: string | null; teamCode: string | null }>> {
+    return this.prisma.organization.findMany({
+      select: {
+        id: true,
+        parentId: true,
+        teamCode: true,
+      },
+    });
+  }
+
+  private resolveDescendantUnitIds(
+    groupId: string,
+    organizations: Array<{ id: string; parentId: string | null; teamCode: string | null }>,
+  ): string[] {
+    const byId = new Map(organizations.map((org) => [org.id, org] as const));
+    const group = byId.get(groupId);
+
+    if (!group) {
+      throw new NotFoundException('그룹을 찾을 수 없습니다.');
+    }
+
+    if (resolveOrganizationClassification(group) !== 'GROUP') {
+      throw new BadRequestException('그룹 필터에는 그룹만 선택할 수 있습니다.');
+    }
+
+    const childrenMap = organizations.reduce<Record<string, string[]>>((acc, org) => {
+      if (!org.parentId) {
+        return acc;
+      }
+
+      if (!acc[org.parentId]) {
+        acc[org.parentId] = [];
+      }
+
+      acc[org.parentId].push(org.id);
+      return acc;
+    }, {});
+
+    const unitIds: string[] = [];
+    const stack: string[] = [groupId];
+
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      const childIds = childrenMap[current] || [];
+
+      for (const childId of childIds) {
+        const child = byId.get(childId);
+        if (!child) {
+          continue;
+        }
+
+        const classification = resolveOrganizationClassification(child);
+        if (classification === 'UNIT') {
+          unitIds.push(child.id);
+          continue;
+        }
+
+        stack.push(child.id);
+      }
+    }
+
+    return unitIds;
   }
 
   async create(
@@ -200,10 +265,36 @@ export class EmployeesService {
     const where: Prisma.EmployeeWhereInput = {};
     const andConditions: Prisma.EmployeeWhereInput[] = [];
 
-    // 현장 필터
-    if (filter.organizationId) {
-      this.ensureOrganizationInScope(filter.organizationId, scopeOrganizationIds);
-      where.organizationId = filter.organizationId;
+    const requestedUnitId = filter.unitId?.trim();
+    const requestedGroupId = filter.groupId?.trim();
+    const requestedOrganizationId = filter.organizationId?.trim();
+
+    if (requestedUnitId) {
+      this.ensureOrganizationInScope(requestedUnitId, scopeOrganizationIds);
+      await assertUnitOrganization(this.prisma, requestedUnitId);
+
+      if (requestedGroupId) {
+        this.ensureOrganizationInScope(requestedGroupId, scopeOrganizationIds);
+
+        const organizations = await this.getOrganizationNodes();
+        const groupUnitIds = this.resolveDescendantUnitIds(requestedGroupId, organizations);
+        if (!groupUnitIds.includes(requestedUnitId)) {
+          throw new BadRequestException('선택한 단위가 선택한 그룹에 속하지 않습니다.');
+        }
+      }
+
+      where.organizationId = requestedUnitId;
+    } else if (requestedGroupId) {
+      this.ensureOrganizationInScope(requestedGroupId, scopeOrganizationIds);
+
+      const organizations = await this.getOrganizationNodes();
+      const groupUnitIds = this.resolveDescendantUnitIds(requestedGroupId, organizations)
+        .filter((organizationId) => !scopeOrganizationIds || scopeOrganizationIds.includes(organizationId));
+
+      where.organizationId = { in: groupUnitIds };
+    } else if (requestedOrganizationId) {
+      this.ensureOrganizationInScope(requestedOrganizationId, scopeOrganizationIds);
+      where.organizationId = requestedOrganizationId;
     } else if (scopeOrganizationIds) {
       where.organizationId = { in: scopeOrganizationIds };
     }
@@ -635,7 +726,7 @@ export class EmployeesService {
       throw new NotFoundException('대상 현장을 찾을 수 없습니다.');
     }
 
-    await assertLeafOrganization(this.prisma, dto.targetOrganizationId);
+    await assertUnitOrganization(this.prisma, dto.targetOrganizationId);
 
     const result = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.employee.updateMany({

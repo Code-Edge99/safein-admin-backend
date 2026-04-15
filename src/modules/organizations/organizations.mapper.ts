@@ -1,9 +1,19 @@
-import { OrganizationResponseDto } from './dto';
+import { OrganizationClassificationEnum, OrganizationResponseDto } from './dto';
+import { resolveOrganizationClassification } from '../../common/utils/organization-scope.util';
+
+function toClassificationEnum(org: any): OrganizationResponseDto['classification'] {
+  const classification = resolveOrganizationClassification(org);
+  if (classification === 'ADMIN') return OrganizationClassificationEnum.ADMIN;
+  if (classification === 'COMPANY') return OrganizationClassificationEnum.COMPANY;
+  if (classification === 'UNIT') return OrganizationClassificationEnum.UNIT;
+  return OrganizationClassificationEnum.GROUP;
+}
 
 export function toOrganizationResponseDto(org: any): OrganizationResponseDto {
   return {
     id: org.id,
     name: org.name,
+    classification: toClassificationEnum(org),
     parentId: org.parentId,
     address: org.address,
     detailAddress: org.detailAddress,

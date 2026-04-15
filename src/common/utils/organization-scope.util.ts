@@ -1,5 +1,36 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 
+export const CODEEDGE_ROOT_ORGANIZATION_ID = 'org-codeedge';
+export const LEGACY_ROOT_ORGANIZATION_ID = 'org-root';
+const ROOT_ORGANIZATION_IDS = new Set<string>([
+  CODEEDGE_ROOT_ORGANIZATION_ID,
+  LEGACY_ROOT_ORGANIZATION_ID,
+]);
+
+export type OrganizationNodeClassification = 'ADMIN' | 'COMPANY' | 'GROUP' | 'UNIT';
+
+type OrganizationNode = {
+  id: string;
+  parentId: string | null;
+  teamCode: string | null;
+};
+
+export function resolveOrganizationClassification(org: OrganizationNode): OrganizationNodeClassification {
+  if (ROOT_ORGANIZATION_IDS.has(org.id)) {
+    return 'ADMIN';
+  }
+
+  if (org.parentId && ROOT_ORGANIZATION_IDS.has(org.parentId)) {
+    return 'COMPANY';
+  }
+
+  if (org.teamCode) {
+    return 'UNIT';
+  }
+
+  return 'GROUP';
+}
+
 export function ensureOrganizationInScope(
   organizationId: string | undefined,
   scopeOrganizationIds?: string[],
@@ -18,6 +49,80 @@ export function assertOrganizationInScopeOrThrow(
   if (!scopeOrganizationIds) return;
   if (!organizationId || !scopeOrganizationIds.includes(organizationId)) {
     throw new NotFoundException(notFoundMessage);
+  }
+}
+
+export async function assertGroupOrganization(
+  prisma: { organization: { findUnique: (args: any) => Promise<any> } },
+  organizationId: string,
+): Promise<void> {
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { id: true, parentId: true, teamCode: true },
+  });
+
+  if (!organization) {
+    throw new NotFoundException('현장을 찾을 수 없습니다.');
+  }
+
+  const classification = resolveOrganizationClassification(organization);
+  if (classification !== 'GROUP') {
+    throw new BadRequestException('정책/조건은 그룹 현장에서만 관리할 수 있습니다. 그룹을 선택해주세요.');
+  }
+}
+
+export async function assertCompanyOrGroupOrganization(
+  prisma: { organization: { findUnique: (args: any) => Promise<any> } },
+  organizationId: string,
+): Promise<void> {
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { id: true, parentId: true, teamCode: true },
+  });
+
+  if (!organization) {
+    throw new NotFoundException('현장을 찾을 수 없습니다.');
+  }
+
+  const classification = resolveOrganizationClassification(organization);
+  if (classification !== 'COMPANY' && classification !== 'GROUP') {
+    throw new BadRequestException('정책/조건은 회사 또는 그룹 현장에서만 관리할 수 있습니다.');
+  }
+}
+
+export async function assertUnitOrganization(
+  prisma: {
+    organization: {
+      findUnique: (args: any) => Promise<any>;
+    };
+  },
+  organizationId: string,
+): Promise<void> {
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: {
+      id: true,
+      parentId: true,
+      teamCode: true,
+      _count: {
+        select: {
+          children: true,
+        },
+      },
+    },
+  });
+
+  if (!organization) {
+    throw new NotFoundException('현장을 찾을 수 없습니다.');
+  }
+
+  const classification = resolveOrganizationClassification(organization);
+  if (classification !== 'UNIT') {
+    throw new BadRequestException('직원은 단위 현장에만 배정할 수 있습니다. 단위를 선택해주세요.');
+  }
+
+  if (Number(organization?._count?.children ?? 0) > 0) {
+    throw new BadRequestException('단위 현장에 하위 현장이 있어 직원 배정이 불가능합니다. 구조를 먼저 정리해주세요.');
   }
 }
 

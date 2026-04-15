@@ -67,6 +67,12 @@ export class CreateControlPolicyDto {
   @IsOptional()
   employeeIds?: string[];
 
+  @ApiPropertyOptional({ description: '적용 대상 단위(조직) ID 목록' })
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  targetOrganizationIds?: string[];
+
   @ApiPropertyOptional({ description: '활성 상태', default: true })
   @IsBoolean()
   @IsOptional()
@@ -130,6 +136,12 @@ export class ControlPolicyResponseDto {
 
   @ApiProperty({ description: '적용 대상 직원 수' })
   targetEmployeeCount: number;
+
+  @ApiProperty({ description: '적용 대상 단위 수' })
+  targetOrganizationCount: number;
+
+  @ApiPropertyOptional({ description: '적용 대상 단위 ID 목록' })
+  targetOrganizationIds?: string[];
 
   @ApiPropertyOptional({ description: '적용 구역 목록' })
   zones?: { id: string; name: string; type?: string }[];

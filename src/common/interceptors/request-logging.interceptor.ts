@@ -27,6 +27,19 @@ export class RequestLoggingInterceptor implements NestInterceptor {
   private readonly maxArrayLength = 20;
   private readonly slowReadRequestWarnMs = 1500;
 
+  private isAuditAccountForeignKeyViolation(error: unknown): boolean {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+      return false;
+    }
+
+    if (error.code !== 'P2003') {
+      return false;
+    }
+
+    const fieldName = String((error.meta as any)?.field_name || '');
+    return fieldName.includes('audit_logs_accountId_fkey') || fieldName.toLowerCase().includes('accountid');
+  }
+
   private readonly sensitiveQueryKeys = [
     'token',
     'access_token',
@@ -227,42 +240,58 @@ export class RequestLoggingInterceptor implements NestInterceptor {
         ? error
         : undefined;
 
+    const auditLogData: Prisma.AuditLogUncheckedCreateInput = {
+      accountId,
+      organizationId,
+      action: this.resolveAction(normalizedMethod, safeUrl, statusCode),
+      resourceType,
+      resourceId,
+      resourceName: `${normalizedMethod} ${safeUrl}`,
+      ipAddress: request.ip,
+      changesAfter: {
+        schemaVersion: 'system-log-v1',
+        eventKind: 'http-request',
+        category: requestSummary.category,
+        summary: {
+          action: requestSummary.action,
+          target: requestSummary.target,
+          details: requestSummary.details,
+          severity: requestSummary.severity,
+          result: requestSummary.result,
+          category: requestSummary.category,
+        } as Prisma.InputJsonObject,
+        method: normalizedMethod,
+        path: safeUrl,
+        statusCode,
+        durationMs,
+        userAgent: normalizedUserAgent,
+        query,
+        requestBody,
+        response: responseSummary,
+        actor,
+        errorMessage: errorMessage || null,
+      },
+    };
+
     try {
-      await this.prisma.auditLog.create({
-        data: {
-          accountId,
-          organizationId,
-          action: this.resolveAction(normalizedMethod, safeUrl, statusCode),
-          resourceType,
-          resourceId,
-          resourceName: `${normalizedMethod} ${safeUrl}`,
-          ipAddress: request.ip,
-          changesAfter: {
-            schemaVersion: 'system-log-v1',
-            eventKind: 'http-request',
-            category: requestSummary.category,
-            summary: {
-              action: requestSummary.action,
-              target: requestSummary.target,
-              details: requestSummary.details,
-              severity: requestSummary.severity,
-              result: requestSummary.result,
-              category: requestSummary.category,
-            } as Prisma.InputJsonObject,
-            method: normalizedMethod,
-            path: safeUrl,
-            statusCode,
-            durationMs,
-            userAgent: normalizedUserAgent,
-            query,
-            requestBody,
-            response: responseSummary,
-            actor,
-            errorMessage: errorMessage || null,
-          },
-        },
-      });
+      await this.prisma.auditLog.create({ data: auditLogData });
     } catch (persistError) {
+      if (accountId && this.isAuditAccountForeignKeyViolation(persistError)) {
+        try {
+          await this.prisma.auditLog.create({
+            data: {
+              ...auditLogData,
+              accountId: null,
+            },
+          });
+          return;
+        } catch (fallbackError) {
+          const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+          this.logger.warn(`audit_log 저장 실패(fallback): ${fallbackMessage}`);
+          return;
+        }
+      }
+
       const message = persistError instanceof Error ? persistError.message : String(persistError);
       this.logger.warn(`audit_log 저장 실패: ${message}`);
     }

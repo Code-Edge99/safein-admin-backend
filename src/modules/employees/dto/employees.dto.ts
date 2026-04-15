@@ -240,6 +240,16 @@ export class EmployeeFilterDto extends BaseFilterDto {
   @IsString()
   organizationId?: string;
 
+  @ApiPropertyOptional({ description: '그룹 ID' })
+  @IsOptional()
+  @IsString()
+  groupId?: string;
+
+  @ApiPropertyOptional({ description: '단위 ID' })
+  @IsOptional()
+  @IsString()
+  unitId?: string;
+
   @ApiPropertyOptional({ description: '상태 필터', enum: EmployeeStatusEnum })
   @IsOptional()
   @IsEnum(EmployeeStatusEnum)
