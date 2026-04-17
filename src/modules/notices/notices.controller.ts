@@ -36,6 +36,7 @@ import {
   createStoredFileName,
   ensureNoticeUploadDirs,
   getNoticeUploadDir,
+  normalizeUploadOriginalName,
 } from './notices.storage';
 
 ensureNoticeUploadDirs();
@@ -49,8 +50,9 @@ function attachmentStorage(isInlineImage: boolean) {
       callback(null, getNoticeUploadDir(isInlineImage));
     },
     filename: (_req, file, callback) => {
-      const extension = extname(file.originalname || '');
-      const generated = createStoredFileName(extension ? `file${extension}` : file.originalname || 'file');
+      const normalizedOriginalName = normalizeUploadOriginalName(file.originalname || '');
+      const extension = extname(normalizedOriginalName);
+      const generated = createStoredFileName(extension ? `file${extension}` : normalizedOriginalName || 'file');
       callback(null, generated);
     },
   });
@@ -117,7 +119,12 @@ export class NoticesController {
       throw new BadRequestException('업로드할 파일이 없습니다.');
     }
 
-    return this.noticesService.buildUploadResponse(file, false);
+    const normalizedFile = {
+      ...file,
+      originalname: normalizeUploadOriginalName(file.originalname),
+    };
+
+    return this.noticesService.buildUploadResponse(normalizedFile, false);
   }
 
   @Post('uploads/images')
@@ -146,7 +153,12 @@ export class NoticesController {
       throw new BadRequestException('업로드할 파일이 없습니다.');
     }
 
-    return this.noticesService.buildUploadResponse(file, true);
+    const normalizedFile = {
+      ...file,
+      originalname: normalizeUploadOriginalName(file.originalname),
+    };
+
+    return this.noticesService.buildUploadResponse(normalizedFile, true);
   }
 
   @Post('uploads/cleanup')
