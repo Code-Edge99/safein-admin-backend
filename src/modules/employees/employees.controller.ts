@@ -27,6 +27,8 @@ import {
   EmployeeMdmManualUnblockDto,
   EmployeeDeviceLogoutUntilNextLoginDto,
   BulkMoveOrganizationDto,
+  BulkEmployeeUploadDto,
+  BulkEmployeeUploadResponseDto,
   BulkEmployeeActionDto,
   BulkEmployeeStatusUpdateDto,
   HardDeleteExpiredDeletedEmployeesDto,
@@ -49,6 +51,16 @@ export class EmployeesController {
   @ApiResponse({ status: 201, description: '직원 생성 성공', type: EmployeeResponseDto })
   create(@Req() req: AuthenticatedAdminRequest, @Body() createEmployeeDto: CreateEmployeeDto): Promise<EmployeeResponseDto> {
     return this.employeesService.create(createEmployeeDto, req.organizationScopeIds ?? undefined, req.user?.id);
+  }
+
+  @Post('bulk/upload')
+  @ApiOperation({ summary: '직원 대량등록 (회사명 + 팀코드 매핑)' })
+  @ApiResponse({ status: 201, description: '대량등록 처리 결과', type: BulkEmployeeUploadResponseDto })
+  bulkUpload(
+    @Req() req: AuthenticatedAdminRequest,
+    @Body() dto: BulkEmployeeUploadDto,
+  ): Promise<BulkEmployeeUploadResponseDto> {
+    return this.employeesService.bulkUploadByCompanyTeam(dto, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Get()

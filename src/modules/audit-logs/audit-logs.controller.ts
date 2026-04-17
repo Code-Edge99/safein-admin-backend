@@ -41,12 +41,12 @@ export class AuditLogsController {
       endDate,
       page: page ? Number(page) : 1,
       limit: limit ? Number(limit) : 20,
-    }, req.organizationScopeIds ?? undefined);
+    }, req.organizationScopeIds ?? undefined, req.user?.role);
   }
 
   @Get(':id')
   @ApiOperation({ summary: '감사 로그 상세 조회' })
   findOne(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string) {
-    return this.auditLogsService.findOne(id, req.organizationScopeIds ?? undefined);
+    return this.auditLogsService.findOne(id, req.organizationScopeIds ?? undefined, req.user?.role);
   }
 }

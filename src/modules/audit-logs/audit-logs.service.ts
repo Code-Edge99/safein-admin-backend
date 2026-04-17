@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { AdminRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ensureOrganizationInScope } from '../../common/utils/organization-scope.util';
 import { parseDateInputAsUtc } from '../../common/utils/kst-time.util';
@@ -24,7 +25,7 @@ export class AuditLogsService {
     endDate?: string;
     page?: number;
     limit?: number;
-  }, scopeOrganizationIds?: string[]) {
+  }, scopeOrganizationIds?: string[], actorRole?: string) {
     const page = filter.page || 1;
     const limit = filter.limit || 20;
     const skip = (page - 1) * limit;
@@ -73,7 +74,7 @@ export class AuditLogsService {
     ]);
 
     return {
-      data: data.map((log) => this.toResponseDto(log)),
+      data: data.map((log) => this.toResponseDto(log, actorRole)),
       total,
       page,
       limit,
@@ -81,7 +82,7 @@ export class AuditLogsService {
     };
   }
 
-  async findOne(id: string, scopeOrganizationIds?: string[]) {
+  async findOne(id: string, scopeOrganizationIds?: string[], actorRole?: string) {
     const log = await this.prisma.auditLog.findUnique({
       where: { id },
       include: {
@@ -97,10 +98,12 @@ export class AuditLogsService {
       throw new NotFoundException('감사 로그를 찾을 수 없습니다.');
     }
 
-    return this.toResponseDto(log);
+    return this.toResponseDto(log, actorRole);
   }
 
-  private toResponseDto(log: any) {
-    return toAuditLogResponseDto(log);
+  private toResponseDto(log: any, actorRole?: string) {
+    return toAuditLogResponseDto(log, {
+      revealActorIdentity: actorRole === AdminRole.SUPER_ADMIN || actorRole === 'SUPER_ADMIN',
+    });
   }
 }

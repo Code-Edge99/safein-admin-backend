@@ -158,7 +158,35 @@ export class NoticesService {
     return null;
   }
 
-  private async resolveActorCompanyOrganizationIds(
+  private async resolveAncestorGroupId(organizationId: string): Promise<string | null> {
+    const visited = new Set<string>();
+    let currentOrganizationId: string | null = organizationId;
+    let depth = 0;
+
+    while (currentOrganizationId && !visited.has(currentOrganizationId) && depth < 40) {
+      visited.add(currentOrganizationId);
+
+      const organization: { id: string; parentId: string | null; teamCode: string | null } | null = await this.prisma.organization.findUnique({
+        where: { id: currentOrganizationId },
+        select: { id: true, parentId: true, teamCode: true },
+      });
+
+      if (!organization) {
+        break;
+      }
+
+      if (resolveOrganizationClassification(organization) === 'GROUP') {
+        return organization.id;
+      }
+
+      currentOrganizationId = organization.parentId;
+      depth += 1;
+    }
+
+    return null;
+  }
+
+  private async resolveActorReadableOrganizationIds(
     actorUserId?: string,
     actorUserRole?: string,
   ): Promise<string[] | undefined> {
@@ -184,45 +212,45 @@ export class NoticesService {
       throw new ForbiddenException('소속 회사 정보를 확인할 수 없습니다.');
     }
 
-    return this.collectDescendantOrganizationIds(companyOrganizationId);
+    const groupOrganizationId = await this.resolveAncestorGroupId(account.organizationId);
+    if (!groupOrganizationId) {
+      return this.collectDescendantOrganizationIds(companyOrganizationId);
+    }
+
+    const groupDescendantIds = await this.collectDescendantOrganizationIds(groupOrganizationId);
+    return Array.from(new Set([companyOrganizationId, ...groupDescendantIds]));
   }
 
-  private assertOrganizationInCompanyScope(organizationId: string, companyOrganizationIds?: string[]): void {
-    if (!companyOrganizationIds) {
+  private assertOrganizationInReadableScope(organizationId: string, readableOrganizationIds?: string[]): void {
+    if (!readableOrganizationIds) {
       return;
     }
 
-    if (!companyOrganizationIds.includes(organizationId)) {
-      throw new ForbiddenException('다른 회사 공지사항에는 접근할 수 없습니다.');
+    if (!readableOrganizationIds.includes(organizationId)) {
+      throw new ForbiddenException('다른 그룹 공지사항에는 접근할 수 없습니다.');
     }
   }
 
   private canReadNotice(
     organizationId: string,
-    createdByRole?: string | null,
-    companyOrganizationIds?: string[],
+    readableOrganizationIds?: string[],
   ): boolean {
-    if (!companyOrganizationIds) {
+    if (!readableOrganizationIds) {
       return true;
     }
 
-    if (createdByRole === AdminRole.SUPER_ADMIN || createdByRole === 'SUPER_ADMIN') {
-      return true;
-    }
-
-    return companyOrganizationIds.includes(organizationId);
+    return readableOrganizationIds.includes(organizationId);
   }
 
   private assertReadableOrganization(
     organizationId: string,
-    createdByRole?: string | null,
-    companyOrganizationIds?: string[],
+    readableOrganizationIds?: string[],
   ): void {
-    if (this.canReadNotice(organizationId, createdByRole, companyOrganizationIds)) {
+    if (this.canReadNotice(organizationId, readableOrganizationIds)) {
       return;
     }
 
-    throw new ForbiddenException('다른 회사 공지사항에는 접근할 수 없습니다.');
+    throw new ForbiddenException('다른 그룹 공지사항에는 접근할 수 없습니다.');
   }
 
   private extractContentText(contentHtml: string, requestedContentText?: string): string {
@@ -359,6 +387,9 @@ export class NoticesService {
   }
 
   private toResponseDto(notice: NoticeWithRelations, currentUserId?: string, currentUserRole?: string): NoticeResponseDto {
+    const canRevealAuthor = this.isSuperAdmin(currentUserRole)
+      || Boolean(currentUserId && notice.createdById === currentUserId);
+
     return {
       id: notice.id,
       organizationId: notice.organizationId,
@@ -368,8 +399,8 @@ export class NoticesService {
       contentHtml: notice.contentHtml,
       contentText: notice.contentText ?? undefined,
       createdById: notice.createdById ?? undefined,
-      createdByName: notice.createdBy?.name ?? undefined,
-      createdByRole: notice.createdBy?.role ?? undefined,
+      createdByName: canRevealAuthor ? notice.createdBy?.name ?? undefined : undefined,
+      createdByRole: canRevealAuthor ? notice.createdBy?.role ?? undefined : undefined,
       isEditableByMe: this.isSuperAdmin(currentUserRole) || Boolean(currentUserId && notice.createdById === currentUserId),
       attachments: notice.attachments.map((attachment) => ({
         id: attachment.id,
@@ -392,27 +423,22 @@ export class NoticesService {
     currentUserId?: string,
     currentUserRole?: string,
   ): Promise<PaginatedResponse<NoticeResponseDto>> {
-    const companyOrganizationIds = await this.resolveActorCompanyOrganizationIds(currentUserId, currentUserRole);
+    const readableOrganizationIds = await this.resolveActorReadableOrganizationIds(currentUserId, currentUserRole);
     const whereConditions: Prisma.NoticeWhereInput[] = [];
 
-    if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !companyOrganizationIds) {
+    if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !readableOrganizationIds) {
       const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
       if (readableOrganizationIds) {
         whereConditions.push({ organizationId: { in: readableOrganizationIds } });
       }
     }
 
-    if (companyOrganizationIds) {
-      whereConditions.push({
-        OR: [
-          { organizationId: { in: companyOrganizationIds } },
-          { createdBy: { is: { role: AdminRole.SUPER_ADMIN } } },
-        ],
-      });
+    if (readableOrganizationIds) {
+      whereConditions.push({ organizationId: { in: readableOrganizationIds } });
     }
 
     if (filter.organizationId) {
-      this.assertOrganizationInCompanyScope(filter.organizationId, companyOrganizationIds);
+      this.assertOrganizationInReadableScope(filter.organizationId, readableOrganizationIds);
       whereConditions.push({ organizationId: filter.organizationId });
     }
 
@@ -479,12 +505,12 @@ export class NoticesService {
       throw new NotFoundException('공지사항을 찾을 수 없습니다.');
     }
 
-    const companyOrganizationIds = await this.resolveActorCompanyOrganizationIds(currentUserId, currentUserRole);
-    this.assertReadableOrganization(row.organizationId, row.createdBy?.role, companyOrganizationIds);
+    const readableOrganizationIds = await this.resolveActorReadableOrganizationIds(currentUserId, currentUserRole);
+    this.assertReadableOrganization(row.organizationId, readableOrganizationIds);
 
-    if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !companyOrganizationIds) {
+    if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !readableOrganizationIds) {
       const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
-      this.assertReadableOrganization(row.organizationId, row.createdBy?.role, readableOrganizationIds);
+      this.assertReadableOrganization(row.organizationId, readableOrganizationIds);
     }
 
     return this.toResponseDto(row, currentUserId, currentUserRole);
@@ -500,12 +526,12 @@ export class NoticesService {
       throw new ForbiddenException('사용자 정보를 확인할 수 없습니다.');
     }
 
-    const companyOrganizationIds = await this.resolveActorCompanyOrganizationIds(actorUserId, actorUserRole);
-    this.assertOrganizationInCompanyScope(dto.organizationId, companyOrganizationIds);
+    const readableOrganizationIds = await this.resolveActorReadableOrganizationIds(actorUserId, actorUserRole);
+    this.assertOrganizationInReadableScope(dto.organizationId, readableOrganizationIds);
 
-    if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !companyOrganizationIds) {
+    if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !readableOrganizationIds) {
       const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
-      this.assertOrganizationInCompanyScope(dto.organizationId, readableOrganizationIds);
+      this.assertOrganizationInReadableScope(dto.organizationId, readableOrganizationIds);
     }
 
     const organization = await this.prisma.organization.findUnique({
@@ -578,12 +604,12 @@ export class NoticesService {
       throw new NotFoundException('공지사항을 찾을 수 없습니다.');
     }
 
-    const companyOrganizationIds = await this.resolveActorCompanyOrganizationIds(actorUserId, actorUserRole);
-    this.assertReadableOrganization(existing.organizationId, existing.createdBy?.role, companyOrganizationIds);
+    const readableOrganizationIds = await this.resolveActorReadableOrganizationIds(actorUserId, actorUserRole);
+    this.assertReadableOrganization(existing.organizationId, readableOrganizationIds);
 
-    if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !companyOrganizationIds) {
+    if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !readableOrganizationIds) {
       const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
-      this.assertReadableOrganization(existing.organizationId, existing.createdBy?.role, readableOrganizationIds);
+      this.assertReadableOrganization(existing.organizationId, readableOrganizationIds);
     }
 
     if (!this.isSuperAdmin(actorUserRole) && existing.createdById !== actorUserId) {
@@ -591,11 +617,11 @@ export class NoticesService {
     }
 
     if (dto.organizationId) {
-      this.assertOrganizationInCompanyScope(dto.organizationId, companyOrganizationIds);
+      this.assertOrganizationInReadableScope(dto.organizationId, readableOrganizationIds);
 
-      if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !companyOrganizationIds) {
+      if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !readableOrganizationIds) {
         const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
-        this.assertOrganizationInCompanyScope(dto.organizationId, readableOrganizationIds);
+        this.assertOrganizationInReadableScope(dto.organizationId, readableOrganizationIds);
       }
     }
 
@@ -693,12 +719,12 @@ export class NoticesService {
       throw new NotFoundException('공지사항을 찾을 수 없습니다.');
     }
 
-    const companyOrganizationIds = await this.resolveActorCompanyOrganizationIds(actorUserId, actorUserRole);
-    this.assertReadableOrganization(existing.organizationId, existing.createdBy?.role, companyOrganizationIds);
+    const readableOrganizationIds = await this.resolveActorReadableOrganizationIds(actorUserId, actorUserRole);
+    this.assertReadableOrganization(existing.organizationId, readableOrganizationIds);
 
-    if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !companyOrganizationIds) {
+    if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !readableOrganizationIds) {
       const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
-      this.assertReadableOrganization(existing.organizationId, existing.createdBy?.role, readableOrganizationIds);
+      this.assertReadableOrganization(existing.organizationId, readableOrganizationIds);
     }
 
     if (!this.isSuperAdmin(actorUserRole) && existing.createdById !== actorUserId) {

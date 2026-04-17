@@ -81,8 +81,11 @@ export class AccountsController {
   @Get('username/:username')
   @ApiOperation({ summary: '사용자명으로 계정 조회' })
   @ApiResponse({ status: 200, type: AccountResponseDto })
-  findByUsername(@Param('username') username: string): Promise<AccountResponseDto> {
-    return this.accountsService.findByUsername(username);
+  findByUsername(
+    @Req() req: AuthenticatedAdminRequest,
+    @Param('username') username: string,
+  ): Promise<AccountResponseDto> {
+    return this.accountsService.findByUsername(username, this.getActorContext(req));
   }
 
   @Get(':id')

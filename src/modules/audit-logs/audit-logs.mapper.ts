@@ -223,15 +223,16 @@ function resolveActorFromChanges(changesAfter: unknown): {
   return { actorName: '', actorIdentifier: '', actorType: 'system' };
 }
 
-export function toAuditLogResponseDto(log: any) {
+export function toAuditLogResponseDto(log: any, options?: { revealActorIdentity?: boolean }) {
   const actorFromChanges = resolveActorFromChanges(log.changesAfter);
   const enrichedChangesAfter = enrichChangesAfter(log);
+  const revealActorIdentity = options?.revealActorIdentity === true;
 
   return {
     id: log.id,
     accountId: log.accountId,
-    userName: log.account?.name || actorFromChanges.actorName || '',
-    username: log.account?.username || actorFromChanges.actorIdentifier || '',
+    userName: revealActorIdentity ? (log.account?.name || actorFromChanges.actorName || '') : '',
+    username: revealActorIdentity ? (log.account?.username || actorFromChanges.actorIdentifier || '') : '',
     actorType: log.account ? 'admin' : actorFromChanges.actorType,
     action: log.action,
     resourceType: log.resourceType,

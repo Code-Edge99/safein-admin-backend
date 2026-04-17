@@ -32,6 +32,8 @@ import {
   EmployeeMdmManualUnblockDto,
   EmployeeDeviceLogoutUntilNextLoginDto,
   BulkMoveOrganizationDto,
+  BulkEmployeeUploadDto,
+  BulkEmployeeUploadResponseDto,
   EmployeeStatusEnum,
   EmployeeStatusGroupEnum,
   HardDeleteExpiredDeletedEmployeesDto,
@@ -97,6 +99,38 @@ export class EmployeesService {
 
     const trimmed = value.trim().toLowerCase();
     return trimmed.length > 0 ? trimmed : null;
+  }
+
+  private normalizeCompanyName(value?: string | null): string {
+    if (typeof value !== 'string') {
+      return '';
+    }
+
+    return value.trim().toLowerCase();
+  }
+
+  private normalizeTeamCode(value?: string | null): string | null {
+    if (typeof value !== 'string') {
+      return null;
+    }
+
+    const normalized = value.trim().toUpperCase();
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  private async resolveScopedCompanyOrganizationIds(scopeOrganizationIds?: string[]): Promise<string[]> {
+    const organizations = await this.prisma.organization.findMany({
+      where: scopeOrganizationIds ? { id: { in: scopeOrganizationIds } } : undefined,
+      select: {
+        id: true,
+        parentId: true,
+        teamCode: true,
+      },
+    });
+
+    return organizations
+      .filter((organization) => resolveOrganizationClassification(organization) === 'COMPANY')
+      .map((organization) => organization.id);
   }
 
   private normalizeRequestedStatus(status?: EmployeeStatus): EmployeeStatus | undefined {
@@ -258,6 +292,266 @@ export class EmployeesService {
     return this.toResponseDto(employee);
   }
 
+  async bulkUploadByCompanyTeam(
+    dto: BulkEmployeeUploadDto,
+    scopeOrganizationIds?: string[],
+    actorUserId?: string,
+  ): Promise<BulkEmployeeUploadResponseDto> {
+    const rows = Array.isArray(dto?.rows) ? dto.rows : [];
+    const requested = rows.length;
+
+    if (requested === 0) {
+      return {
+        requested: 0,
+        created: 0,
+        failed: 0,
+        errors: [],
+      };
+    }
+
+    if (requested > 1000) {
+      throw new BadRequestException('대량등록은 한 번에 최대 1000건까지 가능합니다.');
+    }
+
+    const organizations = await this.prisma.organization.findMany({
+      where: {
+        isActive: true,
+        ...(scopeOrganizationIds ? { id: { in: scopeOrganizationIds } } : {}),
+      },
+      select: {
+        id: true,
+        name: true,
+        parentId: true,
+        teamCode: true,
+      },
+    });
+
+    const organizationById = new Map(organizations.map((organization) => [organization.id, organization] as const));
+    const resolveCompanyId = (organizationId: string): string | null => {
+      const visited = new Set<string>();
+      let current = organizationById.get(organizationId) || null;
+
+      while (current && !visited.has(current.id)) {
+        visited.add(current.id);
+        const classification = resolveOrganizationClassification(current);
+        if (classification === 'COMPANY') {
+          return current.id;
+        }
+
+        const parentId = current.parentId;
+        if (!parentId) {
+          break;
+        }
+
+        current = organizationById.get(parentId) || null;
+      }
+
+      return null;
+    };
+
+    const companiesByName = new Map<string, Array<{ id: string; name: string }>>();
+    const unitsByCompanyAndTeamCode = new Map<string, { id: string; name: string } | null>();
+
+    organizations.forEach((organization) => {
+      const classification = resolveOrganizationClassification(organization);
+      if (classification === 'COMPANY') {
+        const key = this.normalizeCompanyName(organization.name);
+        const list = companiesByName.get(key) || [];
+        list.push({ id: organization.id, name: organization.name });
+        companiesByName.set(key, list);
+      }
+    });
+
+    organizations.forEach((organization) => {
+      const classification = resolveOrganizationClassification(organization);
+      if (classification !== 'UNIT') {
+        return;
+      }
+
+      const companyId = resolveCompanyId(organization.id);
+      const normalizedTeamCode = this.normalizeTeamCode(organization.teamCode);
+      if (!companyId || !normalizedTeamCode) {
+        return;
+      }
+
+      const key = `${companyId}|${normalizedTeamCode}`;
+      if (unitsByCompanyAndTeamCode.has(key)) {
+        unitsByCompanyAndTeamCode.set(key, null);
+        return;
+      }
+
+      unitsByCompanyAndTeamCode.set(key, {
+        id: organization.id,
+        name: organization.name,
+      });
+    });
+
+    const requestedEmployeeIds = Array.from(new Set(
+      rows
+        .map((row) => this.normalizeEmployeeId(row.employeeId))
+        .filter(Boolean),
+    ));
+
+    const existingEmployees = requestedEmployeeIds.length > 0
+      ? await this.prisma.employee.findMany({
+        where: { id: { in: requestedEmployeeIds } },
+        select: { id: true },
+      })
+      : [];
+
+    const existingEmployeeIdSet = new Set(existingEmployees.map((employee) => employee.id));
+    const seenEmployeeIdSet = new Set<string>();
+
+    const errors: BulkEmployeeUploadResponseDto['errors'] = [];
+    let created = 0;
+
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      const rowNumber = Number(row?.rowNumber) > 0 ? Number(row.rowNumber) : index + 2;
+      const employeeId = this.normalizeEmployeeId(row?.employeeId);
+      const name = row?.name?.trim() || '';
+      const companyName = row?.companyName?.trim() || '';
+      const teamCode = this.normalizeTeamCode(row?.teamCode);
+
+      const pushError = (code: string, message: string) => {
+        errors.push({
+          rowNumber,
+          employeeId: employeeId || undefined,
+          companyName: companyName || undefined,
+          teamCode: teamCode || undefined,
+          code,
+          message,
+        });
+      };
+
+      if (!employeeId) {
+        pushError('INVALID_EMPLOYEE_ID', '직원 ID(휴대폰 번호)가 비어있거나 형식이 올바르지 않습니다.');
+        continue;
+      }
+
+      if (!name) {
+        pushError('MISSING_NAME', '직원 이름은 필수입니다.');
+        continue;
+      }
+
+      if (!companyName) {
+        pushError('MISSING_COMPANY_NAME', '회사명은 필수입니다.');
+        continue;
+      }
+
+      if (seenEmployeeIdSet.has(employeeId) || existingEmployeeIdSet.has(employeeId)) {
+        pushError('DUPLICATE_EMPLOYEE_ID', '이미 사용 중인 직원 ID입니다.');
+        continue;
+      }
+
+      const companyCandidates = companiesByName.get(this.normalizeCompanyName(companyName)) || [];
+      if (companyCandidates.length === 0) {
+        pushError('COMPANY_NOT_FOUND', `회사명 '${companyName}'과(와) 일치하는 회사를 찾을 수 없습니다.`);
+        continue;
+      }
+
+      if (companyCandidates.length > 1) {
+        pushError('COMPANY_AMBIGUOUS', `회사명 '${companyName}'에 해당하는 회사가 여러 개입니다. 회사명을 구체적으로 확인해주세요.`);
+        continue;
+      }
+
+      const company = companyCandidates[0];
+      const targetOrganizationId = (() => {
+        if (!teamCode) {
+          return company.id;
+        }
+
+        const key = `${company.id}|${teamCode}`;
+        const unit = unitsByCompanyAndTeamCode.get(key);
+
+        if (unit === undefined) {
+          pushError('TEAM_CODE_NOT_FOUND', `회사 '${company.name}'에서 팀코드 '${teamCode}'와 일치하는 팀을 찾을 수 없습니다.`);
+          return null;
+        }
+
+        if (unit === null) {
+          pushError('TEAM_CODE_AMBIGUOUS', `회사 '${company.name}'에서 팀코드 '${teamCode}'가 중복되어 매핑할 수 없습니다.`);
+          return null;
+        }
+
+        return unit.id;
+      })();
+
+      if (!targetOrganizationId) {
+        continue;
+      }
+
+      const targetStatus = !teamCode
+        ? EmployeeStatus.EXCEPTION
+        : EmployeeStatus.ACTIVE;
+
+      const normalizedPosition = this.normalizeOptionalText(row?.position);
+      const normalizedRole = this.normalizeOptionalText(row?.role);
+      const normalizedEmail = this.normalizeOptionalEmail(row?.email ?? null);
+      const normalizedMemo = this.normalizeOptionalText(row?.memo);
+      const normalizedPassword = this.normalizeOptionalText(row?.password);
+
+      if (normalizedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+        pushError('INVALID_EMAIL', '이메일 형식이 올바르지 않습니다.');
+        continue;
+      }
+
+      if (normalizedPassword && normalizedPassword.length < 8) {
+        pushError('INVALID_PASSWORD', '초기 비밀번호는 8자 이상이어야 합니다.');
+        continue;
+      }
+
+      try {
+        await this.prisma.employee.create({
+          data: {
+            id: employeeId,
+            name,
+            organizationId: targetOrganizationId,
+            position: normalizedPosition,
+            role: normalizedRole,
+            email: normalizedEmail,
+            memo: normalizedMemo,
+            status: targetStatus,
+            createdById: actorUserId,
+            updatedById: actorUserId,
+          } as any,
+        });
+
+        if (normalizedPassword) {
+          const passwordHash = await bcrypt.hash(normalizedPassword, 10);
+          await this.prisma.employeeAccount.upsert({
+            where: { employeeId },
+            update: { passwordHash, isActive: true },
+            create: {
+              employeeId,
+              passwordHash,
+              isActive: true,
+            },
+          });
+        }
+
+        seenEmployeeIdSet.add(employeeId);
+        existingEmployeeIdSet.add(employeeId);
+        created += 1;
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          pushError('DUPLICATE_EMPLOYEE_ID', '이미 사용 중인 직원 ID입니다.');
+          continue;
+        }
+
+        this.logger.warn(`직원 대량등록 실패(row=${rowNumber}, employeeId=${employeeId}): ${String(error)}`);
+        pushError('CREATE_FAILED', '직원 생성 중 오류가 발생했습니다.');
+      }
+    }
+
+    return {
+      requested,
+      created,
+      failed: errors.length,
+      errors,
+    };
+  }
+
   async findAll(
     filter: EmployeeFilterDto,
     scopeOrganizationIds?: string[],
@@ -312,7 +606,15 @@ export class EmployeesService {
     }
 
     // 상태 필터
-    if (filter.status) {
+    if (filter.statusGroup === EmployeeStatusGroupEnum.UNASSIGNED) {
+      const companyOrganizationIds = await this.resolveScopedCompanyOrganizationIds(scopeOrganizationIds);
+      andConditions.push({
+        status: EmployeeStatus.EXCEPTION,
+      });
+      andConditions.push({
+        organizationId: { in: companyOrganizationIds },
+      });
+    } else if (filter.status) {
       andConditions.push({
         status: filter.status as EmployeeStatus,
       });
@@ -728,6 +1030,35 @@ export class EmployeesService {
 
     await assertUnitOrganization(this.prisma, dto.targetOrganizationId);
 
+    const targetEmployees = await this.prisma.employee.findMany({
+      where: {
+        id: { in: resolvedEmployeeIds },
+        ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+      },
+      select: {
+        id: true,
+        organizationId: true,
+        status: true,
+      },
+    });
+
+    const organizationNodes = await this.getOrganizationNodes();
+    const organizationById = new Map(organizationNodes.map((node) => [node.id, node] as const));
+    const shouldActivateEmployeeIds = targetEmployees
+      .filter((employee) => {
+        if (employee.status !== EmployeeStatus.EXCEPTION) {
+          return false;
+        }
+
+        const currentOrganization = organizationById.get(employee.organizationId);
+        if (!currentOrganization) {
+          return false;
+        }
+
+        return resolveOrganizationClassification(currentOrganization) === 'COMPANY';
+      })
+      .map((employee) => employee.id);
+
     const result = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.employee.updateMany({
         where: {
@@ -736,6 +1067,13 @@ export class EmployeesService {
         },
         data: { organizationId: dto.targetOrganizationId },
       });
+
+      if (shouldActivateEmployeeIds.length > 0) {
+        await tx.employee.updateMany({
+          where: { id: { in: shouldActivateEmployeeIds } },
+          data: { status: EmployeeStatus.ACTIVE },
+        });
+      }
 
       await tx.controlPolicyEmployee.deleteMany({
         where: {

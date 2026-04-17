@@ -5,11 +5,14 @@ import {
   IsEmail,
   IsEnum,
   IsArray,
+  IsInt,
+  Min,
   IsDateString,
   Matches,
+  ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { BaseFilterDto } from '../../../common/dto';
 
 function normalizePhoneBasedEmployeeId(value: unknown): unknown {
@@ -51,6 +54,7 @@ export enum EmployeeStatusEnum {
 export enum EmployeeStatusGroupEnum {
   ACTIVE = 'ACTIVE',
   DELETED = 'DELETED',
+  UNASSIGNED = 'UNASSIGNED',
 }
 
 export class CreateEmployeeDto {
@@ -259,6 +263,111 @@ export class EmployeeFilterDto extends BaseFilterDto {
   @IsOptional()
   @IsEnum(EmployeeStatusGroupEnum)
   statusGroup?: EmployeeStatusGroupEnum;
+}
+
+export class BulkEmployeeUploadRowDto {
+  @ApiPropertyOptional({ description: '원본 CSV 행 번호(헤더 제외, UI 표기용)' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  rowNumber?: number;
+
+  @ApiProperty({ description: '직원 ID(휴대폰 번호)' })
+  @IsOptional()
+  @Transform(({ value }) => normalizePhoneBasedEmployeeId(value))
+  @IsString()
+  employeeId: string;
+
+  @ApiProperty({ description: '직원 이름' })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalText(value))
+  @IsString()
+  name: string;
+
+  @ApiProperty({ description: '회사명' })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalText(value))
+  @IsString()
+  companyName: string;
+
+  @ApiPropertyOptional({ description: '팀코드(빈 값이면 현장확인 상태로 등록)' })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalText(value))
+  @IsString()
+  teamCode?: string;
+
+  @ApiPropertyOptional({ description: '직급/직책' })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalText(value))
+  @IsString()
+  position?: string;
+
+  @ApiPropertyOptional({ description: '역할' })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalText(value))
+  @IsString()
+  role?: string;
+
+  @ApiPropertyOptional({ description: '이메일' })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalEmail(value))
+  @IsString()
+  email?: string | null;
+
+  @ApiPropertyOptional({ description: '메모' })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalText(value))
+  @IsString()
+  memo?: string;
+
+  @ApiPropertyOptional({ description: '초기 비밀번호 (옵션)' })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalText(value))
+  @IsString()
+  password?: string;
+}
+
+export class BulkEmployeeUploadDto {
+  @ApiProperty({ type: [BulkEmployeeUploadRowDto], description: '대량등록 대상 행 목록' })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => BulkEmployeeUploadRowDto)
+  rows: BulkEmployeeUploadRowDto[];
+}
+
+export class BulkEmployeeUploadErrorDto {
+  @ApiProperty({ description: '오류가 발생한 행 번호' })
+  rowNumber: number;
+
+  @ApiPropertyOptional({ description: '직원 ID' })
+  employeeId?: string;
+
+  @ApiPropertyOptional({ description: '회사명' })
+  companyName?: string;
+
+  @ApiPropertyOptional({ description: '팀코드' })
+  teamCode?: string;
+
+  @ApiProperty({ description: '오류 코드' })
+  code: string;
+
+  @ApiProperty({ description: '오류 메시지' })
+  message: string;
+}
+
+export class BulkEmployeeUploadResponseDto {
+  @ApiProperty({ description: '요청 행 수' })
+  requested: number;
+
+  @ApiProperty({ description: '생성 성공 건수' })
+  created: number;
+
+  @ApiProperty({ description: '실패 건수' })
+  failed: number;
+
+  @ApiProperty({ type: [BulkEmployeeUploadErrorDto], description: '행별 오류 상세' })
+  errors: BulkEmployeeUploadErrorDto[];
 }
 
 export class BulkEmployeeActionDto {

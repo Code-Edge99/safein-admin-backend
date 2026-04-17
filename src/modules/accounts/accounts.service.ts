@@ -345,7 +345,8 @@ export class AccountsService {
     return this.toResponseDto(account);
   }
 
-  async findByUsername(username: string): Promise<AccountResponseDto> {
+  async findByUsername(username: string, actor: AccountActorContext): Promise<AccountResponseDto> {
+    const actorAccessScope = await this.resolveActorAccessScope(actor);
     const account = await this.prisma.account.findUnique({
       where: { username },
       include: {
@@ -356,6 +357,15 @@ export class AccountsService {
     if (!account) {
       throw new NotFoundException('계정을 찾을 수 없습니다.');
     }
+
+    await this.assertTargetAccountManageable(
+      {
+        id: account.id,
+        role: account.role,
+        organizationId: account.organization?.id || account.organizationId || null,
+      },
+      actorAccessScope,
+    );
 
     return this.toResponseDto(account);
   }
