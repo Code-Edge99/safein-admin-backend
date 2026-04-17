@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsBoolean, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { IsArray, IsBoolean, IsEnum, IsOptional, IsString, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export enum PermissionActorTypeEnum {
@@ -9,6 +9,7 @@ export enum PermissionActorTypeEnum {
 }
 
 export enum PermissionTargetRoleEnum {
+  COMPANY_MANAGER = 'COMPANY_MANAGER',
   GROUP_MANAGER = 'GROUP_MANAGER',
 }
 
@@ -28,8 +29,11 @@ export class PermissionMatrixRowDto {
   @ApiPropertyOptional()
   description?: string;
 
-  @ApiProperty({ description: '현재 회사 기준 그룹담당자 활성 여부' })
+  @ApiProperty({ description: '현재 대상 역할 기준 활성 여부' })
   enabled: boolean;
+
+  @ApiProperty({ description: '현재 사용자가 이 권한을 대상 역할에 부여할 수 있는지 여부' })
+  assignable: boolean;
 
   @ApiPropertyOptional()
   lastModified?: Date;
@@ -86,10 +90,15 @@ export class UpdateCompanyPermissionDto {
   @IsBoolean()
   enabled: boolean;
 
-  @ApiPropertyOptional({ description: '슈퍼관리자 전용 대상 회사/조직 ID' })
+  @ApiPropertyOptional({ description: '대상 회사/조직 ID' })
   @IsOptional()
   @IsString()
   organizationId?: string;
+
+  @ApiPropertyOptional({ description: '권한 적용 대상 역할', enum: PermissionTargetRoleEnum })
+  @IsOptional()
+  @IsEnum(PermissionTargetRoleEnum)
+  targetRole?: PermissionTargetRoleEnum;
 }
 
 export class BulkUpdateCompanyPermissionItemDto extends UpdateCompanyPermissionDto {

@@ -1,6 +1,7 @@
 import { IsString, IsNotEmpty, MinLength, IsEmail, MaxLength } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
+import { ADMIN_ACTOR_TYPES, type AdminActorType } from '../../../common/types/admin-actor-type';
 
 export class LoginDto {
   @ApiProperty({ description: '사용자 아이디', example: 'admin' })
@@ -72,6 +73,9 @@ export class TokenResponseUserDto {
   @ApiProperty({ description: '역할' })
   role!: string;
 
+  @ApiProperty({ description: '관리 주체 구분', enum: ADMIN_ACTOR_TYPES })
+  actorType!: AdminActorType;
+
   @ApiProperty({ description: '소속 현장', required: false, type: TokenResponseUserOrganizationDto })
   organization?: TokenResponseUserOrganizationDto;
 }
@@ -118,6 +122,9 @@ export class AuthUserDto {
 
   @ApiProperty({ description: '역할' })
   role!: string;
+
+  @ApiProperty({ description: '관리 주체 구분', enum: ADMIN_ACTOR_TYPES })
+  actorType!: AdminActorType;
 
   @ApiProperty({
     description: '소속 현장',

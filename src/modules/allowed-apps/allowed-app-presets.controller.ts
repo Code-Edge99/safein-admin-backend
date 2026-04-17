@@ -17,6 +17,8 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PermissionCodes } from '../auth/decorators/permission-codes.decorator';
+import { EffectivePermissionsGuard } from '../auth/guards/effective-permissions.guard';
 import { AllowedAppPresetsService } from './allowed-app-presets.service';
 import {
   CreateAllowedAppPresetDto,
@@ -33,12 +35,14 @@ import { AuthenticatedAdminRequest } from '../../common/types/authenticated-requ
 
 @ApiTags('허용앱 프리셋')
 @Controller('allowed-app-presets')
-@UseGuards(JwtAuthGuard, OrganizationScopeGuard)
+@UseGuards(JwtAuthGuard, OrganizationScopeGuard, EffectivePermissionsGuard)
+@PermissionCodes('ALLOWED_APP_READ')
 @ApiBearerAuth()
 export class AllowedAppPresetsController {
   constructor(private readonly presetsService: AllowedAppPresetsService) {}
 
   @Post()
+  @PermissionCodes('ALLOWED_APP_WRITE')
   @ApiOperation({ summary: '허용앱 프리셋 생성' })
   @ApiResponse({ status: 201, type: AllowedAppPresetDetailDto })
   create(@Req() req: AuthenticatedAdminRequest, @Body() dto: CreateAllowedAppPresetDto): Promise<AllowedAppPresetDetailDto> {
@@ -77,6 +81,7 @@ export class AllowedAppPresetsController {
   }
 
   @Put(':id')
+  @PermissionCodes('ALLOWED_APP_WRITE')
   @ApiOperation({ summary: '허용앱 프리셋 수정' })
   @ApiResponse({ status: 200, type: AllowedAppPresetDetailDto })
   update(
@@ -88,6 +93,7 @@ export class AllowedAppPresetsController {
   }
 
   @Post(':id/apps')
+  @PermissionCodes('ALLOWED_APP_WRITE')
   @ApiOperation({ summary: '프리셋에 앱 추가' })
   @ApiResponse({ status: 200, type: AllowedAppPresetDetailDto })
   addApps(
@@ -99,6 +105,7 @@ export class AllowedAppPresetsController {
   }
 
   @Delete(':id/apps')
+  @PermissionCodes('ALLOWED_APP_WRITE')
   @ApiOperation({ summary: '프리셋에서 앱 제거' })
   @ApiResponse({ status: 200, type: AllowedAppPresetDetailDto })
   removeApps(
@@ -110,6 +117,7 @@ export class AllowedAppPresetsController {
   }
 
   @Delete(':id')
+  @PermissionCodes('ALLOWED_APP_WRITE')
   @ApiOperation({ summary: '허용앱 프리셋 삭제' })
   @ApiResponse({ status: 204 })
   remove(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<void> {

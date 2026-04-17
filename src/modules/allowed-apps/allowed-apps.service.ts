@@ -89,7 +89,10 @@ export class AllowedAppsService {
     return this.toResponseDto(app);
   }
 
-  async findAll(filter: AllowedAppFilterDto): Promise<AllowedAppListResponseDto> {
+  async findAll(
+    filter: AllowedAppFilterDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<AllowedAppListResponseDto> {
     await this.ensureValidPlatformData();
 
     const page = filter.page || 1;
@@ -134,7 +137,7 @@ export class AllowedAppsService {
 
     // 허용앱별 설치 직원 수 집계 (고유 직원 수)
     const appIds = data.map((app) => app.id);
-    const installedCountMap = await this.getInstalledCountByApps(appIds);
+    const installedCountMap = await this.getInstalledCountByApps(appIds, scopeOrganizationIds);
 
     return {
       data: data.map((app) => this.toResponseDto(app, installedCountMap.get(app.id) || 0)),
@@ -145,7 +148,7 @@ export class AllowedAppsService {
     };
   }
 
-  async findOne(id: string): Promise<AllowedAppResponseDto> {
+  async findOne(id: string, scopeOrganizationIds?: string[]): Promise<AllowedAppResponseDto> {
     await this.ensureValidPlatformData();
 
     const app = await this.prisma.allowedApp.findUnique({
@@ -161,11 +164,14 @@ export class AllowedAppsService {
       throw new NotFoundException('허용앱을 찾을 수 없습니다.');
     }
 
-    const installedCountMap = await this.getInstalledCountByApps([id]);
+    const installedCountMap = await this.getInstalledCountByApps([id], scopeOrganizationIds);
     return this.toResponseDto(app, installedCountMap.get(id) || 0);
   }
 
-  async findByPackageName(packageName: string): Promise<AllowedAppResponseDto> {
+  async findByPackageName(
+    packageName: string,
+    scopeOrganizationIds?: string[],
+  ): Promise<AllowedAppResponseDto> {
     await this.ensureValidPlatformData();
 
     const normalizedPackageName = this.normalizePackageName(packageName);
@@ -200,7 +206,8 @@ export class AllowedAppsService {
       throw new NotFoundException('허용앱을 찾을 수 없습니다.');
     }
 
-    return this.toResponseDto(app);
+    const installedCountMap = await this.getInstalledCountByApps([app.id], scopeOrganizationIds);
+    return this.toResponseDto(app, installedCountMap.get(app.id) || 0);
   }
 
   async update(id: string, dto: UpdateAllowedAppDto, actorUserId?: string): Promise<AllowedAppResponseDto> {
@@ -490,10 +497,18 @@ export class AllowedAppsService {
     * 허용앱 ID 목록에 대해 설치한 고유 직원 수를 집계합니다.
    * InstalledApp → Device → Employee 관계를 통해 distinct employeeId를 카운트합니다.
    */
-  private async getInstalledCountByApps(appIds: string[]): Promise<Map<string, number>> {
+  private async getInstalledCountByApps(
+    appIds: string[],
+    scopeOrganizationIds?: string[],
+  ): Promise<Map<string, number>> {
     if (appIds.length === 0) return new Map();
+    if (scopeOrganizationIds && scopeOrganizationIds.length === 0) return new Map();
 
     try {
+      const scopeCondition = scopeOrganizationIds && scopeOrganizationIds.length > 0
+        ? Prisma.sql`AND COALESCE(d."organizationId", e."organizationId") IN (${Prisma.join(scopeOrganizationIds)})`
+        : Prisma.empty;
+
       const results: Array<{ allowedAppId: string; count: bigint }> = await this.prisma.$queryRaw`
         SELECT ha."id" AS "allowedAppId", COUNT(DISTINCT d."employeeId") AS count
         FROM allowed_apps ha
@@ -503,7 +518,10 @@ export class AllowedAppsService {
         LEFT JOIN devices d
           ON d."id" = ia."deviceId"
           AND d."employeeId" IS NOT NULL
+        LEFT JOIN employees e
+          ON e."id" = d."employeeId"
         WHERE ha."id" IN (${Prisma.join(appIds)})
+        ${scopeCondition}
         GROUP BY ha."id"
       `;
 

@@ -11,6 +11,7 @@ import {
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { normalizeOptionalPhoneNumber } from '../../../common/utils/phone.util';
+import { ADMIN_ACTOR_TYPES, type AdminActorType } from '../../../common/types/admin-actor-type';
 
 // Enum 정의
 export enum AdminRoleEnum {
@@ -112,6 +113,9 @@ export class AccountResponseDto {
 
   @ApiProperty({ description: '역할', enum: AdminRoleEnum })
   role: AdminRoleEnum;
+
+  @ApiProperty({ description: '관리 주체 구분', enum: ADMIN_ACTOR_TYPES })
+  actorType: AdminActorType;
 
   @ApiPropertyOptional({ description: '현장 정보' })
   organization?: {

@@ -20,6 +20,7 @@ import {
   BulkUpdateCompanyPermissionsResultDto,
   EffectivePermissionsResponseDto,
   PermissionMatrixResponseDto,
+  PermissionTargetRoleEnum,
   UpdateCompanyPermissionDto,
   UpdateCompanyPermissionResultDto,
 } from './dto/permissions.dto';
@@ -50,18 +51,19 @@ export class PermissionsController {
 
   @Get()
   @Roles('SUPER_ADMIN', 'SITE_ADMIN')
-  @ApiOperation({ summary: '회사별 그룹담당자 권한 목록 조회' })
+  @ApiOperation({ summary: '슈퍼관리자: 회사 관리자 / 회사관리자: 그룹담당자 권한 목록 조회' })
   @ApiResponse({ status: 200, type: PermissionMatrixResponseDto })
   findAll(
     @Req() req: AuthenticatedAdminRequest,
     @Query('organizationId') organizationId?: string,
+    @Query('targetRole') targetRole?: PermissionTargetRoleEnum,
   ): Promise<PermissionMatrixResponseDto> {
-    return this.permissionsService.findAll(this.getActorContext(req), organizationId);
+    return this.permissionsService.findAll(this.getActorContext(req), organizationId, targetRole);
   }
 
   @Put(':id')
   @Roles('SUPER_ADMIN', 'SITE_ADMIN')
-  @ApiOperation({ summary: '회사별 그룹담당자 권한 수정' })
+  @ApiOperation({ summary: '슈퍼관리자: 회사 관리자 / 회사관리자: 그룹담당자 권한 수정' })
   @ApiResponse({ status: 200, type: UpdateCompanyPermissionResultDto })
   update(
     @Req() req: AuthenticatedAdminRequest,
@@ -73,7 +75,7 @@ export class PermissionsController {
 
   @Put()
   @Roles('SUPER_ADMIN', 'SITE_ADMIN')
-  @ApiOperation({ summary: '회사별 그룹담당자 권한 일괄 수정' })
+  @ApiOperation({ summary: '슈퍼관리자: 회사 관리자 / 회사관리자: 그룹담당자 권한 일괄 수정' })
   @ApiResponse({ status: 200, type: BulkUpdateCompanyPermissionsResultDto })
   bulkUpdate(
     @Req() req: AuthenticatedAdminRequest,

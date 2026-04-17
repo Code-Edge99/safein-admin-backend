@@ -4,7 +4,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AdminRole } from '@prisma/client';
+import {
+  AdminRole,
+  PermissionTargetRole as PrismaPermissionTargetRole,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { resolveOrganizationClassification } from '../../common/utils/organization-scope.util';
 import {
@@ -34,6 +37,11 @@ type ResolvedActorScope = {
 type ResolvedCompanyScope = {
   id: string;
   name: string;
+};
+
+type ResolvedPermissionTarget = {
+  enumValue: PermissionTargetRoleEnum;
+  prismaValue: PrismaPermissionTargetRole;
 };
 
 type PermissionCatalogItem = {
@@ -108,7 +116,7 @@ function getDefaultEnabled(code: string, role: 'SUPER_ADMIN' | 'SITE_ADMIN'): bo
     }
 
     if (code === 'PERMISSION_READ') {
-      return false;
+      return true;
     }
 
     return readOnlyCode;
@@ -264,7 +272,36 @@ export class PermissionsService {
     return this.findFirstActiveCompanyOrganization();
   }
 
+  private resolveRequestedTargetRole(
+    actorScope: ResolvedActorScope,
+    requestedTargetRole?: PermissionTargetRoleEnum,
+  ): ResolvedPermissionTarget {
+    if (actorScope.actorType === PermissionActorTypeEnum.SUPER_ADMIN) {
+      const targetRole = requestedTargetRole ?? PermissionTargetRoleEnum.COMPANY_MANAGER;
+      if (targetRole === PermissionTargetRoleEnum.GROUP_MANAGER) {
+        return {
+          enumValue: PermissionTargetRoleEnum.GROUP_MANAGER,
+          prismaValue: PrismaPermissionTargetRole.GROUP_MANAGER,
+        };
+      }
+
+      return {
+        enumValue: PermissionTargetRoleEnum.COMPANY_MANAGER,
+        prismaValue: PrismaPermissionTargetRole.COMPANY_MANAGER,
+      };
+    }
+
+    return {
+      enumValue: PermissionTargetRoleEnum.GROUP_MANAGER,
+      prismaValue: PrismaPermissionTargetRole.GROUP_MANAGER,
+    };
+  }
+
   private async getGlobalSiteAdminPermissionIdSet(permissionIds: string[]): Promise<Set<string>> {
+    if (permissionIds.length === 0) {
+      return new Set();
+    }
+
     const rows = await this.prisma.rolePermission.findMany({
       where: {
         role: AdminRole.SITE_ADMIN,
@@ -276,11 +313,20 @@ export class PermissionsService {
     return new Set(rows.map((row) => row.permissionId));
   }
 
-  private async getCompanyOverrides(permissionIds: string[], organizationId: string) {
+  private async getCompanyOverrides(
+    permissionIds: string[],
+    organizationId: string,
+    targetRole: PrismaPermissionTargetRole,
+  ) {
+    if (permissionIds.length === 0) {
+      return new Map();
+    }
+
     const overrides = await this.prisma.groupManagerPermissionOverride.findMany({
       where: {
         organizationId,
         permissionId: { in: permissionIds },
+        targetRole,
       },
       include: {
         updatedBy: {
@@ -296,7 +342,47 @@ export class PermissionsService {
     return new Map(overrides.map((override) => [override.permissionId, override] as const));
   }
 
-  private async buildCompanyPermissionMatrix(
+  private async getEffectiveCompanyManagerPermissionIdSet(
+    permissionIds: string[],
+    companyOrganizationId: string,
+  ): Promise<Set<string>> {
+    const basePermissionIds = await this.getGlobalSiteAdminPermissionIdSet(permissionIds);
+    const overridesByPermissionId = await this.getCompanyOverrides(
+      permissionIds,
+      companyOrganizationId,
+      PrismaPermissionTargetRole.COMPANY_MANAGER,
+    );
+
+    const enabledPermissionIds = new Set<string>();
+    for (const permissionId of permissionIds) {
+      const override = overridesByPermissionId.get(permissionId);
+      if (override?.isEnabled ?? basePermissionIds.has(permissionId)) {
+        enabledPermissionIds.add(permissionId);
+      }
+    }
+
+    return enabledPermissionIds;
+  }
+
+  private buildEmptyMatrix(
+    targetRole: PermissionTargetRoleEnum,
+    canEdit: boolean,
+    companyScope?: ResolvedCompanyScope | null,
+  ): PermissionMatrixResponseDto {
+    return {
+      scopeOrganizationId: companyScope?.id,
+      scopeOrganizationName: companyScope?.name,
+      targetRole,
+      canEdit,
+      data: [],
+      total: 0,
+      page: 1,
+      limit: 1,
+      totalPages: 0,
+    };
+  }
+
+  private async buildCompanyManagerPermissionMatrix(
     companyScope: ResolvedCompanyScope,
     canEdit: boolean,
   ): Promise<PermissionMatrixResponseDto> {
@@ -304,11 +390,14 @@ export class PermissionsService {
     const syncedPermissions = Array.from(syncedPermissionMap.values());
     const permissionIds = syncedPermissions.map((permission) => permission.id);
     const siteAdminPermissionIds = await this.getGlobalSiteAdminPermissionIdSet(permissionIds);
-    const overridesByPermissionId = await this.getCompanyOverrides(permissionIds, companyScope.id);
+    const overridesByPermissionId = await this.getCompanyOverrides(
+      permissionIds,
+      companyScope.id,
+      PrismaPermissionTargetRole.COMPANY_MANAGER,
+    );
 
     const rows = this.sortRows(
       PERMISSION_CATALOG
-        .filter((permission) => !NON_DELEGABLE_GROUP_MANAGER_CODES.has(permission.code))
         .map((permission) => {
           const syncedPermission = syncedPermissionMap.get(permission.code);
           const resolvedPermissionId = syncedPermission?.id ?? permission.id;
@@ -322,10 +411,64 @@ export class PermissionsService {
             category: permission.category,
             description: permission.description,
             enabled,
+            assignable: true,
             lastModified: override?.updatedAt ?? syncedPermission?.updatedAt ?? syncedPermission?.createdAt,
             modifiedBy: override
-              ? (override.updatedBy?.name || override.updatedBy?.username || '회사 관리자')
+              ? (override.updatedBy?.name || override.updatedBy?.username || '슈퍼 관리자')
               : '전역 기본값',
+          };
+        }),
+    );
+
+    return {
+      scopeOrganizationId: companyScope.id,
+      scopeOrganizationName: companyScope.name,
+      targetRole: PermissionTargetRoleEnum.COMPANY_MANAGER,
+      canEdit,
+      data: rows,
+      total: rows.length,
+      page: 1,
+      limit: rows.length || 1,
+      totalPages: 1,
+    };
+  }
+
+  private async buildGroupManagerPermissionMatrix(
+    companyScope: ResolvedCompanyScope,
+    canEdit: boolean,
+  ): Promise<PermissionMatrixResponseDto> {
+    const syncedPermissionMap = await this.syncPermissionCatalog();
+    const syncedPermissions = Array.from(syncedPermissionMap.values());
+    const permissionIds = syncedPermissions.map((permission) => permission.id);
+    const companyManagerPermissionIds = await this.getEffectiveCompanyManagerPermissionIdSet(permissionIds, companyScope.id);
+    const overridesByPermissionId = await this.getCompanyOverrides(
+      permissionIds,
+      companyScope.id,
+      PrismaPermissionTargetRole.GROUP_MANAGER,
+    );
+
+    const rows = this.sortRows(
+      PERMISSION_CATALOG
+        .filter((permission) => !NON_DELEGABLE_GROUP_MANAGER_CODES.has(permission.code))
+        .map((permission) => {
+          const syncedPermission = syncedPermissionMap.get(permission.code);
+          const resolvedPermissionId = syncedPermission?.id ?? permission.id;
+          const canAssign = companyManagerPermissionIds.has(resolvedPermissionId);
+          const override = overridesByPermissionId.get(resolvedPermissionId);
+          const enabled = canAssign && (override?.isEnabled ?? true);
+
+          return {
+            id: resolvedPermissionId,
+            code: permission.code,
+            name: permission.name,
+            category: permission.category,
+            description: permission.description,
+            enabled,
+            assignable: canAssign,
+            lastModified: override?.updatedAt ?? (canAssign ? syncedPermission?.updatedAt ?? syncedPermission?.createdAt : undefined),
+            modifiedBy: override
+              ? (override.updatedBy?.name || override.updatedBy?.username || '회사 관리자')
+              : (canAssign ? '회사 관리자 기본값' : '회사 관리자 미보유'),
           };
         }),
     );
@@ -515,6 +658,8 @@ export class PermissionsService {
   async findMine(actor: PermissionActorContext): Promise<EffectivePermissionsResponseDto> {
     const syncedPermissionMap = await this.syncPermissionCatalog();
     const actorScope = await this.resolveActorScope(actor);
+    const syncedPermissions = Array.from(syncedPermissionMap.values());
+    const permissionIds = syncedPermissions.map((permission) => permission.id);
 
     if (actorScope.actorType === PermissionActorTypeEnum.SUPER_ADMIN) {
       return {
@@ -524,19 +669,31 @@ export class PermissionsService {
     }
 
     if (actorScope.actorType === PermissionActorTypeEnum.COMPANY_MANAGER) {
+      const companyManagerPermissionIds = actorScope.companyOrganizationId
+        ? await this.getEffectiveCompanyManagerPermissionIdSet(permissionIds, actorScope.companyOrganizationId)
+        : await this.getGlobalSiteAdminPermissionIdSet(permissionIds);
+
       return {
         actorType: PermissionActorTypeEnum.COMPANY_MANAGER,
-        codes: PERMISSION_CATALOG.map((permission) => permission.code),
+        codes: PERMISSION_CATALOG.filter((permission) => {
+          const syncedPermission = syncedPermissionMap.get(permission.code);
+          const resolvedPermissionId = syncedPermission?.id ?? permission.id;
+          return companyManagerPermissionIds.has(resolvedPermissionId);
+        }).map((permission) => permission.code),
         companyOrganizationId: actorScope.companyOrganizationId,
         companyOrganizationName: actorScope.companyOrganizationName,
       };
     }
 
-    const syncedPermissions = Array.from(syncedPermissionMap.values());
-    const permissionIds = syncedPermissions.map((permission) => permission.id);
-    const basePermissionIds = await this.getGlobalSiteAdminPermissionIdSet(permissionIds);
+    const companyManagerPermissionIds = actorScope.companyOrganizationId
+      ? await this.getEffectiveCompanyManagerPermissionIdSet(permissionIds, actorScope.companyOrganizationId)
+      : new Set<string>();
     const overridesByPermissionId = actorScope.companyOrganizationId
-      ? await this.getCompanyOverrides(permissionIds, actorScope.companyOrganizationId)
+      ? await this.getCompanyOverrides(
+        permissionIds,
+        actorScope.companyOrganizationId,
+        PrismaPermissionTargetRole.GROUP_MANAGER,
+      )
       : new Map();
 
     const codes = PERMISSION_CATALOG.filter((permission) => {
@@ -547,7 +704,7 @@ export class PermissionsService {
       const syncedPermission = syncedPermissionMap.get(permission.code);
       const resolvedPermissionId = syncedPermission?.id ?? permission.id;
       const override = overridesByPermissionId.get(resolvedPermissionId);
-      return override?.isEnabled ?? basePermissionIds.has(resolvedPermissionId);
+      return companyManagerPermissionIds.has(resolvedPermissionId) && (override?.isEnabled ?? true);
     }).map((permission) => permission.code);
 
     return {
@@ -561,68 +718,50 @@ export class PermissionsService {
   async findAll(
     actor: PermissionActorContext,
     organizationId?: string,
+    requestedTargetRole?: PermissionTargetRoleEnum,
   ): Promise<PermissionMatrixResponseDto> {
     const actorScope = await this.resolveActorScope(actor);
     this.assertCanManageCompanyPermissions(actorScope);
+    const targetRole = this.resolveRequestedTargetRole(actorScope, requestedTargetRole);
 
     const targetCompanyScope = await this.resolveTargetCompanyScope(actorScope, organizationId);
     if (!targetCompanyScope) {
-      return {
-        scopeOrganizationId: undefined,
-        scopeOrganizationName: undefined,
-        targetRole: PermissionTargetRoleEnum.GROUP_MANAGER,
-        canEdit: actorScope.actorType !== PermissionActorTypeEnum.GROUP_MANAGER,
-        data: [],
-        total: 0,
-        page: 1,
-        limit: 1,
-        totalPages: 0,
-      };
+      return this.buildEmptyMatrix(targetRole.enumValue, true);
     }
 
-    return this.buildCompanyPermissionMatrix(targetCompanyScope, true);
+    if (targetRole.prismaValue === PrismaPermissionTargetRole.COMPANY_MANAGER) {
+      return this.buildCompanyManagerPermissionMatrix(targetCompanyScope, true);
+    }
+
+    return this.buildGroupManagerPermissionMatrix(targetCompanyScope, true);
   }
 
-  async update(
-    permissionId: string,
-    data: UpdateCompanyPermissionDto,
-    actor: PermissionActorContext,
+  private async updateCompanyManagerPermission(
+    companyScope: ResolvedCompanyScope,
+    permission: Awaited<ReturnType<PermissionsService['resolvePermissionById']>> & { id: string; updatedAt: Date },
+    enabled: boolean,
+    actorId?: string,
   ): Promise<UpdateCompanyPermissionResultDto> {
-    const actorScope = await this.resolveActorScope(actor);
-    this.assertCanManageCompanyPermissions(actorScope);
-
-    const targetCompanyScope = await this.resolveTargetCompanyScope(actorScope, data.organizationId);
-    if (!targetCompanyScope) {
-      throw new NotFoundException('대상 회사를 찾을 수 없습니다.');
-    }
-
-    const permission = await this.resolvePermissionById(permissionId);
-    if (!permission) {
-      throw new NotFoundException('권한을 찾을 수 없습니다.');
-    }
-
-    if (NON_DELEGABLE_GROUP_MANAGER_CODES.has(permission.code)) {
-      throw new BadRequestException('이 권한은 그룹담당자에게 위임할 수 없습니다.');
-    }
-
     const basePermissionIds = await this.getGlobalSiteAdminPermissionIdSet([permission.id]);
     const baseEnabled = basePermissionIds.has(permission.id);
     const existingOverride = await this.prisma.groupManagerPermissionOverride.findUnique({
       where: {
-        organizationId_permissionId: {
-          organizationId: targetCompanyScope.id,
+        organizationId_permissionId_targetRole: {
+          organizationId: companyScope.id,
           permissionId: permission.id,
+          targetRole: PrismaPermissionTargetRole.COMPANY_MANAGER,
         },
       },
     });
 
-    if (data.enabled === baseEnabled) {
+    if (enabled === baseEnabled) {
       if (existingOverride) {
         await this.prisma.groupManagerPermissionOverride.delete({
           where: {
-            organizationId_permissionId: {
-              organizationId: targetCompanyScope.id,
+            organizationId_permissionId_targetRole: {
+              organizationId: companyScope.id,
               permissionId: permission.id,
+              targetRole: PrismaPermissionTargetRole.COMPANY_MANAGER,
             },
           },
         });
@@ -641,21 +780,24 @@ export class PermissionsService {
 
     await this.prisma.groupManagerPermissionOverride.upsert({
       where: {
-        organizationId_permissionId: {
-          organizationId: targetCompanyScope.id,
+        organizationId_permissionId_targetRole: {
+          organizationId: companyScope.id,
           permissionId: permission.id,
+          targetRole: PrismaPermissionTargetRole.COMPANY_MANAGER,
         },
       },
       update: {
-        isEnabled: data.enabled,
-        updatedById: actor.id || null,
+        targetRole: PrismaPermissionTargetRole.COMPANY_MANAGER,
+        isEnabled: enabled,
+        updatedById: actorId || null,
         updatedAt: touchedAt,
       },
       create: {
-        organizationId: targetCompanyScope.id,
+        organizationId: companyScope.id,
         permissionId: permission.id,
-        isEnabled: data.enabled,
-        updatedById: actor.id || null,
+        targetRole: PrismaPermissionTargetRole.COMPANY_MANAGER,
+        isEnabled: enabled,
+        updatedById: actorId || null,
         createdAt: touchedAt,
         updatedAt: touchedAt,
       },
@@ -663,11 +805,129 @@ export class PermissionsService {
 
     return {
       success: true,
-      changed: existingOverride?.isEnabled !== data.enabled,
-      enabled: data.enabled,
+      changed: existingOverride?.isEnabled !== enabled,
+      enabled,
       lastModified: touchedAt,
-      modifiedBy: actor.id ? '회사 관리자' : '회사 설정',
+      modifiedBy: actorId ? '슈퍼 관리자' : '전역 설정',
     };
+  }
+
+  private async updateGroupManagerPermission(
+    companyScope: ResolvedCompanyScope,
+    permission: Awaited<ReturnType<PermissionsService['resolvePermissionById']>> & { id: string; updatedAt: Date },
+    enabled: boolean,
+    actorId?: string,
+    modifiedByLabel: string = '회사 관리자',
+  ): Promise<UpdateCompanyPermissionResultDto> {
+    if (NON_DELEGABLE_GROUP_MANAGER_CODES.has(permission.code)) {
+      throw new BadRequestException('이 권한은 그룹담당자에게 위임할 수 없습니다.');
+    }
+
+    const companyManagerPermissionIds = await this.getEffectiveCompanyManagerPermissionIdSet([permission.id], companyScope.id);
+    const baseEnabled = companyManagerPermissionIds.has(permission.id);
+
+    if (enabled && !baseEnabled) {
+      throw new ForbiddenException('회사 관리자에게 부여되지 않은 권한은 그룹담당자에게 위임할 수 없습니다.');
+    }
+
+    const existingOverride = await this.prisma.groupManagerPermissionOverride.findUnique({
+      where: {
+        organizationId_permissionId_targetRole: {
+          organizationId: companyScope.id,
+          permissionId: permission.id,
+          targetRole: PrismaPermissionTargetRole.GROUP_MANAGER,
+        },
+      },
+    });
+
+    if (enabled === baseEnabled) {
+      if (existingOverride) {
+        await this.prisma.groupManagerPermissionOverride.delete({
+          where: {
+            organizationId_permissionId_targetRole: {
+              organizationId: companyScope.id,
+              permissionId: permission.id,
+              targetRole: PrismaPermissionTargetRole.GROUP_MANAGER,
+            },
+          },
+        });
+      }
+
+      return {
+        success: true,
+        changed: Boolean(existingOverride),
+        enabled: baseEnabled,
+        lastModified: baseEnabled ? permission.updatedAt : undefined,
+        modifiedBy: baseEnabled ? '회사 관리자 기본값' : '회사 관리자 미보유',
+      };
+    }
+
+    const touchedAt = new Date();
+
+    await this.prisma.groupManagerPermissionOverride.upsert({
+      where: {
+        organizationId_permissionId_targetRole: {
+          organizationId: companyScope.id,
+          permissionId: permission.id,
+          targetRole: PrismaPermissionTargetRole.GROUP_MANAGER,
+        },
+      },
+      update: {
+        targetRole: PrismaPermissionTargetRole.GROUP_MANAGER,
+        isEnabled: enabled,
+        updatedById: actorId || null,
+        updatedAt: touchedAt,
+      },
+      create: {
+        organizationId: companyScope.id,
+        permissionId: permission.id,
+        targetRole: PrismaPermissionTargetRole.GROUP_MANAGER,
+        isEnabled: enabled,
+        updatedById: actorId || null,
+        createdAt: touchedAt,
+        updatedAt: touchedAt,
+      },
+    });
+
+    return {
+      success: true,
+      changed: existingOverride?.isEnabled !== enabled,
+      enabled,
+      lastModified: touchedAt,
+      modifiedBy: actorId ? modifiedByLabel : '회사 설정',
+    };
+  }
+
+  async update(
+    permissionId: string,
+    data: UpdateCompanyPermissionDto,
+    actor: PermissionActorContext,
+  ): Promise<UpdateCompanyPermissionResultDto> {
+    const actorScope = await this.resolveActorScope(actor);
+    this.assertCanManageCompanyPermissions(actorScope);
+    const targetRole = this.resolveRequestedTargetRole(actorScope, data.targetRole);
+
+    const targetCompanyScope = await this.resolveTargetCompanyScope(actorScope, data.organizationId);
+    if (!targetCompanyScope) {
+      throw new NotFoundException('대상 회사를 찾을 수 없습니다.');
+    }
+
+    const permission = await this.resolvePermissionById(permissionId);
+    if (!permission) {
+      throw new NotFoundException('권한을 찾을 수 없습니다.');
+    }
+
+    if (targetRole.prismaValue === PrismaPermissionTargetRole.COMPANY_MANAGER) {
+      return this.updateCompanyManagerPermission(targetCompanyScope, permission, data.enabled, actor.id);
+    }
+
+    return this.updateGroupManagerPermission(
+      targetCompanyScope,
+      permission,
+      data.enabled,
+      actor.id,
+      actorScope.actorType === PermissionActorTypeEnum.SUPER_ADMIN ? '슈퍼 관리자' : '회사 관리자',
+    );
   }
 
   async bulkUpdate(
@@ -682,6 +942,7 @@ export class PermissionsService {
         {
           organizationId: update.organizationId,
           enabled: update.enabled,
+          targetRole: update.targetRole,
         },
         actor,
       );

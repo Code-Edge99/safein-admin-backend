@@ -8,7 +8,13 @@ export function toAccountResponseDto(account: any): AccountResponseDto {
     email: account.email,
     phone: account.phone,
     role: account.role as AdminRoleEnum,
-    organization: account.organization,
+    actorType: account.actorType,
+    organization: account.organization
+      ? {
+        id: account.organization.id,
+        name: account.organization.name,
+      }
+      : undefined,
     status: account.status as AccountStatusEnum,
     lastLogin: account.lastLogin,
     createdAt: account.createdAt,

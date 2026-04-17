@@ -3,6 +3,8 @@ import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
+import { resolveAdminActorType } from '../../common/utils/organization-scope.util';
+import type { AdminActorType } from '../../common/types/admin-actor-type';
 import {
   LoginDto,
   ChangePasswordDto,
@@ -40,6 +42,19 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
   ) {}
+
+  private resolveAccountActorType(account: {
+    role: AdminRole;
+    organization?: { id: string; name: string; parentId: string | null; teamCode: string | null } | null;
+  }): AdminActorType {
+    const actorType = resolveAdminActorType(account.role, account.organization);
+
+    if (!actorType) {
+      throw new UnauthorizedException('관리자 계정의 소속 조직 구성이 올바르지 않습니다.');
+    }
+
+    return actorType;
+  }
 
   private parseDurationToSeconds(
     rawValue: JwtSignOptions['expiresIn'] | undefined,
@@ -101,6 +116,7 @@ export class AuthService {
       name: account.name,
       email: account.email,
       role: account.role,
+      actorType: this.resolveAccountActorType(account),
       organization: account.organization
         ? { id: account.organization.id, name: account.organization.name }
         : undefined,
@@ -114,6 +130,7 @@ export class AuthService {
       name: account.name,
       email: account.email,
       role: account.role,
+      actorType: this.resolveAccountActorType(account),
       organization: account.organization
         ? { id: account.organization.id, name: account.organization.name }
         : undefined,
@@ -458,6 +475,7 @@ export class AuthService {
       name: user.name,
       email: user.email || '',
       role: user.role,
+      actorType: user.actorType,
       organization: user.organization,
     });
   }
@@ -598,6 +616,7 @@ export class AuthService {
       name: updated.name,
       email: updated.email,
       role: updated.role,
+      actorType: this.resolveAccountActorType(updated),
       organization: updated.organization
         ? { id: updated.organization.id, name: updated.organization.name }
         : undefined,

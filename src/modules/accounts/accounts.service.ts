@@ -8,7 +8,11 @@ import {
 import { AdminRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { normalizePhoneNumber } from '../../common/utils/phone.util';
-import { resolveOrganizationClassification } from '../../common/utils/organization-scope.util';
+import {
+  resolveAdminActorType,
+  resolveOrganizationClassification,
+} from '../../common/utils/organization-scope.util';
+import type { AdminActorType } from '../../common/types/admin-actor-type';
 import * as bcrypt from 'bcrypt';
 import { toAccountResponseDto } from './accounts.mapper';
 import {
@@ -30,10 +34,17 @@ type AccountActorContext = {
 };
 
 type AccountAccessScope = {
-  tier: 'SUPER_ADMIN' | 'COMPANY_MANAGER' | 'GROUP_MANAGER';
+  tier: AdminActorType;
   organizationId?: string;
   scopeOrganizationIds?: string[];
 };
+
+const ACCOUNT_ORGANIZATION_SELECT = {
+  id: true,
+  name: true,
+  parentId: true,
+  teamCode: true,
+} as const;
 
 @Injectable()
 export class AccountsService {
@@ -66,16 +77,29 @@ export class AccountsService {
       throw new ForbiddenException('유효하지 않은 소속 조직입니다.');
     }
 
-    const actorClassification = resolveOrganizationClassification(actorOrganization);
-    if (actorClassification !== 'COMPANY' && actorClassification !== 'GROUP') {
+    const actorType = resolveAdminActorType(actor.role, actorOrganization);
+    if (!actorType || actorType === 'SUPER_ADMIN') {
       throw new ForbiddenException('회사 또는 그룹 관리자만 계정 관리 기능을 사용할 수 있습니다.');
     }
 
     return {
-      tier: actorClassification === 'COMPANY' ? 'COMPANY_MANAGER' : 'GROUP_MANAGER',
+      tier: actorType,
       organizationId: actorOrganization.id,
       scopeOrganizationIds: actor.scopeOrganizationIds ?? [actorOrganization.id],
     };
+  }
+
+  private resolveAccountActorType(account: {
+    role: AdminRole;
+    organization?: { id: string; name: string; parentId: string | null; teamCode: string | null } | null;
+  }): AdminActorType {
+    const actorType = resolveAdminActorType(account.role, account.organization);
+
+    if (!actorType) {
+      throw new BadRequestException('관리자 계정은 회사 관리자 또는 그룹 담당자 조직에만 연결할 수 있습니다.');
+    }
+
+    return actorType;
   }
 
   private async collectScopedGroupOrganizationIds(scopeOrganizationIds: string[]): Promise<string[]> {
@@ -220,7 +244,7 @@ export class AccountsService {
         organizationId: resolvedOrganizationId,
       },
       include: {
-        organization: { select: { id: true, name: true } },
+        organization: { select: ACCOUNT_ORGANIZATION_SELECT },
       },
     });
 
@@ -304,7 +328,7 @@ export class AccountsService {
         skip,
         take: limit,
         include: {
-          organization: { select: { id: true, name: true } },
+          organization: { select: ACCOUNT_ORGANIZATION_SELECT },
         },
         orderBy: { name: 'asc' },
       }),
@@ -325,7 +349,7 @@ export class AccountsService {
     const account = await this.prisma.account.findUnique({
       where: { id },
       include: {
-        organization: { select: { id: true, name: true } },
+        organization: { select: ACCOUNT_ORGANIZATION_SELECT },
       },
     });
 
@@ -350,7 +374,7 @@ export class AccountsService {
     const account = await this.prisma.account.findUnique({
       where: { username },
       include: {
-        organization: { select: { id: true, name: true } },
+        organization: { select: ACCOUNT_ORGANIZATION_SELECT },
       },
     });
 
@@ -420,7 +444,7 @@ export class AccountsService {
         status: dto.status as any,
       },
       include: {
-        organization: { select: { id: true, name: true } },
+        organization: { select: ACCOUNT_ORGANIZATION_SELECT },
       },
     });
 
@@ -491,7 +515,7 @@ export class AccountsService {
       where: { id },
       data: { status: newStatus },
       include: {
-        organization: { select: { id: true, name: true } },
+        organization: { select: ACCOUNT_ORGANIZATION_SELECT },
       },
     });
 
@@ -563,6 +587,9 @@ export class AccountsService {
   }
 
   private toResponseDto(account: any): AccountResponseDto {
-    return toAccountResponseDto(account);
+    return toAccountResponseDto({
+      ...account,
+      actorType: account.actorType ?? this.resolveAccountActorType(account),
+    });
   }
 }

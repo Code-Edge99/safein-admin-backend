@@ -9,4 +9,5 @@ export interface AuthenticatedAdminUser {
 export interface AuthenticatedAdminRequest extends Request {
   user?: AuthenticatedAdminUser;
   organizationScopeIds?: string[];
+  effectivePermissionCodes?: string[];
 }

@@ -18,7 +18,10 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { EffectivePermissionsGuard } from '../auth/guards/effective-permissions.guard';
+import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { PermissionCodes } from '../auth/decorators/permission-codes.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { AllowedAppsService } from './allowed-apps.service';
 import {
@@ -34,13 +37,14 @@ import { AuthenticatedAdminRequest } from '../../common/types/authenticated-requ
 
 @ApiTags('허용앱')
 @Controller('allowed-apps')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('SUPER_ADMIN')
+@UseGuards(JwtAuthGuard, RolesGuard, OrganizationScopeGuard, EffectivePermissionsGuard)
+@PermissionCodes('ALLOWED_APP_READ')
 @ApiBearerAuth()
 export class AllowedAppsController {
   constructor(private readonly allowedAppsService: AllowedAppsService) {}
 
   @Post()
+  @Roles('SUPER_ADMIN')
   @ApiOperation({ summary: '허용앱 등록' })
   @ApiResponse({ status: 201, type: AllowedAppResponseDto })
   create(@Req() req: AuthenticatedAdminRequest, @Body() dto: CreateAllowedAppDto): Promise<AllowedAppResponseDto> {
@@ -50,8 +54,11 @@ export class AllowedAppsController {
   @Get()
   @ApiOperation({ summary: '허용앱 목록 조회' })
   @ApiResponse({ status: 200, type: AllowedAppListResponseDto })
-  findAll(@Query() filter: AllowedAppFilterDto): Promise<AllowedAppListResponseDto> {
-    return this.allowedAppsService.findAll(filter);
+  findAll(
+    @Req() req: AuthenticatedAdminRequest,
+    @Query() filter: AllowedAppFilterDto,
+  ): Promise<AllowedAppListResponseDto> {
+    return this.allowedAppsService.findAll(filter, req.organizationScopeIds ?? undefined);
   }
 
   @Get('categories')
@@ -64,18 +71,22 @@ export class AllowedAppsController {
   @Get('package/:packageName')
   @ApiOperation({ summary: '패키지 이름으로 허용앱 조회' })
   @ApiResponse({ status: 200, type: AllowedAppResponseDto })
-  findByPackageName(@Param('packageName') packageName: string): Promise<AllowedAppResponseDto> {
-    return this.allowedAppsService.findByPackageName(packageName);
+  findByPackageName(
+    @Req() req: AuthenticatedAdminRequest,
+    @Param('packageName') packageName: string,
+  ): Promise<AllowedAppResponseDto> {
+    return this.allowedAppsService.findByPackageName(packageName, req.organizationScopeIds ?? undefined);
   }
 
   @Get(':id')
   @ApiOperation({ summary: '허용앱 상세 조회' })
   @ApiResponse({ status: 200, type: AllowedAppResponseDto })
-  findOne(@Param('id') id: string): Promise<AllowedAppResponseDto> {
-    return this.allowedAppsService.findOne(id);
+  findOne(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<AllowedAppResponseDto> {
+    return this.allowedAppsService.findOne(id, req.organizationScopeIds ?? undefined);
   }
 
   @Put(':id')
+  @Roles('SUPER_ADMIN')
   @ApiOperation({ summary: '허용앱 수정' })
   @ApiResponse({ status: 200, type: AllowedAppResponseDto })
   update(
@@ -87,6 +98,7 @@ export class AllowedAppsController {
   }
 
   @Patch(':id/toggle-global')
+  @Roles('SUPER_ADMIN')
   @ApiOperation({ summary: '전역 허용앱 설정 토글' })
   @ApiResponse({ status: 200, type: AllowedAppResponseDto })
   toggleGlobal(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<AllowedAppResponseDto> {
@@ -94,6 +106,7 @@ export class AllowedAppsController {
   }
 
   @Post('refresh-icons')
+  @Roles('SUPER_ADMIN')
   @ApiOperation({ summary: '앱 정보 최신화 (스토어 아이콘 갱신)' })
   @ApiResponse({ status: 200, type: RefreshAllowedAppIconsResponseDto })
   refreshIcons(
@@ -103,6 +116,7 @@ export class AllowedAppsController {
   }
 
   @Delete(':id')
+  @Roles('SUPER_ADMIN')
   @ApiOperation({ summary: '허용앱 삭제' })
   @ApiResponse({ status: 204 })
   remove(@Param('id') id: string): Promise<void> {

@@ -1,4 +1,6 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { AdminRole } from '@prisma/client';
+import type { AdminActorType } from '../types/admin-actor-type';
 
 export const CODEEDGE_ROOT_ORGANIZATION_ID = 'org-codeedge';
 export const LEGACY_ROOT_ORGANIZATION_ID = 'org-root';
@@ -29,6 +31,34 @@ export function resolveOrganizationClassification(org: OrganizationNode): Organi
   }
 
   return 'GROUP';
+}
+
+export function resolveAdminActorType(
+  role: AdminRole | string | null | undefined,
+  organization?: OrganizationNode | null,
+): AdminActorType | null {
+  if (role === AdminRole.SUPER_ADMIN || role === 'SUPER_ADMIN') {
+    return 'SUPER_ADMIN';
+  }
+
+  if (role !== AdminRole.SITE_ADMIN && role !== 'SITE_ADMIN') {
+    return null;
+  }
+
+  if (!organization) {
+    return null;
+  }
+
+  const classification = resolveOrganizationClassification(organization);
+  if (classification === 'COMPANY') {
+    return 'COMPANY_MANAGER';
+  }
+
+  if (classification === 'GROUP') {
+    return 'GROUP_MANAGER';
+  }
+
+  return null;
 }
 
 export function ensureOrganizationInScope(
