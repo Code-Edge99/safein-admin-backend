@@ -44,17 +44,27 @@ function looksMojibake(value: string): boolean {
   return /[ÃÂÐÑØæçìíîïðñòóôõö÷øùúûüýþÿ]/.test(value);
 }
 
+function normalizeNfc(value: string): string {
+  try {
+    return value.normalize('NFC');
+  } catch {
+    return value;
+  }
+}
+
 export function normalizeUploadOriginalName(originalName: string): string {
-  const source = String(originalName || '').trim();
-  if (!source) {
+  const rawSource = String(originalName || '').trim();
+  if (!rawSource) {
     return 'file';
   }
+
+  const source = normalizeNfc(rawSource);
 
   if (/^[\x20-\x7E]+$/.test(source)) {
     return source;
   }
 
-  const converted = Buffer.from(source, 'latin1').toString('utf8').trim();
+  const converted = normalizeNfc(Buffer.from(rawSource, 'latin1').toString('utf8').trim());
   if (!converted || converted.includes('\uFFFD')) {
     return source;
   }

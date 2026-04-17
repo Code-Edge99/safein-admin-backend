@@ -24,6 +24,7 @@ import {
   ensureNoticeUploadDirs,
   NOTICE_ATTACHMENTS_DIR,
   NOTICE_IMAGES_DIR,
+  normalizeUploadOriginalName,
   resolveNoticeAbsolutePath,
   resolveNoticeAbsolutePathCandidates,
   sanitizeStoredFileName,
@@ -242,7 +243,7 @@ export class NoticesService {
 
   private async resolveNewAttachmentData(item: NoticeAttachmentPayloadDto): Promise<Prisma.NoticeAttachmentCreateManyNoticeInput> {
     const fileName = item.fileName?.trim();
-    const originalName = item.originalName?.trim();
+    const originalName = item.originalName ? normalizeUploadOriginalName(item.originalName) : undefined;
     const mimeType = item.mimeType?.trim();
     const size = item.size;
     const isInlineImage = item.isInlineImage === true;
