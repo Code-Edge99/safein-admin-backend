@@ -36,6 +36,7 @@ import {
   createStoredFileName,
   ensureNoticeUploadDirs,
   getNoticeUploadDir,
+  normalizeUploadOriginalName,
 } from './notices.storage';
 
 ensureNoticeUploadDirs();
@@ -43,14 +44,35 @@ ensureNoticeUploadDirs();
 const ATTACHMENT_UPLOAD_LIMIT = 20 * 1024 * 1024;
 const IMAGE_UPLOAD_LIMIT = 10 * 1024 * 1024;
 
+function buildContentDisposition(fileName: string, isInlineImage: boolean): string {
+  const dispositionType = isInlineImage ? 'inline' : 'attachment';
+  const encodedFileName = encodeURIComponent(fileName);
+  const normalizedFileName = (() => {
+    try {
+      return fileName.normalize('NFC');
+    } catch {
+      return fileName;
+    }
+  })();
+  const asciiFallback = normalizedFileName
+    .replace(/[\r\n"]/g, ' ')
+    .replace(/\\/g, '_')
+    .replace(/[^\x20-\x7E]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim() || 'download';
+
+  return `${dispositionType}; filename="${asciiFallback}"; filename*=UTF-8''${encodedFileName}`;
+}
+
 function attachmentStorage(isInlineImage: boolean) {
   return diskStorage({
     destination: (_req, _file, callback) => {
       callback(null, getNoticeUploadDir(isInlineImage));
     },
     filename: (_req, file, callback) => {
-      const extension = extname(file.originalname || '');
-      const generated = createStoredFileName(extension ? `file${extension}` : file.originalname || 'file');
+      const normalizedOriginalName = normalizeUploadOriginalName(file.originalname || '');
+      const extension = extname(normalizedOriginalName);
+      const generated = createStoredFileName(extension ? `file${extension}` : normalizedOriginalName || 'file');
       callback(null, generated);
     },
   });
@@ -117,7 +139,12 @@ export class NoticesController {
       throw new BadRequestException('업로드할 파일이 없습니다.');
     }
 
-    return this.noticesService.buildUploadResponse(file, false);
+    const normalizedFile = {
+      ...file,
+      originalname: normalizeUploadOriginalName(file.originalname),
+    };
+
+    return this.noticesService.buildUploadResponse(normalizedFile, false);
   }
 
   @Post('uploads/images')
@@ -146,7 +173,12 @@ export class NoticesController {
       throw new BadRequestException('업로드할 파일이 없습니다.');
     }
 
-    return this.noticesService.buildUploadResponse(file, true);
+    const normalizedFile = {
+      ...file,
+      originalname: normalizeUploadOriginalName(file.originalname),
+    };
+
+    return this.noticesService.buildUploadResponse(normalizedFile, true);
   }
 
   @Post('uploads/cleanup')
@@ -162,15 +194,9 @@ export class NoticesController {
   @ApiOperation({ summary: '공지 첨부/이미지 파일 조회' })
   async serveFile(@Param('fileName') fileName: string, @Res() res: Response): Promise<void> {
     const file = await this.noticesService.resolveDownloadFile(fileName);
-    const encodedFileName = encodeURIComponent(file.originalName);
 
     res.setHeader('Content-Type', file.mimeType);
-    res.setHeader(
-      'Content-Disposition',
-      file.isInlineImage
-        ? `inline; filename*=UTF-8''${encodedFileName}`
-        : `attachment; filename*=UTF-8''${encodedFileName}`,
-    );
+    res.setHeader('Content-Disposition', buildContentDisposition(file.originalName, file.isInlineImage));
 
     res.sendFile(file.absolutePath);
   }
