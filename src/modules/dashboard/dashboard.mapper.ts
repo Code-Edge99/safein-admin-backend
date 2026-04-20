@@ -17,6 +17,8 @@ export function buildSiteReportItem(params: {
   allowedAppBlocks: number;
   behaviorBlocks: number;
   complianceRate: number;
+  trend: 'up' | 'down' | 'stable';
+  trendValue: number | null;
   prevTotal: number;
   peakHour: string;
   peakBlocks: number;
@@ -38,7 +40,7 @@ export function buildSiteReportItem(params: {
   behaviorBlocks: number;
   complianceRate: number;
   trend: 'up' | 'down' | 'stable';
-  trendValue: number;
+  trendValue: number | null;
   peakHour: string;
   peakBlocks: number;
   previousWeek: number;
@@ -57,6 +59,8 @@ export function buildSiteReportItem(params: {
     allowedAppBlocks,
     behaviorBlocks,
     complianceRate,
+    trend,
+    trendValue,
     prevTotal,
     peakHour,
     peakBlocks,
@@ -68,10 +72,6 @@ export function buildSiteReportItem(params: {
     timeConditionBlocks = 0,
     zoneConditionBlocks = 0,
   } = params;
-
-  const trendValue = prevTotal > 0
-    ? Math.round(((totalViolations - prevTotal) / prevTotal) * 100)
-    : 0;
 
   const allowedAppTrend: number[] = [];
   const behaviorTrend: number[] = [];
@@ -92,8 +92,8 @@ export function buildSiteReportItem(params: {
     allowedAppBlocks,
     behaviorBlocks,
     complianceRate: Math.round(complianceRate * 10) / 10,
-    trend: trendValue > 0 ? 'up' : trendValue < 0 ? 'down' : 'stable',
-    trendValue: Math.abs(trendValue),
+    trend,
+    trendValue: trendValue === null ? null : Math.abs(trendValue),
     peakHour,
     peakBlocks,
     previousWeek: prevTotal,

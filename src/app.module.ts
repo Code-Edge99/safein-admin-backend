@@ -21,6 +21,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { PermissionsModule } from './modules/permissions/permissions.module';
 import { MapsModule } from './modules/maps/maps.module';
 import { NoticesModule } from './modules/notices/notices.module';
+import { ReportMetricSettingsModule } from './modules/report-metric-settings/report-metric-settings.module';
 import { RequestLoggingInterceptor } from './common/interceptors/request-logging.interceptor';
 
 @Module({
@@ -53,6 +54,7 @@ import { RequestLoggingInterceptor } from './common/interceptors/request-logging
     PermissionsModule,
     MapsModule,
     NoticesModule,
+    ReportMetricSettingsModule,
   ],
   controllers: [],
   providers: [RequestLoggingInterceptor],

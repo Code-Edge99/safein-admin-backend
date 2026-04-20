@@ -15,19 +15,18 @@ import {
 import { findEmployeeByIdentifier, resolveEmployeePrimaryId } from '../../common/utils/employee-identifier.util';
 import { buildSiteReportItem, SiteReportTrendPoint } from './dashboard.mapper';
 import { ReaggregateDayDto } from './dto/reaggregate-day.dto';
+import { ReportMetricSettingsService, type ReportMetricSettingsValues } from '../report-metric-settings/report-metric-settings.service';
 
 @Injectable()
 export class DashboardService {
   private readonly logger = new Logger(DashboardService.name);
   private static readonly NON_REPORTABLE_EMPLOYEE_STATUSES = ['DELETE', 'PHONE_INFO_REVIEW'] as const;
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly reportMetricSettingsService: ReportMetricSettingsService,
+  ) {}
 
-  private static readonly COMPLIANCE_WEIGHTS = {
-    appControl: 1.0,
-    behavior: 1.2,
-  } as const;
-  private static readonly COMPLIANCE_DAILY_PENALTY = 3;
   private static readonly KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
   private parseKstDateInput(dateText: string): Date {
@@ -163,35 +162,148 @@ export class DashboardService {
     return summaries;
   }
 
-  private calculateWeightedComplianceRate(params: {
-    activeDays: number;
-    appControlBlocks: number;
-    behaviorBlocks: number;
+  private calculateComplianceRate(params: {
+    allowedEvents: number;
+    appControlBlocks?: number;
+    behaviorBlocks?: number;
+    totalBlocks?: number;
     rounded?: boolean;
+    settings: Pick<ReportMetricSettingsValues, 'complianceAppBlockWeight' | 'complianceBehaviorBlockWeight'>;
   }): number {
     const {
-      activeDays,
-      appControlBlocks,
-      behaviorBlocks,
+      allowedEvents,
+      appControlBlocks = 0,
+      behaviorBlocks = 0,
+      totalBlocks = 0,
       rounded = true,
+      settings,
     } = params;
 
-    const denominator = Math.max(activeDays, 1);
-    const weightedViolationScore =
-      appControlBlocks * DashboardService.COMPLIANCE_WEIGHTS.appControl
-      + behaviorBlocks * DashboardService.COMPLIANCE_WEIGHTS.behavior;
-
-    const dailyWeightedViolation = weightedViolationScore / denominator;
-    const rawRate = Math.max(
-      0,
-      100 - dailyWeightedViolation * DashboardService.COMPLIANCE_DAILY_PENALTY,
-    );
+    const normalizedAppBlocks = Math.max(appControlBlocks, 0);
+    const normalizedBehaviorBlocks = Math.max(behaviorBlocks, 0);
+    const normalizedTotalBlocks = Math.max(totalBlocks, 0);
+    const remainingBlocks = Math.max(normalizedTotalBlocks - normalizedAppBlocks - normalizedBehaviorBlocks, 0);
+    const weightedBlocks = (normalizedAppBlocks * settings.complianceAppBlockWeight)
+      + (normalizedBehaviorBlocks * settings.complianceBehaviorBlockWeight)
+      + remainingBlocks;
+    const rawRate = Math.max(0, Math.min(100, 100 - weightedBlocks));
 
     if (!rounded) {
       return Math.round(rawRate * 10) / 10;
     }
 
     return Math.round(rawRate);
+  }
+
+  private calculateChangeRate(current: number, previous: number): number | null {
+    if (previous > 0) {
+      return Math.round(((current - previous) / previous) * 100);
+    }
+
+    return current > 0 ? null : 0;
+  }
+
+  private resolveTrendDirection(current: number, previous: number): 'up' | 'down' | 'stable' {
+    if (current > previous) {
+      return 'up';
+    }
+
+    if (current < previous) {
+      return 'down';
+    }
+
+    return 'stable';
+  }
+
+  private roundTo(value: number, decimals: number): number {
+    const factor = 10 ** decimals;
+    return Math.round(value * factor) / factor;
+  }
+
+  private calculateRiskScoreForBelowThreshold(
+    value: number,
+    warningThreshold: number,
+    dangerThreshold: number,
+  ): number {
+    if (value >= warningThreshold) {
+      return 0;
+    }
+
+    if (value <= dangerThreshold) {
+      return 100;
+    }
+
+    const ratio = (warningThreshold - value) / Math.max(warningThreshold - dangerThreshold, 0.0001);
+    return this.roundTo(60 + (ratio * 40), 1);
+  }
+
+  private calculateRiskScoreForAboveThreshold(
+    value: number,
+    warningThreshold: number,
+    dangerThreshold: number,
+  ): number {
+    if (value <= warningThreshold) {
+      return 0;
+    }
+
+    if (value >= dangerThreshold) {
+      return 100;
+    }
+
+    const ratio = (value - warningThreshold) / Math.max(dangerThreshold - warningThreshold, 0.0001);
+    return this.roundTo(60 + (ratio * 40), 1);
+  }
+
+  private calculateEmployeeRiskAssessment(params: {
+    totalBlocks: number;
+    zoneViolations: number;
+    complianceRate: number;
+    settings: Pick<ReportMetricSettingsValues,
+      | 'employeeRiskComplianceDangerBelow'
+      | 'employeeRiskComplianceWarningBelow'
+      | 'employeeRiskZoneViolationsDangerAbove'
+      | 'employeeRiskZoneViolationsWarningAbove'
+      | 'employeeRiskTotalBlocksDangerAbove'
+      | 'employeeRiskTotalBlocksWarningAbove'
+      | 'employeeRiskComplianceWeight'
+      | 'employeeRiskZoneViolationsWeight'
+      | 'employeeRiskTotalBlocksWeight'
+      | 'employeeRiskDangerScoreMin'
+      | 'employeeRiskWarningScoreMin'
+    >;
+  }): { riskLevel: '낮음' | '보통' | '높음'; riskScore: number } {
+    const { totalBlocks, zoneViolations, complianceRate, settings } = params;
+    const complianceScore = this.calculateRiskScoreForBelowThreshold(
+      complianceRate,
+      settings.employeeRiskComplianceWarningBelow,
+      settings.employeeRiskComplianceDangerBelow,
+    );
+    const zoneScore = this.calculateRiskScoreForAboveThreshold(
+      zoneViolations,
+      settings.employeeRiskZoneViolationsWarningAbove,
+      settings.employeeRiskZoneViolationsDangerAbove,
+    );
+    const totalBlockScore = this.calculateRiskScoreForAboveThreshold(
+      totalBlocks,
+      settings.employeeRiskTotalBlocksWarningAbove,
+      settings.employeeRiskTotalBlocksDangerAbove,
+    );
+    const riskScore = this.roundTo(
+      (complianceScore * settings.employeeRiskComplianceWeight)
+        + (zoneScore * settings.employeeRiskZoneViolationsWeight)
+        + (totalBlockScore * settings.employeeRiskTotalBlocksWeight),
+      1,
+    );
+
+    if (riskScore >= settings.employeeRiskDangerScoreMin) {
+      return { riskLevel: '높음', riskScore };
+    }
+
+    if (riskScore >= settings.employeeRiskWarningScoreMin) {
+      return { riskLevel: '보통', riskScore };
+    }
+
+    return { riskLevel: '낮음', riskScore };
   }
 
   private ensureOrganizationInScope(
@@ -435,19 +547,9 @@ export class DashboardService {
         }),
     ]);
 
-      const employeeMonthlyGrowthRate =
-        employeesLastMonth > 0
-          ? Math.round(((employeesThisMonth - employeesLastMonth) / employeesLastMonth) * 100)
-          : employeesThisMonth > 0
-            ? 100
-            : 0;
+      const employeeMonthlyGrowthRate = this.calculateChangeRate(employeesThisMonth, employeesLastMonth);
 
-      const violationChangeRate =
-        yesterdayLogs > 0
-          ? Math.round(((todayLogs - yesterdayLogs) / yesterdayLogs) * 100)
-          : todayLogs > 0
-            ? 100
-            : 0;
+      const violationChangeRate = this.calculateChangeRate(todayLogs, yesterdayLogs);
 
     return {
       totalEmployees,
@@ -534,7 +636,7 @@ export class DashboardService {
       });
 
       logs.forEach((log) => {
-        const hour = log.timestamp.getHours();
+        const hour = this.getKstHourFromUtc(log.timestamp);
         const existing = hourlyMap.get(hour) || { totalBlocks: 0, behaviorBlocks: 0, allowedAppBlocks: 0 };
         hourlyMap.set(hour, {
           totalBlocks: existing.totalBlocks + 1,
@@ -654,6 +756,7 @@ export class DashboardService {
       throw new BadRequestException('재집계 대상 현장이 없습니다. organizationId를 지정하거나 권한 범위를 확인해주세요.');
     }
 
+    const reportMetricSettings = await this.reportMetricSettingsService.findCurrentValues();
     const results: any[] = [];
 
     for (const organizationId of targetOrganizationIds) {
@@ -753,13 +856,13 @@ export class DashboardService {
         this.prisma.device.count({ where: { organizationId, status: 'NORMAL' } }),
       ]);
 
-      // 화면 표시와 동일한 가중치 공식 사용 (단일 날짜 재집계이므로 activeDays=1)
-      const activeDays = totalBlocks > 0 || behaviorBlocks > 0 || appControlBlocks > 0 ? 1 : 0;
-      const complianceRate = this.calculateWeightedComplianceRate({
-        activeDays,
+      const complianceRate = this.calculateComplianceRate({
+        allowedEvents,
         appControlBlocks,
         behaviorBlocks,
+        totalBlocks,
         rounded: false,
+        settings: reportMetricSettings,
       });
 
       await this.prisma.$transaction(async (tx) => {
@@ -1112,6 +1215,7 @@ export class DashboardService {
     );
 
     const blockedAppSummaries = this.summarizeBlockedApps(appControlLogs, packageNameToAppName);
+    const reportMetricSettings = await this.reportMetricSettingsService.findCurrentValues();
 
     const empMap = new Map<string, any>();
     employees.forEach((employee: any) => {
@@ -1147,47 +1251,32 @@ export class DashboardService {
       existing.dailyStats.push(stat);
     });
 
-    const aggregated = Array.from(empMap.values()).sort((a, b) => {
-      if (b.totalBlocks !== a.totalBlocks) {
-        return b.totalBlocks - a.totalBlocks;
-      }
-      return a.employeeName.localeCompare(b.employeeName);
-    });
+    const aggregated = Array.from(empMap.values());
 
-    const total = aggregated.length;
     // 상세 페이지와 동일하게 실제 날짜 기준으로 7일/14일 범위 계산
     const now7Ago = getKstDaysAgoStart(7);
     const now14Ago = getKstDaysAgoStart(14);
-    const paged = aggregated.slice(skip, skip + limit).map((emp) => {
+    const enriched = aggregated.map((emp) => {
       const recentStats = emp.dailyStats.filter((s: any) => s.date >= now7Ago);
       const olderStats = emp.dailyStats.filter((s: any) => s.date >= now14Ago && s.date < now7Ago);
       const recentTotal = recentStats.reduce((sum: number, s: any) => sum + s.totalBlocks, 0);
       const olderTotal = olderStats.reduce((sum: number, s: any) => sum + s.totalBlocks, 0);
 
-      let trend = 'stable';
-      if (recentTotal > olderTotal * 1.2) trend = 'up';
-      else if (recentTotal < olderTotal * 0.8) trend = 'down';
+      const trend = this.resolveTrendDirection(recentTotal, olderTotal);
 
-      const activeDays = emp.dailyStats.filter((stat: any) => {
-        const statTotalEvents = (stat as any).totalEvents ?? stat.totalBlocks;
-        return (
-          statTotalEvents > 0
-          || stat.totalBlocks > 0
-          || stat.behaviorBlocks > 0
-          || stat.appControlBlocks > 0
-          || stat.zoneViolations > 0
-        );
-      }).length;
-
-      const complianceRate = this.calculateWeightedComplianceRate({
-        activeDays,
+      const complianceRate = this.calculateComplianceRate({
+        allowedEvents: emp.allowedEvents,
         appControlBlocks: emp.allowedAppBlocks,
         behaviorBlocks: emp.behaviorBlocks,
+        totalBlocks: emp.totalBlocks,
+        settings: reportMetricSettings,
       });
-
-      let riskLevel = '낮음';
-      if (emp.totalBlocks > 20 || emp.zoneViolations > 5 || complianceRate < 60) riskLevel = '높음';
-      else if (emp.totalBlocks > 10 || emp.zoneViolations > 2 || complianceRate < 80) riskLevel = '보통';
+      const riskAssessment = this.calculateEmployeeRiskAssessment({
+        totalBlocks: emp.totalBlocks,
+        zoneViolations: emp.zoneViolations,
+        complianceRate,
+        settings: reportMetricSettings,
+      });
 
       const blockedAppSummary = blockedAppSummaries.get(emp.employeeId);
 
@@ -1203,11 +1292,27 @@ export class DashboardService {
         blockedAppsCount: blockedAppSummary?.blockedAppsCount || 0,
         topBlockedApp: blockedAppSummary?.topBlockedApp || '-',
         complianceRate,
-        riskLevel,
+        riskLevel: riskAssessment.riskLevel,
+        riskScore: riskAssessment.riskScore,
         lastViolation: emp.dailyStats[0]?.date || null,
         zoneViolations: emp.zoneViolations,
       };
     });
+
+    enriched.sort((left, right) => {
+      if (right.riskScore !== left.riskScore) {
+        return right.riskScore - left.riskScore;
+      }
+
+      if (right.totalBlocks !== left.totalBlocks) {
+        return right.totalBlocks - left.totalBlocks;
+      }
+
+      return left.employeeName.localeCompare(right.employeeName);
+    });
+
+    const total = enriched.length;
+    const paged = enriched.slice(skip, skip + limit);
 
     return {
       data: paged,
@@ -1312,23 +1417,15 @@ export class DashboardService {
       employee.organizationId,
       policySourceOrganizationIds,
     );
+    const reportMetricSettings = await this.reportMetricSettingsService.findCurrentValues();
 
     // ── 집계: 통계 ──
     const totalEvents = dailyStats.reduce((s, d) => s + ((d as any).totalEvents ?? d.totalBlocks), 0);
+    const totalAllowedEvents = dailyStats.reduce((s, d) => s + ((d as any).allowedEvents ?? 0), 0);
     const totalBlocks = dailyStats.reduce((s, d) => s + d.totalBlocks, 0);
     const behaviorBlocks = dailyStats.reduce((s, d) => s + d.behaviorBlocks, 0);
     const appControlBlocks = dailyStats.reduce((s, d) => s + d.appControlBlocks, 0);
     const zoneViolations = dailyStats.reduce((s, d) => s + d.zoneViolations, 0);
-    const activeDays = dailyStats.filter((stat) => {
-      const statTotalEvents = (stat as any).totalEvents ?? stat.totalBlocks;
-      return (
-        statTotalEvents > 0
-        || stat.totalBlocks > 0
-        || stat.behaviorBlocks > 0
-        || stat.appControlBlocks > 0
-        || stat.zoneViolations > 0
-      );
-    }).length;
 
     // 최근 7일 vs 이전 7일 비교
     const day7Ago = getKstDaysAgoStart(7, now);
@@ -1339,23 +1436,23 @@ export class DashboardService {
     const recentTotal = recentStats.reduce((s, d) => s + d.totalBlocks, 0);
     const olderTotal = olderStats.reduce((s, d) => s + d.totalBlocks, 0);
 
-    let trend = 'stable';
-    if (recentTotal > olderTotal * 1.2) trend = 'up';
-    else if (recentTotal < olderTotal * 0.8) trend = 'down';
+    const trend = this.resolveTrendDirection(recentTotal, olderTotal);
 
-    const complianceRate = this.calculateWeightedComplianceRate({
-      activeDays,
+    const complianceRate = this.calculateComplianceRate({
+      allowedEvents: totalAllowedEvents,
       appControlBlocks,
       behaviorBlocks,
+      totalBlocks,
+      settings: reportMetricSettings,
+    });
+    const riskAssessment = this.calculateEmployeeRiskAssessment({
+      totalBlocks,
+      zoneViolations,
+      complianceRate,
+      settings: reportMetricSettings,
     });
 
-    let riskLevel = '낮음';
-    if (totalBlocks > 20 || zoneViolations > 5 || complianceRate < 60) riskLevel = '높음';
-    else if (totalBlocks > 10 || zoneViolations > 2 || complianceRate < 80) riskLevel = '보통';
-
-    const weeklyIncreaseRate = olderTotal > 0
-      ? Math.round(((recentTotal - olderTotal) / olderTotal) * 100)
-      : 0;
+    const weeklyIncreaseRate = this.calculateChangeRate(recentTotal, olderTotal);
 
     // ── 인사이트: 앱별 위반 Top 3 (ControlLog 기반) ──
     const blockedAppSummary = this.summarizeBlockedApps(
@@ -1389,7 +1486,7 @@ export class DashboardService {
     // ── 인사이트: 시간대별 패턴 (ControlLog 기반) ──
     const hourCounts = new Map<number, number>();
     controlLogs.forEach((l) => {
-      const h = l.timestamp.getHours();
+      const h = this.getKstHourFromUtc(l.timestamp);
       hourCounts.set(h, (hourCounts.get(h) || 0) + 1);
     });
     let peakBlockHour = 0;
@@ -1404,15 +1501,15 @@ export class DashboardService {
     const blockedLogs = controlLogs.filter((l) => l.action === 'blocked');
     const totalLogCount = blockedLogs.length || 1;
     const morningLogs = blockedLogs.filter((l) => {
-      const h = l.timestamp.getHours();
+      const h = this.getKstHourFromUtc(l.timestamp);
       return h >= 8 && h <= 10;
     }).length;
     const eveningLogs = blockedLogs.filter((l) => {
-      const h = l.timestamp.getHours();
+      const h = this.getKstHourFromUtc(l.timestamp);
       return h >= 16 && h <= 18;
     }).length;
     const offHoursActivity = blockedLogs.filter((l) => {
-      const h = l.timestamp.getHours();
+      const h = this.getKstHourFromUtc(l.timestamp);
       return h < 7 || h > 19;
     }).length;
 
@@ -1507,7 +1604,7 @@ export class DashboardService {
           : 0;
 
     // ── 비교 분석: 현장 평균 대비 ──
-    let vsSiteAvg = 0;
+    let vsSiteAvg: number | null = 0;
     const siteScopeOrganizationIds = [employee.organizationId];
 
     const peerSiteStats = await this.prisma.employeeDailyStat.aggregate({
@@ -1519,9 +1616,8 @@ export class DashboardService {
       _avg: { totalBlocks: true },
     });
     const peerSiteAvg = peerSiteStats._avg.totalBlocks || 0;
-    if (peerSiteAvg > 0) {
-      vsSiteAvg = Math.round(((totalBlocks / 30 - peerSiteAvg) / peerSiteAvg) * 100);
-    }
+    const employeeDailyAverageBlocks = dailyStats.length > 0 ? totalBlocks / dailyStats.length : 0;
+    vsSiteAvg = this.calculateChangeRate(employeeDailyAverageBlocks, peerSiteAvg);
 
     // ── 추이 데이터 (일별) ──
     const trendData = dailyStats.map((s) => ({
@@ -1659,7 +1755,8 @@ export class DashboardService {
       blockedAppsCount: uniqueAppCount,
       topBlockedApp,
       complianceRate,
-      riskLevel,
+      riskLevel: riskAssessment.riskLevel,
+      riskScore: riskAssessment.riskScore,
       zoneViolations,
       lastViolation: preferKstTimestamp(controlLogs[0]?.timestampKst, controlLogs[0]?.timestamp) || null,
 
@@ -2007,11 +2104,13 @@ export class DashboardService {
       trendDates.push(formatKstDateKey(date));
     }
 
+    const reportMetricSettings = await this.reportMetricSettingsService.findCurrentValues();
     const result = [];
     for (const site of sites) {
       const subtreeIds = getSubtreeIds(site.id);
       const subtreeIdSet = new Set(subtreeIds);
       const orgStats = subtreeIds.flatMap((subtreeId) => dailyStatsByOrg.get(subtreeId) || []);
+      const currentStats = orgStats.filter((s) => s.date >= currentStartDate);
       const trendStats = orgStats.filter((s) => s.date >= trendStartDate);
 
       const prevStats = orgStats.filter((s) => s.date >= previousRangeStartDate && s.date < currentStartDate);
@@ -2095,13 +2194,17 @@ export class DashboardService {
       });
 
       const totalViolations = allowedAppBlocks + behaviorBlocks;
-      const activeDays = currentDailyLogMap.size;
-      const complianceRate = this.calculateWeightedComplianceRate({
-        activeDays,
+      const currentAllowedEvents = currentStats.reduce((sum, stat) => sum + ((stat as any).allowedEvents ?? 0), 0);
+      const complianceRate = this.calculateComplianceRate({
+        allowedEvents: currentAllowedEvents,
         appControlBlocks: allowedAppBlocks,
         behaviorBlocks,
+        totalBlocks: totalViolations,
         rounded: false,
+        settings: reportMetricSettings,
       });
+      const trend = this.resolveTrendDirection(totalViolations, prevTotal);
+      const trendValue = this.calculateChangeRate(totalViolations, prevTotal);
 
       let peakHour = '09:00';
       let peakBlocks = 0;
@@ -2141,6 +2244,8 @@ export class DashboardService {
         allowedAppBlocks,
         behaviorBlocks,
         complianceRate,
+        trend,
+        trendValue,
         prevTotal,
         peakHour,
         peakBlocks,
