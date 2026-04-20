@@ -1,5 +1,27 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { resolveOrganizationClassification } from '../../common/utils/organization-scope.util';
+
+type PermissionActorType = 'SUPER_ADMIN' | 'COMPANY_MANAGER' | 'GROUP_MANAGER';
+
+type EffectivePermissionsResponse = {
+  actorType: PermissionActorType;
+  codes: string[];
+  companyOrganizationId?: string;
+  companyOrganizationName?: string;
+};
+
+type PermissionActor = {
+  role?: string;
+  organizationId?: string;
+};
+
+type OrganizationSummary = {
+  id: string;
+  name: string;
+  parentId: string | null;
+  teamCode: string | null;
+};
 
 type PermissionCatalogItem = {
   id: string;
@@ -80,6 +102,82 @@ function getDefaultEnabled(code: string, role: 'SUPER_ADMIN' | 'SITE_ADMIN'): bo
 @Injectable()
 export class PermissionsService {
   constructor(private prisma: PrismaService) {}
+
+  private async findOrganizationSummary(organizationId: string): Promise<OrganizationSummary | null> {
+    return this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: {
+        id: true,
+        name: true,
+        parentId: true,
+        teamCode: true,
+      },
+    });
+  }
+
+  private async resolveCompanyOrganization(
+    organization: OrganizationSummary,
+  ): Promise<Pick<EffectivePermissionsResponse, 'companyOrganizationId' | 'companyOrganizationName'>> {
+    if (resolveOrganizationClassification(organization) === 'COMPANY') {
+      return {
+        companyOrganizationId: organization.id,
+        companyOrganizationName: organization.name,
+      };
+    }
+
+    let currentParentId = organization.parentId;
+
+    while (currentParentId) {
+      const parent = await this.findOrganizationSummary(currentParentId);
+      if (!parent) {
+        break;
+      }
+
+      if (resolveOrganizationClassification(parent) === 'COMPANY') {
+        return {
+          companyOrganizationId: parent.id,
+          companyOrganizationName: parent.name,
+        };
+      }
+
+      currentParentId = parent.parentId;
+    }
+
+    return {};
+  }
+
+  private async resolveActorContext(actor?: PermissionActor): Promise<{
+    actorType: PermissionActorType;
+    companyOrganizationId?: string;
+    companyOrganizationName?: string;
+  }> {
+    if (actor?.role === 'SUPER_ADMIN') {
+      return { actorType: 'SUPER_ADMIN' };
+    }
+
+    if (!actor?.organizationId) {
+      return { actorType: 'GROUP_MANAGER' };
+    }
+
+    const organization = await this.findOrganizationSummary(actor.organizationId);
+    if (!organization) {
+      return { actorType: 'GROUP_MANAGER' };
+    }
+
+    const classification = resolveOrganizationClassification(organization);
+    if (classification === 'COMPANY') {
+      return {
+        actorType: 'COMPANY_MANAGER',
+        companyOrganizationId: organization.id,
+        companyOrganizationName: organization.name,
+      };
+    }
+
+    return {
+      actorType: 'GROUP_MANAGER',
+      ...(await this.resolveCompanyOrganization(organization)),
+    };
+  }
 
   private isPermissionMetadataChanged(
     existingPermission: {
@@ -248,6 +346,43 @@ export class PermissionsService {
     }
 
     return null;
+  }
+
+  async findMine(actor?: PermissionActor): Promise<EffectivePermissionsResponse> {
+    const syncedPermissionMap = await this.syncPermissionCatalog();
+    const actorContext = await this.resolveActorContext(actor);
+
+    if (actorContext.actorType === 'SUPER_ADMIN') {
+      return {
+        actorType: 'SUPER_ADMIN',
+        codes: PERMISSION_CATALOG.map((permission) => permission.code),
+      };
+    }
+
+    const rolePermissions = await this.prisma.rolePermission.findMany({
+      where: {
+        role: 'SITE_ADMIN',
+        permissionId: {
+          in: Array.from(syncedPermissionMap.values()).map((permission) => permission.id),
+        },
+      },
+      select: {
+        permissionId: true,
+      },
+    });
+
+    const allowedPermissionIds = new Set(rolePermissions.map((permission) => permission.permissionId));
+
+    return {
+      actorType: actorContext.actorType,
+      codes: PERMISSION_CATALOG.filter((permission) => {
+        const syncedPermission = syncedPermissionMap.get(permission.code);
+        const resolvedPermissionId = syncedPermission?.id ?? permission.id;
+        return allowedPermissionIds.has(resolvedPermissionId);
+      }).map((permission) => permission.code),
+      companyOrganizationId: actorContext.companyOrganizationId,
+      companyOrganizationName: actorContext.companyOrganizationName,
+    };
   }
 
   async findAll() {
