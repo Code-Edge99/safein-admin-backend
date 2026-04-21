@@ -5,12 +5,14 @@ import {
   createApplicationLogSummary,
   PersistLogLevel,
 } from './system-log-summary.util';
+import { SlackLogNotifier } from './slack-log.notifier';
 
 type PersistentAuditLoggerOptions = {
   source: string;
   enabled: boolean;
   levels: Set<PersistLogLevel>;
   maxMessageLength?: number;
+  slackNotifier?: SlackLogNotifier;
 };
 
 export class PersistentAuditLogger extends ConsoleLogger {
@@ -18,6 +20,7 @@ export class PersistentAuditLogger extends ConsoleLogger {
   private readonly enabled: boolean;
   private readonly levels: Set<PersistLogLevel>;
   private readonly maxMessageLength: number;
+  private readonly slackNotifier?: SlackLogNotifier;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -28,6 +31,7 @@ export class PersistentAuditLogger extends ConsoleLogger {
     this.enabled = options.enabled;
     this.levels = options.levels;
     this.maxMessageLength = options.maxMessageLength ?? 1600;
+    this.slackNotifier = options.slackNotifier;
   }
 
   override log(message: any, context?: string): void {
@@ -56,6 +60,8 @@ export class PersistentAuditLogger extends ConsoleLogger {
   }
 
   private persist(level: PersistLogLevel, message: unknown, context?: string, trace?: string): void {
+    this.slackNotifier?.notify(level, message, context, trace);
+
     if (!this.enabled || !this.levels.has(level)) {
       return;
     }

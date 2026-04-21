@@ -14,6 +14,7 @@ import {
   parseBoolean,
   parsePersistLogLevels,
 } from './common/utils/persistent-audit.logger';
+import { createSlackLogNotifierFromConfig } from './common/utils/slack-log.notifier';
 
 const MASTER_ADMIN_USERNAME = 'admin';
 
@@ -26,6 +27,7 @@ async function bootstrap() {
     source: 'admin-backend',
     enabled: parseBoolean(configService.get<string>('SYSTEM_LOG_PERSIST_ENABLED'), true),
     levels: parsePersistLogLevels(configService.get<string>('SYSTEM_LOG_PERSIST_LEVELS')),
+    slackNotifier: createSlackLogNotifierFromConfig(configService, 'admin-backend'),
   });
   app.useLogger(persistentLogger);
 
