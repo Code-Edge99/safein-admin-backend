@@ -12,11 +12,15 @@ import { resolveOrganizationClassification } from '../../common/utils/organizati
 import {
   CleanupNoticeUploadsResponseDto,
   CreateNoticeDto,
+  CreateNoticeTemplateDto,
   NoticeCleanupUploadFileDto,
   NoticeAttachmentPayloadDto,
   NoticeFilterDto,
   NoticeResponseDto,
+  NoticeTemplateFilterDto,
+  NoticeTemplateResponseDto,
   NoticeUploadResponseDto,
+  UpdateNoticeTemplateDto,
   UpdateNoticeDto,
 } from './dto';
 import {
@@ -33,8 +37,15 @@ import {
 type NoticeWithRelations = Prisma.NoticeGetPayload<{
   include: {
     organization: { select: { id: true; name: true } };
+    noticeTemplate: { select: { id: true; name: true } };
     createdBy: { select: { id: true; name: true; username: true; role: true } };
     attachments: true;
+  };
+}>;
+
+type NoticeTemplateWithRelations = Prisma.NoticeTemplateGetPayload<{
+  include: {
+    organization: { select: { id: true; name: true } };
   };
 }>;
 
@@ -46,6 +57,23 @@ export class NoticesService {
 
   private isSuperAdmin(role?: string): boolean {
     return role === AdminRole.SUPER_ADMIN || role === 'SUPER_ADMIN';
+  }
+
+  private async resolveEffectiveReadableOrganizationIds(
+    scopeOrganizationIds?: string[],
+    currentUserId?: string,
+    currentUserRole?: string,
+  ): Promise<string[] | undefined> {
+    const actorReadableOrganizationIds = await this.resolveActorReadableOrganizationIds(currentUserId, currentUserRole);
+    if (actorReadableOrganizationIds) {
+      return actorReadableOrganizationIds;
+    }
+
+    if (scopeOrganizationIds && scopeOrganizationIds.length > 0) {
+      return this.resolveReadableOrganizationIds(scopeOrganizationIds);
+    }
+
+    return undefined;
   }
 
   private guessMimeType(fileName: string): string {
@@ -387,6 +415,44 @@ export class NoticesService {
     return deleted ? 'deleted' : 'missing';
   }
 
+  private async ensureActiveOrganizationExists(organizationId: string): Promise<void> {
+    const organization = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { id: true, isActive: true },
+    });
+
+    if (!organization || !organization.isActive) {
+      throw new NotFoundException('유효한 현장을 찾을 수 없습니다.');
+    }
+  }
+
+  private async resolveNoticeTemplateId(
+    noticeTemplateId: string | null | undefined,
+    targetOrganizationId: string,
+    readableOrganizationIds?: string[],
+  ): Promise<string | null> {
+    if (!noticeTemplateId) {
+      return null;
+    }
+
+    const template = await this.prisma.noticeTemplate.findUnique({
+      where: { id: noticeTemplateId },
+      select: { id: true, organizationId: true },
+    });
+
+    if (!template) {
+      throw new NotFoundException('공지 양식을 찾을 수 없습니다.');
+    }
+
+    this.assertReadableOrganization(template.organizationId, readableOrganizationIds);
+
+    if (template.organizationId !== targetOrganizationId) {
+      throw new BadRequestException('선택한 공지 양식은 게시 현장과 일치해야 합니다.');
+    }
+
+    return template.id;
+  }
+
   private toResponseDto(notice: NoticeWithRelations, currentUserId?: string, currentUserRole?: string): NoticeResponseDto {
     const canRevealAuthor = this.isSuperAdmin(currentUserRole)
       || Boolean(currentUserId && notice.createdById === currentUserId);
@@ -394,6 +460,8 @@ export class NoticesService {
     return {
       id: notice.id,
       organizationId: notice.organizationId,
+      noticeTemplateId: notice.noticeTemplate?.id ?? undefined,
+      noticeTemplateName: notice.noticeTemplate?.name ?? undefined,
       isPinned: notice.isPinned,
       organizationName: notice.organization?.name,
       title: notice.title,
@@ -418,21 +486,32 @@ export class NoticesService {
     };
   }
 
+  private toTemplateResponseDto(template: NoticeTemplateWithRelations): NoticeTemplateResponseDto {
+    return {
+      id: template.id,
+      organizationId: template.organizationId,
+      organizationName: template.organization?.name,
+      name: template.name,
+      title: template.title,
+      contentHtml: template.contentHtml,
+      contentText: template.contentText ?? undefined,
+      createdAt: template.createdAt,
+      updatedAt: template.updatedAt,
+    };
+  }
+
   async findAll(
     filter: NoticeFilterDto,
     scopeOrganizationIds?: string[],
     currentUserId?: string,
     currentUserRole?: string,
   ): Promise<PaginatedResponse<NoticeResponseDto>> {
-    const readableOrganizationIds = await this.resolveActorReadableOrganizationIds(currentUserId, currentUserRole);
+    const readableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
+      scopeOrganizationIds,
+      currentUserId,
+      currentUserRole,
+    );
     const whereConditions: Prisma.NoticeWhereInput[] = [];
-
-    if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !readableOrganizationIds) {
-      const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
-      if (readableOrganizationIds) {
-        whereConditions.push({ organizationId: { in: readableOrganizationIds } });
-      }
-    }
 
     if (readableOrganizationIds) {
       whereConditions.push({ organizationId: { in: readableOrganizationIds } });
@@ -462,6 +541,7 @@ export class NoticesService {
         where,
         include: {
           organization: { select: { id: true, name: true } },
+          noticeTemplate: { select: { id: true, name: true } },
           createdBy: { select: { id: true, name: true, username: true, role: true } },
           attachments: {
             orderBy: { createdAt: 'asc' },
@@ -495,6 +575,7 @@ export class NoticesService {
       where: { id },
       include: {
         organization: { select: { id: true, name: true } },
+        noticeTemplate: { select: { id: true, name: true } },
         createdBy: { select: { id: true, name: true, username: true, role: true } },
         attachments: {
           orderBy: { createdAt: 'asc' },
@@ -506,15 +587,168 @@ export class NoticesService {
       throw new NotFoundException('공지사항을 찾을 수 없습니다.');
     }
 
-    const readableOrganizationIds = await this.resolveActorReadableOrganizationIds(currentUserId, currentUserRole);
+    const readableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
+      scopeOrganizationIds,
+      currentUserId,
+      currentUserRole,
+    );
     this.assertReadableOrganization(row.organizationId, readableOrganizationIds);
 
-    if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !readableOrganizationIds) {
-      const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
-      this.assertReadableOrganization(row.organizationId, readableOrganizationIds);
+    return this.toResponseDto(row, currentUserId, currentUserRole);
+  }
+
+  async findTemplates(
+    filter: NoticeTemplateFilterDto,
+    scopeOrganizationIds?: string[],
+    currentUserId?: string,
+    currentUserRole?: string,
+  ): Promise<NoticeTemplateResponseDto[]> {
+    const readableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
+      scopeOrganizationIds,
+      currentUserId,
+      currentUserRole,
+    );
+    const whereConditions: Prisma.NoticeTemplateWhereInput[] = [];
+
+    if (readableOrganizationIds) {
+      whereConditions.push({ organizationId: { in: readableOrganizationIds } });
     }
 
-    return this.toResponseDto(row, currentUserId, currentUserRole);
+    if (filter.organizationId) {
+      this.assertOrganizationInReadableScope(filter.organizationId, readableOrganizationIds);
+      whereConditions.push({ organizationId: filter.organizationId });
+    }
+
+    const trimmedSearch = filter.search?.trim();
+    if (trimmedSearch) {
+      whereConditions.push({
+        OR: [
+          { name: { contains: trimmedSearch, mode: 'insensitive' } },
+          { title: { contains: trimmedSearch, mode: 'insensitive' } },
+        ],
+      });
+    }
+
+    const rows = await this.prisma.noticeTemplate.findMany({
+      where: whereConditions.length > 0 ? { AND: whereConditions } : {},
+      include: {
+        organization: { select: { id: true, name: true } },
+      },
+      orderBy: [
+        { name: 'asc' },
+        { updatedAt: 'desc' },
+      ],
+    });
+
+    return rows.map((row) => this.toTemplateResponseDto(row));
+  }
+
+  async createTemplate(
+    dto: CreateNoticeTemplateDto,
+    scopeOrganizationIds?: string[],
+    actorUserId?: string,
+    actorUserRole?: string,
+  ): Promise<NoticeTemplateResponseDto> {
+    if (!actorUserId) {
+      throw new ForbiddenException('사용자 정보를 확인할 수 없습니다.');
+    }
+
+    const readableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
+      scopeOrganizationIds,
+      actorUserId,
+      actorUserRole,
+    );
+    this.assertOrganizationInReadableScope(dto.organizationId, readableOrganizationIds);
+    await this.ensureActiveOrganizationExists(dto.organizationId);
+
+    const name = dto.name.trim();
+    const title = dto.title.trim();
+    const contentHtml = dto.contentHtml.trim();
+    if (!name || !title || !contentHtml) {
+      throw new BadRequestException('양식명, 기본 제목, 본문은 필수입니다.');
+    }
+
+    const created = await this.prisma.noticeTemplate.create({
+      data: {
+        organizationId: dto.organizationId,
+        name,
+        title,
+        contentHtml,
+        contentText: this.extractContentText(contentHtml, dto.contentText),
+        createdById: actorUserId,
+        updatedById: actorUserId,
+      },
+      include: {
+        organization: { select: { id: true, name: true } },
+      },
+    });
+
+    return this.toTemplateResponseDto(created);
+  }
+
+  async updateTemplate(
+    id: string,
+    dto: UpdateNoticeTemplateDto,
+    scopeOrganizationIds?: string[],
+    actorUserId?: string,
+    actorUserRole?: string,
+  ): Promise<NoticeTemplateResponseDto> {
+    if (!actorUserId) {
+      throw new ForbiddenException('사용자 정보를 확인할 수 없습니다.');
+    }
+
+    const existing = await this.prisma.noticeTemplate.findUnique({
+      where: { id },
+      include: {
+        organization: { select: { id: true, name: true } },
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('공지 양식을 찾을 수 없습니다.');
+    }
+
+    const readableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
+      scopeOrganizationIds,
+      actorUserId,
+      actorUserRole,
+    );
+    this.assertReadableOrganization(existing.organizationId, readableOrganizationIds);
+
+    if (dto.organizationId) {
+      this.assertOrganizationInReadableScope(dto.organizationId, readableOrganizationIds);
+    }
+
+    const targetOrganizationId = dto.organizationId ?? existing.organizationId;
+    await this.ensureActiveOrganizationExists(targetOrganizationId);
+
+    const name = dto.name !== undefined ? dto.name.trim() : existing.name;
+    const title = dto.title !== undefined ? dto.title.trim() : existing.title;
+    const contentHtml = dto.contentHtml !== undefined ? dto.contentHtml.trim() : existing.contentHtml;
+    const contentText = dto.contentText !== undefined
+      ? this.extractContentText(contentHtml, dto.contentText)
+      : existing.contentText;
+
+    if (!name || !title || !contentHtml) {
+      throw new BadRequestException('양식명, 기본 제목, 본문은 필수입니다.');
+    }
+
+    const updated = await this.prisma.noticeTemplate.update({
+      where: { id: existing.id },
+      data: {
+        organizationId: targetOrganizationId,
+        name,
+        title,
+        contentHtml,
+        contentText,
+        updatedById: actorUserId,
+      },
+      include: {
+        organization: { select: { id: true, name: true } },
+      },
+    });
+
+    return this.toTemplateResponseDto(updated);
   }
 
   async create(
@@ -527,22 +761,13 @@ export class NoticesService {
       throw new ForbiddenException('사용자 정보를 확인할 수 없습니다.');
     }
 
-    const readableOrganizationIds = await this.resolveActorReadableOrganizationIds(actorUserId, actorUserRole);
+    const readableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
+      scopeOrganizationIds,
+      actorUserId,
+      actorUserRole,
+    );
     this.assertOrganizationInReadableScope(dto.organizationId, readableOrganizationIds);
-
-    if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !readableOrganizationIds) {
-      const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
-      this.assertOrganizationInReadableScope(dto.organizationId, readableOrganizationIds);
-    }
-
-    const organization = await this.prisma.organization.findUnique({
-      where: { id: dto.organizationId },
-      select: { id: true, isActive: true },
-    });
-
-    if (!organization || !organization.isActive) {
-      throw new NotFoundException('유효한 현장을 찾을 수 없습니다.');
-    }
+    await this.ensureActiveOrganizationExists(dto.organizationId);
 
     const title = dto.title.trim();
     const contentHtml = dto.contentHtml.trim();
@@ -551,10 +776,16 @@ export class NoticesService {
     }
 
     const attachmentPayload = await this.normalizeAttachments(dto.attachments, []);
+    const noticeTemplateId = await this.resolveNoticeTemplateId(
+      dto.noticeTemplateId,
+      dto.organizationId,
+      readableOrganizationIds,
+    );
 
     const created = await this.prisma.notice.create({
       data: {
         organizationId: dto.organizationId,
+        noticeTemplateId,
         isPinned: dto.isPinned === true,
         title,
         contentHtml,
@@ -569,6 +800,7 @@ export class NoticesService {
       },
       include: {
         organization: { select: { id: true, name: true } },
+        noticeTemplate: { select: { id: true, name: true } },
         createdBy: { select: { id: true, name: true, username: true, role: true } },
         attachments: {
           orderBy: { createdAt: 'asc' },
@@ -594,6 +826,7 @@ export class NoticesService {
       where: { id },
       include: {
         organization: { select: { id: true, name: true } },
+        noticeTemplate: { select: { id: true, name: true } },
         createdBy: { select: { id: true, name: true, username: true, role: true } },
         attachments: {
           orderBy: { createdAt: 'asc' },
@@ -605,13 +838,12 @@ export class NoticesService {
       throw new NotFoundException('공지사항을 찾을 수 없습니다.');
     }
 
-    const readableOrganizationIds = await this.resolveActorReadableOrganizationIds(actorUserId, actorUserRole);
+    const readableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
+      scopeOrganizationIds,
+      actorUserId,
+      actorUserRole,
+    );
     this.assertReadableOrganization(existing.organizationId, readableOrganizationIds);
-
-    if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !readableOrganizationIds) {
-      const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
-      this.assertReadableOrganization(existing.organizationId, readableOrganizationIds);
-    }
 
     if (!this.isSuperAdmin(actorUserRole) && existing.createdById !== actorUserId) {
       throw new ForbiddenException('작성자 본인 또는 슈퍼관리자만 수정할 수 있습니다.');
@@ -619,23 +851,10 @@ export class NoticesService {
 
     if (dto.organizationId) {
       this.assertOrganizationInReadableScope(dto.organizationId, readableOrganizationIds);
-
-      if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !readableOrganizationIds) {
-        const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
-        this.assertOrganizationInReadableScope(dto.organizationId, readableOrganizationIds);
-      }
     }
 
     const targetOrganizationId = dto.organizationId ?? existing.organizationId;
-
-    const organization = await this.prisma.organization.findUnique({
-      where: { id: targetOrganizationId },
-      select: { id: true, isActive: true },
-    });
-
-    if (!organization || !organization.isActive) {
-      throw new NotFoundException('유효한 현장을 찾을 수 없습니다.');
-    }
+    await this.ensureActiveOrganizationExists(targetOrganizationId);
 
     const title = dto.title !== undefined ? dto.title.trim() : existing.title;
     const contentHtml = dto.contentHtml !== undefined ? dto.contentHtml.trim() : existing.contentHtml;
@@ -646,6 +865,10 @@ export class NoticesService {
     }
 
     const attachmentPayload = await this.normalizeAttachments(dto.attachments, existing.attachments);
+    const hasNoticeTemplateField = Object.prototype.hasOwnProperty.call(dto, 'noticeTemplateId');
+    const noticeTemplateId = hasNoticeTemplateField
+      ? await this.resolveNoticeTemplateId(dto.noticeTemplateId, targetOrganizationId, readableOrganizationIds)
+      : existing.noticeTemplateId ?? null;
     const removedAttachments = existing.attachments.filter(
       (attachment) => !attachmentPayload.keepAttachmentIds.includes(attachment.id),
     );
@@ -673,6 +896,7 @@ export class NoticesService {
         where: { id: existing.id },
         data: {
           organizationId: targetOrganizationId,
+          noticeTemplateId,
           isPinned,
           title,
           contentHtml,
@@ -681,6 +905,7 @@ export class NoticesService {
         },
         include: {
           organization: { select: { id: true, name: true } },
+          noticeTemplate: { select: { id: true, name: true } },
           createdBy: { select: { id: true, name: true, username: true, role: true } },
           attachments: {
             orderBy: { createdAt: 'asc' },
@@ -720,13 +945,12 @@ export class NoticesService {
       throw new NotFoundException('공지사항을 찾을 수 없습니다.');
     }
 
-    const readableOrganizationIds = await this.resolveActorReadableOrganizationIds(actorUserId, actorUserRole);
+    const readableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
+      scopeOrganizationIds,
+      actorUserId,
+      actorUserRole,
+    );
     this.assertReadableOrganization(existing.organizationId, readableOrganizationIds);
-
-    if (scopeOrganizationIds && scopeOrganizationIds.length > 0 && !readableOrganizationIds) {
-      const readableOrganizationIds = await this.resolveReadableOrganizationIds(scopeOrganizationIds);
-      this.assertReadableOrganization(existing.organizationId, readableOrganizationIds);
-    }
 
     if (!this.isSuperAdmin(actorUserRole) && existing.createdById !== actorUserId) {
       throw new ForbiddenException('작성자 본인 또는 슈퍼관리자만 삭제할 수 있습니다.');
@@ -734,6 +958,35 @@ export class NoticesService {
 
     await this.prisma.notice.delete({ where: { id: existing.id } });
     await this.removePhysicalFiles(existing.attachments);
+  }
+
+  async removeTemplate(
+    id: string,
+    scopeOrganizationIds?: string[],
+    actorUserId?: string,
+    actorUserRole?: string,
+  ): Promise<void> {
+    if (!actorUserId) {
+      throw new ForbiddenException('사용자 정보를 확인할 수 없습니다.');
+    }
+
+    const existing = await this.prisma.noticeTemplate.findUnique({
+      where: { id },
+      select: { id: true, organizationId: true },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('공지 양식을 찾을 수 없습니다.');
+    }
+
+    const readableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
+      scopeOrganizationIds,
+      actorUserId,
+      actorUserRole,
+    );
+    this.assertReadableOrganization(existing.organizationId, readableOrganizationIds);
+
+    await this.prisma.noticeTemplate.delete({ where: { id: existing.id } });
   }
 
   buildUploadResponse(file: {

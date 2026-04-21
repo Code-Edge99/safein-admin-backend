@@ -33,6 +33,12 @@ export class NoticeResponseDto {
   @ApiProperty()
   organizationId: string;
 
+  @ApiPropertyOptional({ description: '적용 공지 양식 ID' })
+  noticeTemplateId?: string;
+
+  @ApiPropertyOptional({ description: '적용 공지 양식명' })
+  noticeTemplateName?: string;
+
   @ApiProperty({ description: '상단 고정 여부' })
   isPinned: boolean;
 
@@ -88,4 +94,33 @@ export class NoticeUploadResponseDto {
 
   @ApiProperty()
   url: string;
+}
+
+export class NoticeTemplateResponseDto {
+  @ApiProperty()
+  id: string;
+
+  @ApiProperty()
+  organizationId: string;
+
+  @ApiPropertyOptional()
+  organizationName?: string;
+
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty()
+  title: string;
+
+  @ApiProperty()
+  contentHtml: string;
+
+  @ApiPropertyOptional()
+  contentText?: string;
+
+  @ApiProperty()
+  createdAt: Date;
+
+  @ApiProperty()
+  updatedAt: Date;
 }

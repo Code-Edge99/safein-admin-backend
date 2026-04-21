@@ -17,6 +17,8 @@ export function buildSiteReportItem(params: {
   allowedAppBlocks: number;
   behaviorBlocks: number;
   complianceRate: number;
+  siteRiskLevel: '안정' | '주의' | '위험';
+  siteRiskScore: number;
   trend: 'up' | 'down' | 'stable';
   trendValue: number | null;
   prevTotal: number;
@@ -39,6 +41,8 @@ export function buildSiteReportItem(params: {
   allowedAppBlocks: number;
   behaviorBlocks: number;
   complianceRate: number;
+  siteRiskLevel: '안정' | '주의' | '위험';
+  siteRiskScore: number;
   trend: 'up' | 'down' | 'stable';
   trendValue: number | null;
   peakHour: string;
@@ -59,6 +63,8 @@ export function buildSiteReportItem(params: {
     allowedAppBlocks,
     behaviorBlocks,
     complianceRate,
+    siteRiskLevel,
+    siteRiskScore,
     trend,
     trendValue,
     prevTotal,
@@ -92,6 +98,8 @@ export function buildSiteReportItem(params: {
     allowedAppBlocks,
     behaviorBlocks,
     complianceRate: Math.round(complianceRate * 10) / 10,
+    siteRiskLevel,
+    siteRiskScore: Math.round(siteRiskScore * 10) / 10,
     trend,
     trendValue: trendValue === null ? null : Math.abs(trendValue),
     peakHour,

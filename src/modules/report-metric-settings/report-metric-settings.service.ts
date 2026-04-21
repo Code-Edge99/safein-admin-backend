@@ -16,17 +16,6 @@ const DEFAULT_REPORT_METRIC_SETTINGS: ReportMetricSettingsValues = {
   complianceBadgeExcellentMin: 95,
   complianceBadgeGoodMin: 85,
   complianceBadgeFairMin: 70,
-  employeeRiskComplianceDangerBelow: 60,
-  employeeRiskComplianceWarningBelow: 80,
-  employeeRiskZoneViolationsDangerAbove: 5,
-  employeeRiskZoneViolationsWarningAbove: 2,
-  employeeRiskTotalBlocksDangerAbove: 20,
-  employeeRiskTotalBlocksWarningAbove: 10,
-  employeeRiskComplianceWeight: 1,
-  employeeRiskZoneViolationsWeight: 1,
-  employeeRiskTotalBlocksWeight: 1,
-  employeeRiskDangerScoreMin: 100,
-  employeeRiskWarningScoreMin: 60,
   siteRiskComplianceDangerBelow: 80,
   siteRiskComplianceWarningBelow: 90,
   siteRiskViolationsPerEmployeeDangerAbove: 1.5,
@@ -283,17 +272,6 @@ export class ReportMetricSettingsService {
       complianceBadgeExcellentMin: this.readNumber(raw.complianceBadgeExcellentMin, DEFAULT_REPORT_METRIC_SETTINGS.complianceBadgeExcellentMin, 1),
       complianceBadgeGoodMin: this.readNumber(raw.complianceBadgeGoodMin, DEFAULT_REPORT_METRIC_SETTINGS.complianceBadgeGoodMin, 1),
       complianceBadgeFairMin: this.readNumber(raw.complianceBadgeFairMin, DEFAULT_REPORT_METRIC_SETTINGS.complianceBadgeFairMin, 1),
-      employeeRiskComplianceDangerBelow: this.readNumber(raw.employeeRiskComplianceDangerBelow, DEFAULT_REPORT_METRIC_SETTINGS.employeeRiskComplianceDangerBelow, 1),
-      employeeRiskComplianceWarningBelow: this.readNumber(raw.employeeRiskComplianceWarningBelow, DEFAULT_REPORT_METRIC_SETTINGS.employeeRiskComplianceWarningBelow, 1),
-      employeeRiskZoneViolationsDangerAbove: this.readInteger(raw.employeeRiskZoneViolationsDangerAbove, DEFAULT_REPORT_METRIC_SETTINGS.employeeRiskZoneViolationsDangerAbove),
-      employeeRiskZoneViolationsWarningAbove: this.readInteger(raw.employeeRiskZoneViolationsWarningAbove, DEFAULT_REPORT_METRIC_SETTINGS.employeeRiskZoneViolationsWarningAbove),
-      employeeRiskTotalBlocksDangerAbove: this.readInteger(raw.employeeRiskTotalBlocksDangerAbove, DEFAULT_REPORT_METRIC_SETTINGS.employeeRiskTotalBlocksDangerAbove),
-      employeeRiskTotalBlocksWarningAbove: this.readInteger(raw.employeeRiskTotalBlocksWarningAbove, DEFAULT_REPORT_METRIC_SETTINGS.employeeRiskTotalBlocksWarningAbove),
-      employeeRiskComplianceWeight: this.readNumber(raw.employeeRiskComplianceWeight, DEFAULT_REPORT_METRIC_SETTINGS.employeeRiskComplianceWeight, 2),
-      employeeRiskZoneViolationsWeight: this.readNumber(raw.employeeRiskZoneViolationsWeight, DEFAULT_REPORT_METRIC_SETTINGS.employeeRiskZoneViolationsWeight, 2),
-      employeeRiskTotalBlocksWeight: this.readNumber(raw.employeeRiskTotalBlocksWeight, DEFAULT_REPORT_METRIC_SETTINGS.employeeRiskTotalBlocksWeight, 2),
-      employeeRiskDangerScoreMin: this.readNumber(raw.employeeRiskDangerScoreMin, DEFAULT_REPORT_METRIC_SETTINGS.employeeRiskDangerScoreMin, 1),
-      employeeRiskWarningScoreMin: this.readNumber(raw.employeeRiskWarningScoreMin, DEFAULT_REPORT_METRIC_SETTINGS.employeeRiskWarningScoreMin, 1),
       siteRiskComplianceDangerBelow: this.readNumber(raw.siteRiskComplianceDangerBelow, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskComplianceDangerBelow, 1),
       siteRiskComplianceWarningBelow: this.readNumber(raw.siteRiskComplianceWarningBelow, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskComplianceWarningBelow, 1),
       siteRiskViolationsPerEmployeeDangerAbove: this.readNumber(raw.siteRiskViolationsPerEmployeeDangerAbove, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskViolationsPerEmployeeDangerAbove, 2),
@@ -326,30 +304,6 @@ export class ReportMetricSettingsService {
 
     if (!(data.complianceBadgeExcellentMin > data.complianceBadgeGoodMin && data.complianceBadgeGoodMin > data.complianceBadgeFairMin)) {
       throw new BadRequestException('안정 점수 배지 구간은 우수 > 양호 > 보통 순서여야 합니다.');
-    }
-
-    if (data.employeeRiskComplianceDangerBelow >= data.employeeRiskComplianceWarningBelow) {
-      throw new BadRequestException('직원 위험도 안정 점수 기준은 위험 미만 값이 보통 미만 값보다 작아야 합니다.');
-    }
-
-    if (data.employeeRiskZoneViolationsDangerAbove <= data.employeeRiskZoneViolationsWarningAbove) {
-      throw new BadRequestException('직원 위험도 구역 위반 기준은 위험 이상 값이 보통 이상 값보다 커야 합니다.');
-    }
-
-    if (data.employeeRiskTotalBlocksDangerAbove <= data.employeeRiskTotalBlocksWarningAbove) {
-      throw new BadRequestException('직원 위험도 총 차단 기준은 위험 이상 값이 보통 이상 값보다 커야 합니다.');
-    }
-
-    if (data.employeeRiskDangerScoreMin <= data.employeeRiskWarningScoreMin) {
-      throw new BadRequestException('직원 위험도 점수 기준은 위험 점수가 보통 점수보다 커야 합니다.');
-    }
-
-    if (
-      data.employeeRiskComplianceWeight <= 0
-      && data.employeeRiskZoneViolationsWeight <= 0
-      && data.employeeRiskTotalBlocksWeight <= 0
-    ) {
-      throw new BadRequestException('직원 위험도 점수는 최소 한 항목 이상 가중치가 0보다 커야 합니다.');
     }
 
     if (data.siteRiskComplianceDangerBelow >= data.siteRiskComplianceWarningBelow) {

@@ -27,9 +27,13 @@ import {
   CleanupNoticeUploadsDto,
   CleanupNoticeUploadsResponseDto,
   CreateNoticeDto,
+  CreateNoticeTemplateDto,
   NoticeFilterDto,
   NoticeResponseDto,
+  NoticeTemplateFilterDto,
+  NoticeTemplateResponseDto,
   NoticeUploadResponseDto,
+  UpdateNoticeTemplateDto,
   UpdateNoticeDto,
 } from './dto';
 import {
@@ -94,6 +98,47 @@ export class NoticesController {
       req.user?.id,
       req.user?.role,
     );
+  }
+
+  @Get('templates')
+  @UseGuards(JwtAuthGuard, OrganizationScopeGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '공지 양식 목록 조회' })
+  @ApiResponse({ status: 200, description: '조회 성공', type: [NoticeTemplateResponseDto] })
+  findTemplates(@Req() req: AuthenticatedAdminRequest, @Query() filter: NoticeTemplateFilterDto) {
+    return this.noticesService.findTemplates(
+      filter,
+      req.organizationScopeIds ?? undefined,
+      req.user?.id,
+      req.user?.role,
+    );
+  }
+
+  @Post('templates')
+  @UseGuards(JwtAuthGuard, OrganizationScopeGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '공지 양식 등록' })
+  @ApiResponse({ status: 201, description: '등록 성공', type: NoticeTemplateResponseDto })
+  createTemplate(@Req() req: AuthenticatedAdminRequest, @Body() dto: CreateNoticeTemplateDto) {
+    return this.noticesService.createTemplate(dto, req.organizationScopeIds ?? undefined, req.user?.id, req.user?.role);
+  }
+
+  @Patch('templates/:id')
+  @UseGuards(JwtAuthGuard, OrganizationScopeGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '공지 양식 수정' })
+  @ApiResponse({ status: 200, description: '수정 성공', type: NoticeTemplateResponseDto })
+  updateTemplate(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string, @Body() dto: UpdateNoticeTemplateDto) {
+    return this.noticesService.updateTemplate(id, dto, req.organizationScopeIds ?? undefined, req.user?.id, req.user?.role);
+  }
+
+  @Delete('templates/:id')
+  @UseGuards(JwtAuthGuard, OrganizationScopeGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '공지 양식 삭제' })
+  async removeTemplate(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string) {
+    await this.noticesService.removeTemplate(id, req.organizationScopeIds ?? undefined, req.user?.id, req.user?.role);
+    return { success: true };
   }
 
   @Post()

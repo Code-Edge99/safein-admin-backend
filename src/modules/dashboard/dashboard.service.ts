@@ -254,56 +254,64 @@ export class DashboardService {
     return this.roundTo(60 + (ratio * 40), 1);
   }
 
-  private calculateEmployeeRiskAssessment(params: {
-    totalBlocks: number;
-    zoneViolations: number;
+  private calculateSiteRiskAssessment(params: {
+    employeeCount: number;
+    totalViolations: number;
     complianceRate: number;
     settings: Pick<ReportMetricSettingsValues,
-      | 'employeeRiskComplianceDangerBelow'
-      | 'employeeRiskComplianceWarningBelow'
-      | 'employeeRiskZoneViolationsDangerAbove'
-      | 'employeeRiskZoneViolationsWarningAbove'
-      | 'employeeRiskTotalBlocksDangerAbove'
-      | 'employeeRiskTotalBlocksWarningAbove'
-      | 'employeeRiskComplianceWeight'
-      | 'employeeRiskZoneViolationsWeight'
-      | 'employeeRiskTotalBlocksWeight'
-      | 'employeeRiskDangerScoreMin'
-      | 'employeeRiskWarningScoreMin'
+      | 'siteRiskComplianceDangerBelow'
+      | 'siteRiskComplianceWarningBelow'
+      | 'siteRiskViolationsPerEmployeeDangerAbove'
+      | 'siteRiskViolationsPerEmployeeWarningAbove'
+      | 'siteRiskTotalViolationsDangerAbove'
+      | 'siteRiskTotalViolationsWarningAbove'
+      | 'siteRiskComplianceWeight'
+      | 'siteRiskViolationsPerEmployeeWeight'
+      | 'siteRiskTotalViolationsWeight'
+      | 'siteRiskDangerScoreMin'
+      | 'siteRiskWarningScoreMin'
     >;
-  }): { riskLevel: '낮음' | '보통' | '높음'; riskScore: number } {
-    const { totalBlocks, zoneViolations, complianceRate, settings } = params;
+  }): { riskLevel: '안정' | '주의' | '위험'; riskScore: number } {
+    const { employeeCount, totalViolations, complianceRate, settings } = params;
+    const violationsPerEmployee = employeeCount > 0 ? totalViolations / employeeCount : totalViolations;
+
     const complianceScore = this.calculateRiskScoreForBelowThreshold(
       complianceRate,
-      settings.employeeRiskComplianceWarningBelow,
-      settings.employeeRiskComplianceDangerBelow,
+      settings.siteRiskComplianceWarningBelow,
+      settings.siteRiskComplianceDangerBelow,
     );
-    const zoneScore = this.calculateRiskScoreForAboveThreshold(
-      zoneViolations,
-      settings.employeeRiskZoneViolationsWarningAbove,
-      settings.employeeRiskZoneViolationsDangerAbove,
+    const violationsPerEmployeeScore = this.calculateRiskScoreForAboveThreshold(
+      violationsPerEmployee,
+      settings.siteRiskViolationsPerEmployeeWarningAbove,
+      settings.siteRiskViolationsPerEmployeeDangerAbove,
     );
-    const totalBlockScore = this.calculateRiskScoreForAboveThreshold(
-      totalBlocks,
-      settings.employeeRiskTotalBlocksWarningAbove,
-      settings.employeeRiskTotalBlocksDangerAbove,
-    );
-    const riskScore = this.roundTo(
-      (complianceScore * settings.employeeRiskComplianceWeight)
-        + (zoneScore * settings.employeeRiskZoneViolationsWeight)
-        + (totalBlockScore * settings.employeeRiskTotalBlocksWeight),
-      1,
+    const totalViolationScore = this.calculateRiskScoreForAboveThreshold(
+      totalViolations,
+      settings.siteRiskTotalViolationsWarningAbove,
+      settings.siteRiskTotalViolationsDangerAbove,
     );
 
-    if (riskScore >= settings.employeeRiskDangerScoreMin) {
-      return { riskLevel: '높음', riskScore };
+    const totalWeight =
+      settings.siteRiskComplianceWeight
+      + settings.siteRiskViolationsPerEmployeeWeight
+      + settings.siteRiskTotalViolationsWeight;
+
+    const weightedSum =
+      (complianceScore * settings.siteRiskComplianceWeight)
+      + (violationsPerEmployeeScore * settings.siteRiskViolationsPerEmployeeWeight)
+      + (totalViolationScore * settings.siteRiskTotalViolationsWeight);
+
+    const riskScore = this.roundTo(Math.max(0, Math.min(100, totalWeight > 0 ? (weightedSum / totalWeight) : 0)), 1);
+
+    if (riskScore >= settings.siteRiskDangerScoreMin) {
+      return { riskLevel: '위험', riskScore };
     }
 
-    if (riskScore >= settings.employeeRiskWarningScoreMin) {
-      return { riskLevel: '보통', riskScore };
+    if (riskScore >= settings.siteRiskWarningScoreMin) {
+      return { riskLevel: '주의', riskScore };
     }
 
-    return { riskLevel: '낮음', riskScore };
+    return { riskLevel: '안정', riskScore };
   }
 
   private ensureOrganizationInScope(
@@ -1271,12 +1279,6 @@ export class DashboardService {
         totalBlocks: emp.totalBlocks,
         settings: reportMetricSettings,
       });
-      const riskAssessment = this.calculateEmployeeRiskAssessment({
-        totalBlocks: emp.totalBlocks,
-        zoneViolations: emp.zoneViolations,
-        complianceRate,
-        settings: reportMetricSettings,
-      });
 
       const blockedAppSummary = blockedAppSummaries.get(emp.employeeId);
 
@@ -1292,16 +1294,18 @@ export class DashboardService {
         blockedAppsCount: blockedAppSummary?.blockedAppsCount || 0,
         topBlockedApp: blockedAppSummary?.topBlockedApp || '-',
         complianceRate,
-        riskLevel: riskAssessment.riskLevel,
-        riskScore: riskAssessment.riskScore,
         lastViolation: emp.dailyStats[0]?.date || null,
         zoneViolations: emp.zoneViolations,
       };
     });
 
     enriched.sort((left, right) => {
-      if (right.riskScore !== left.riskScore) {
-        return right.riskScore - left.riskScore;
+      if (left.complianceRate !== right.complianceRate) {
+        return left.complianceRate - right.complianceRate;
+      }
+
+      if (right.last7DaysBlocks !== left.last7DaysBlocks) {
+        return right.last7DaysBlocks - left.last7DaysBlocks;
       }
 
       if (right.totalBlocks !== left.totalBlocks) {
@@ -1443,12 +1447,6 @@ export class DashboardService {
       appControlBlocks,
       behaviorBlocks,
       totalBlocks,
-      settings: reportMetricSettings,
-    });
-    const riskAssessment = this.calculateEmployeeRiskAssessment({
-      totalBlocks,
-      zoneViolations,
-      complianceRate,
       settings: reportMetricSettings,
     });
 
@@ -1755,8 +1753,6 @@ export class DashboardService {
       blockedAppsCount: uniqueAppCount,
       topBlockedApp,
       complianceRate,
-      riskLevel: riskAssessment.riskLevel,
-      riskScore: riskAssessment.riskScore,
       zoneViolations,
       lastViolation: preferKstTimestamp(controlLogs[0]?.timestampKst, controlLogs[0]?.timestamp) || null,
 
@@ -2203,6 +2199,12 @@ export class DashboardService {
         rounded: false,
         settings: reportMetricSettings,
       });
+      const siteRisk = this.calculateSiteRiskAssessment({
+        employeeCount,
+        totalViolations,
+        complianceRate,
+        settings: reportMetricSettings,
+      });
       const trend = this.resolveTrendDirection(totalViolations, prevTotal);
       const trendValue = this.calculateChangeRate(totalViolations, prevTotal);
 
@@ -2244,6 +2246,8 @@ export class DashboardService {
         allowedAppBlocks,
         behaviorBlocks,
         complianceRate,
+        siteRiskLevel: siteRisk.riskLevel,
+        siteRiskScore: siteRisk.riskScore,
         trend,
         trendValue,
         prevTotal,

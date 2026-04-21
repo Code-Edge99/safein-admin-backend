@@ -58,6 +58,11 @@ export class CreateNoticeDto {
   @MaxLength(120)
   organizationId: string;
 
+  @ApiPropertyOptional({ description: '적용 공지 양식 ID', nullable: true })
+  @IsOptional()
+  @IsUUID()
+  noticeTemplateId?: string | null;
+
   @ApiPropertyOptional({ description: '상단 고정 여부', default: false })
   @IsOptional()
   @Type(() => Boolean)
