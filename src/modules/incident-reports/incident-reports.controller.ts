@@ -34,6 +34,7 @@ import {
   IncidentReportListResponseDto,
   ResolveIncidentReportDto,
   UpdateIncidentReportAssigneeDto,
+  UpdateIncidentReportSeverityDto,
   UpdateIncidentReportStatusDto,
 } from './dto';
 
@@ -85,6 +86,17 @@ export class IncidentReportsController {
     @Param('id') id: string,
   ): Promise<IncidentReportDetailDto> {
     return this.incidentReportsService.findOne(id, req.organizationScopeIds ?? undefined);
+  }
+
+  @Patch(':id/severity')
+  @ApiOperation({ summary: '위험 신고 심각도 변경' })
+  @ApiResponse({ status: 200, type: IncidentReportDetailDto })
+  updateSeverity(
+    @Req() req: AuthenticatedAdminRequest,
+    @Param('id') id: string,
+    @Body() dto: UpdateIncidentReportSeverityDto,
+  ): Promise<IncidentReportDetailDto> {
+    return this.incidentReportsService.updateSeverity(id, dto, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Patch(':id/status')

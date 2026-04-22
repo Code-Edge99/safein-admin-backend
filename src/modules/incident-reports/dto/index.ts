@@ -3,6 +3,7 @@ export {
   CreateIncidentReportCommentDto,
   ResolveIncidentReportDto,
   UpdateIncidentReportAssigneeDto,
+  UpdateIncidentReportSeverityDto,
   UpdateIncidentReportStatusDto,
 } from './incident-report-update.dto';
 export {

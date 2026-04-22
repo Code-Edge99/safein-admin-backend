@@ -96,6 +96,9 @@ export class IncidentReportListItemDto {
   @ApiProperty({ description: '긴급 여부' })
   isEmergency: boolean;
 
+  @ApiProperty({ description: '담당 관리자 ID', nullable: true })
+  assignedAdminId: string | null;
+
   @ApiProperty({ description: '담당 관리자명', nullable: true })
   assignedAdminName: string | null;
 

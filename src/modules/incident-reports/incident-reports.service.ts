@@ -9,6 +9,7 @@ import {
   IncidentReportActionType,
   IncidentReportActorType,
   IncidentReportResolutionType,
+  IncidentReportSeverity,
   IncidentReportStatus,
   Prisma,
 } from '@prisma/client';
@@ -27,6 +28,7 @@ import {
   IncidentReportLocationDto,
   ResolveIncidentReportDto,
   UpdateIncidentReportAssigneeDto,
+  UpdateIncidentReportSeverityDto,
   UpdateIncidentReportStatusDto,
 } from './dto';
 
@@ -56,6 +58,43 @@ type IncidentReportDetailRow = Prisma.IncidentReportGetPayload<{
 @Injectable()
 export class IncidentReportsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private buildResolutionStateForStatusChange(
+    previousStatus: IncidentReportStatus,
+    nextStatus: IncidentReportStatus,
+    resolvedAt: Date | null,
+  ): Pick<Prisma.IncidentReportUpdateInput, 'resolutionType' | 'resolutionSummary' | 'resolvedAt'> {
+    if (nextStatus === IncidentReportStatus.RESOLVED) {
+      return {
+        resolvedAt: resolvedAt || new Date(),
+      };
+    }
+
+    return {
+      resolvedAt: null,
+      ...(previousStatus === IncidentReportStatus.RESOLVED
+        ? {
+            resolutionType: null,
+            resolutionSummary: null,
+          }
+        : {}),
+    };
+  }
+
+  private getSeverityLabel(severity: IncidentReportSeverity): string {
+    switch (severity) {
+      case IncidentReportSeverity.LOW:
+        return '낮음';
+      case IncidentReportSeverity.MEDIUM:
+        return '보통';
+      case IncidentReportSeverity.HIGH:
+        return '높음';
+      case IncidentReportSeverity.EMERGENCY:
+        return '긴급';
+      default:
+        return severity;
+    }
+  }
 
   private buildActionDto(action: IncidentReportDetailRow['actions'][number]): IncidentReportActionDto {
     return {
@@ -115,7 +154,7 @@ export class IncidentReportsService {
     severity: IncidentReportListItemDto['severity'];
     status: IncidentReportStatus;
     isEmergency: boolean;
-    assignedAdmin: { name: string } | null;
+    assignedAdmin: { id: string; name: string } | null;
     reportedAt: Date;
     updatedAt: Date;
     _count?: { attachments: number };
@@ -131,6 +170,7 @@ export class IncidentReportsService {
       severity: row.severity,
       status: row.status,
       isEmergency: row.isEmergency,
+      assignedAdminId: row.assignedAdmin?.id || null,
       assignedAdminName: row.assignedAdmin?.name || null,
       attachmentCount: Number(row._count?.attachments || 0),
       reportedAt: row.reportedAt,
@@ -268,7 +308,7 @@ export class IncidentReportsService {
         include: {
           organization: { select: { name: true } },
           employee: { select: { name: true } },
-          assignedAdmin: { select: { name: true } },
+          assignedAdmin: { select: { id: true, name: true } },
           _count: {
             select: { attachments: true },
           },
@@ -297,6 +337,73 @@ export class IncidentReportsService {
     return this.buildDetailDto(report);
   }
 
+  async updateSeverity(
+    reportId: string,
+    dto: UpdateIncidentReportSeverityDto,
+    scopeOrganizationIds?: string[],
+    accountId?: string,
+  ): Promise<IncidentReportDetailDto> {
+    const report = await this.getReportInScope(reportId, scopeOrganizationIds);
+
+    if (report.severity === dto.severity) {
+      return this.buildDetailDto(report);
+    }
+
+    const comment = dto.comment?.trim();
+    const severityChangeComment = [
+      `심각도 변경: ${this.getSeverityLabel(report.severity)} -> ${this.getSeverityLabel(dto.severity)}`,
+      ...(comment ? [comment] : []),
+    ].join('\n');
+
+    const updated = await this.prisma.incidentReport.update({
+      where: { id: report.id },
+      data: {
+        severity: dto.severity,
+        isEmergency: dto.severity === IncidentReportSeverity.EMERGENCY,
+        actions: {
+          create: {
+            actionType: IncidentReportActionType.COMMENTED,
+            actorType: IncidentReportActorType.ADMIN,
+            adminActorId: accountId,
+            comment: severityChangeComment,
+            metadataJson: {
+              severityBefore: report.severity,
+              severityAfter: dto.severity,
+            },
+          },
+        },
+      },
+      include: {
+        organization: { select: { id: true, name: true } },
+        employee: { select: { id: true, name: true, phone: true } },
+        zone: { select: { id: true, name: true } },
+        assignedAdmin: { select: { id: true, name: true } },
+        attachments: { orderBy: { createdAt: 'asc' } },
+        actions: {
+          include: {
+            employeeActor: { select: { id: true, name: true } },
+            adminActor: { select: { id: true, name: true } },
+          },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+
+    await this.createAuditLog({
+      accountId,
+      action: AuditAction.UPDATE,
+      report: updated,
+      changesBefore: { severity: report.severity, isEmergency: report.isEmergency },
+      changesAfter: {
+        severity: dto.severity,
+        isEmergency: dto.severity === IncidentReportSeverity.EMERGENCY,
+        comment: comment || null,
+      },
+    });
+
+    return this.buildDetailDto(updated);
+  }
+
   async updateStatus(
     reportId: string,
     dto: UpdateIncidentReportStatusDto,
@@ -313,7 +420,7 @@ export class IncidentReportsService {
       where: { id: report.id },
       data: {
         status: dto.status,
-        resolvedAt: dto.status === IncidentReportStatus.RESOLVED ? report.resolvedAt || new Date() : null,
+        ...this.buildResolutionStateForStatusChange(report.status, dto.status, report.resolvedAt),
         actions: {
           create: {
             actionType: IncidentReportActionType.STATUS_CHANGED,
@@ -345,8 +452,19 @@ export class IncidentReportsService {
       accountId,
       action: AuditAction.UPDATE,
       report: updated,
-      changesBefore: { status: report.status },
-      changesAfter: { status: dto.status, comment: dto.comment?.trim() || null },
+      changesBefore: {
+        status: report.status,
+        resolutionType: report.resolutionType,
+        resolutionSummary: report.resolutionSummary,
+        resolvedAt: report.resolvedAt,
+      },
+      changesAfter: {
+        status: dto.status,
+        resolutionType: dto.status === IncidentReportStatus.RESOLVED ? updated.resolutionType : null,
+        resolutionSummary: dto.status === IncidentReportStatus.RESOLVED ? updated.resolutionSummary : null,
+        resolvedAt: dto.status === IncidentReportStatus.RESOLVED ? updated.resolvedAt : null,
+        comment: dto.comment?.trim() || null,
+      },
     });
 
     return this.buildDetailDto(updated);
@@ -382,17 +500,20 @@ export class IncidentReportsService {
       }
     }
 
-    const nextStatus = nextAssignedAdminId
-      ? (report.status === IncidentReportStatus.RECEIVED || report.status === IncidentReportStatus.IN_REVIEW
-        ? IncidentReportStatus.ASSIGNED
-        : report.status)
-      : report.status;
+    const assignmentChanged = (report.assignedAdminId || null) !== nextAssignedAdminId;
+
+    if (!assignmentChanged && report.status !== IncidentReportStatus.RESOLVED) {
+      return this.buildDetailDto(report);
+    }
+
+    const nextStatus = nextAssignedAdminId ? IncidentReportStatus.ASSIGNED : IncidentReportStatus.RECEIVED;
 
     const updated = await this.prisma.incidentReport.update({
       where: { id: report.id },
       data: {
         assignedAdminId: nextAssignedAdminId,
         status: nextStatus,
+        ...this.buildResolutionStateForStatusChange(report.status, nextStatus, report.resolvedAt),
         actions: {
           create: {
             actionType: IncidentReportActionType.ASSIGNED,
@@ -427,8 +548,21 @@ export class IncidentReportsService {
       accountId,
       action: AuditAction.UPDATE,
       report: updated,
-      changesBefore: { assignedAdminId: report.assignedAdminId, status: report.status },
-      changesAfter: { assignedAdminId: nextAssignedAdminId, status: nextStatus, comment: dto.comment?.trim() || null },
+      changesBefore: {
+        assignedAdminId: report.assignedAdminId,
+        status: report.status,
+        resolutionType: report.resolutionType,
+        resolutionSummary: report.resolutionSummary,
+        resolvedAt: report.resolvedAt,
+      },
+      changesAfter: {
+        assignedAdminId: nextAssignedAdminId,
+        status: nextStatus,
+        resolutionType: null,
+        resolutionSummary: null,
+        resolvedAt: null,
+        comment: dto.comment?.trim() || null,
+      },
     });
 
     return this.buildDetailDto(updated);

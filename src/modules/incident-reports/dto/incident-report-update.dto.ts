@@ -1,9 +1,22 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IncidentReportResolutionType,
+  IncidentReportSeverity,
   IncidentReportStatus,
 } from '@prisma/client';
 import { IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
+
+export class UpdateIncidentReportSeverityDto {
+  @ApiProperty({ description: '변경할 심각도', enum: IncidentReportSeverity })
+  @IsEnum(IncidentReportSeverity)
+  severity: IncidentReportSeverity;
+
+  @ApiPropertyOptional({ description: '심각도 변경 메모' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  comment?: string;
+}
 
 export class UpdateIncidentReportStatusDto {
   @ApiProperty({ description: '변경할 상태', enum: IncidentReportStatus })
