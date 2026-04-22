@@ -46,6 +46,16 @@ class SlackRateLimitError extends Error {
 }
 
 export class SlackLogNotifier {
+  private readonly timestampFormatter = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  });
   private readonly enabled: boolean;
   private readonly source: string;
   private readonly webhookUrl?: string;
@@ -92,7 +102,7 @@ export class SlackLogNotifier {
       context: normalizedContext,
       message: normalizedMessage,
       trace: normalizedTrace,
-      timestamp: new Date().toISOString(),
+      timestamp: this.formatSlackTimestamp(new Date()),
     });
 
     if (this.queue.length >= this.maxBatchSize) {
@@ -290,6 +300,13 @@ export class SlackLogNotifier {
     }
 
     return lines.join('\n');
+  }
+
+  private formatSlackTimestamp(date: Date): string {
+    const parts = this.timestampFormatter.formatToParts(date);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+
+    return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second} KST`;
   }
 
   private async requestSlackApi<T extends Record<string, unknown>>(
