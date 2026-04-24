@@ -182,7 +182,7 @@ export class ZonesService {
 
     const currentZone = await this.prisma.zone.findFirst({
       where: { id, deletedAt: null },
-      select: { shape: true, coordinates: true, radius: true },
+      select: { shape: true, coordinates: true, radius: true, organizationId: true },
     });
 
     if (!currentZone) {
@@ -203,19 +203,27 @@ export class ZonesService {
     );
     Object.assign(updateData, geometryMetadata);
 
-    if (organizationId !== undefined) {
-      if (organizationId) {
-        this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
-        const org = await this.prisma.organization.findUnique({
-          where: { id: organizationId },
-        });
-        if (!org) {
-          throw new BadRequestException('현장을 찾을 수 없습니다.');
-        }
-        await assertCompanyOrGroupOrganization(this.prisma, organizationId);
-      }
-      updateData.organizationId = organizationId;
+    const targetOrganizationId = organizationId === undefined
+      ? currentZone.organizationId
+      : organizationId;
+
+    if (!targetOrganizationId) {
+      throw new BadRequestException('현장을 찾을 수 없습니다.');
     }
+
+    if (organizationId !== undefined) {
+      this.ensureOrganizationInScope(targetOrganizationId, scopeOrganizationIds);
+      updateData.organizationId = targetOrganizationId;
+    }
+
+    const targetOrganization = await this.prisma.organization.findUnique({
+      where: { id: targetOrganizationId },
+    });
+    if (!targetOrganization) {
+      throw new BadRequestException('현장을 찾을 수 없습니다.');
+    }
+
+    await assertCompanyOrGroupOrganization(this.prisma, targetOrganizationId);
 
     const zone = await this.prisma.zone.update({
       where: { id },

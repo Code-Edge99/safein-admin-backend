@@ -239,11 +239,28 @@ export class AllowedAppPresetsService {
   ): Promise<AllowedAppPresetDetailDto> {
     await this.ensureValidPlatformData();
     const existingPreset = await this.findOne(id, scopeOrganizationIds);
+    const currentPreset = await this.prisma.allowedAppPreset.findUnique({
+      where: { id },
+      select: { organizationId: true },
+    });
 
-    this.ensureOrganizationInScope(dto.organizationId, scopeOrganizationIds);
-    if (dto.organizationId) {
-      await assertCompanyOrGroupOrganization(this.prisma, dto.organizationId);
+    if (!currentPreset) {
+      throw new NotFoundException('허용앱 프리셋을 찾을 수 없습니다.');
     }
+
+    const targetOrganizationId = dto.organizationId === undefined
+      ? currentPreset.organizationId
+      : dto.organizationId;
+
+    if (!targetOrganizationId) {
+      throw new BadRequestException('현장을 찾을 수 없습니다.');
+    }
+
+    if (dto.organizationId !== undefined) {
+      this.ensureOrganizationInScope(targetOrganizationId, scopeOrganizationIds);
+    }
+
+    await assertCompanyOrGroupOrganization(this.prisma, targetOrganizationId);
 
     const explicitPlatform = dto.platform === undefined ? undefined : this.normalizePlatform(dto.platform);
 
@@ -286,7 +303,7 @@ export class AllowedAppPresetsService {
         name: dto.name,
         description: dto.description,
         platform: explicitPlatform !== undefined || inferredPlatform !== undefined ? targetPlatform : undefined,
-        organizationId: dto.organizationId,
+        organizationId: dto.organizationId === undefined ? undefined : targetOrganizationId,
         updatedById: actorUserId,
       },
       include: {

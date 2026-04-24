@@ -182,7 +182,16 @@ export class TimePoliciesService {
     scopeOrganizationIds?: string[],
     actorUserId?: string,
   ): Promise<TimePolicyResponseDto> {
-    await this.findOne(id, scopeOrganizationIds);
+    const currentPolicy = await this.prisma.timePolicy.findUnique({
+      where: { id },
+      select: { organizationId: true },
+    });
+
+    if (!currentPolicy) {
+      throw new NotFoundException('시간 정책을 찾을 수 없습니다.');
+    }
+
+    this.assertPolicyInScope(currentPolicy, scopeOrganizationIds);
 
     const {
       organizationId,
@@ -196,17 +205,27 @@ export class TimePoliciesService {
 
     const updateData: any = { ...rest };
 
-    if (organizationId) {
-      this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
-      const org = await this.prisma.organization.findUnique({
-        where: { id: organizationId },
-      });
-      if (!org) {
-        throw new BadRequestException('현장을 찾을 수 없습니다.');
-      }
-      await assertCompanyOrGroupOrganization(this.prisma, organizationId);
-      updateData.organizationId = organizationId;
+    const targetOrganizationId = organizationId === undefined
+      ? currentPolicy.organizationId
+      : organizationId;
+
+    if (!targetOrganizationId) {
+      throw new BadRequestException('현장을 찾을 수 없습니다.');
     }
+
+    if (organizationId !== undefined) {
+      this.ensureOrganizationInScope(targetOrganizationId, scopeOrganizationIds);
+      updateData.organizationId = targetOrganizationId;
+    }
+
+    const targetOrganization = await this.prisma.organization.findUnique({
+      where: { id: targetOrganizationId },
+    });
+    if (!targetOrganization) {
+      throw new BadRequestException('현장을 찾을 수 없습니다.');
+    }
+
+    await assertCompanyOrGroupOrganization(this.prisma, targetOrganizationId);
 
     const normalizedSlot = this.resolvePrimaryTimeSlot({
       timeSlots,
