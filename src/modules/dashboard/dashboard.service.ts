@@ -1899,13 +1899,29 @@ export class DashboardService {
       return '';
     }
 
+    const formatUtcClockTime = (date: Date): string => `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`;
+    const hasExplicitTimeZoneInfo = (rawValue: string): boolean => {
+      const normalized = rawValue.trim();
+      return /Z$/i.test(normalized)
+        || /\b(?:GMT|UTC)\b/i.test(normalized)
+        || /[+-]\d{2}:?\d{2}(?:\b|(?=\s*\())/.test(normalized);
+    };
+
     if (typeof value === 'string') {
-      const timeOnlyMatch = value.match(/^(\d{2}:\d{2})(?::\d{2})?$/);
+      const normalizedValue = value.trim();
+      const timeOnlyMatch = normalizedValue.match(/^(\d{2}:\d{2})(?::\d{2})?$/);
       if (timeOnlyMatch) {
         return timeOnlyMatch[1];
       }
 
-      const isoMatch = value.match(/[T\s](\d{2}:\d{2})(?::\d{2})?/);
+      if (hasExplicitTimeZoneInfo(normalizedValue)) {
+        const parsedDate = new Date(normalizedValue);
+        if (!Number.isNaN(parsedDate.getTime())) {
+          return formatUtcClockTime(parsedDate);
+        }
+      }
+
+      const isoMatch = normalizedValue.match(/[T\s](\d{2}:\d{2})(?::\d{2})?/);
       if (isoMatch) {
         return isoMatch[1];
       }
@@ -1916,9 +1932,7 @@ export class DashboardService {
       return String(value);
     }
 
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    return `${hours}:${minutes}`;
+    return formatUtcClockTime(date);
   }
 
   async getSiteReports(days = 7, scopeOrganizationIds?: string[], organizationId?: string) {
