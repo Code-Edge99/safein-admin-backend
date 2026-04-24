@@ -80,18 +80,10 @@ export class OrganizationsService {
   ): Promise<void> {
     const parent = await this.prisma.organization.findUnique({
       where: { id: parentId },
-      include: {
-        _count: {
-          select: {
-            children: true,
-            employees: true,
-            zones: true,
-            timePolicies: true,
-            behaviorConditions: true,
-            allowedAppPresets: true,
-            controlPolicies: true,
-          },
-        },
+      select: {
+        id: true,
+        parentId: true,
+        teamCode: true,
       },
     });
 
@@ -114,22 +106,6 @@ export class OrganizationsService {
 
     if (parentClassification === 'GROUP' && childNodeType !== CreateOrganizationNodeTypeEnum.UNIT) {
       throw new BadRequestException('그룹 하위에는 단위만 생성할 수 있습니다.');
-    }
-
-    if (parent._count.children === 0) {
-      const c = parent._count;
-      if (
-        c.employees > 0
-        || c.zones > 0
-        || c.timePolicies > 0
-        || c.behaviorConditions > 0
-        || c.allowedAppPresets > 0
-        || c.controlPolicies > 0
-      ) {
-        throw new BadRequestException(
-          '해당 현장에 직원이나 정책이 배정되어 있어 하위 현장을 생성할 수 없습니다. 직원과 정책을 먼저 제거해주세요.',
-        );
-      }
     }
 
   }
