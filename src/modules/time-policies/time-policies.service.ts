@@ -1,8 +1,9 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
-import { AuditAction } from '@prisma/client';
+import { AppLanguage, AuditAction, TranslatableEntityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
 import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertCompanyOrGroupOrganization } from '../../common/utils/organization-scope.util';
+import { ContentTranslationService } from '@/common/translation/translation.service';
 import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toTimePolicyResponseDto } from './time-policies.mapper';
 import {
@@ -19,8 +20,59 @@ import {
 export class TimePoliciesService {
   constructor(
     private prisma: PrismaService,
+    private readonly contentTranslationService: ContentTranslationService,
     private readonly controlPoliciesService: ControlPoliciesService,
   ) {}
+
+  private async syncTimePolicyTranslations(
+    policyId: string,
+    values: { name: string; description?: string | null },
+    updatedAt: Date,
+  ): Promise<void> {
+    await this.contentTranslationService.storeEntityTranslations(
+      TranslatableEntityType.TIME_POLICY,
+      policyId,
+      AppLanguage.ko,
+      values,
+      updatedAt,
+    );
+
+    this.contentTranslationService.queueTranslationsFromKorean({
+      entityType: TranslatableEntityType.TIME_POLICY,
+      entityId: policyId,
+      sourceUpdatedAt: updatedAt,
+      fields: [
+        { fieldKey: 'name', content: values.name },
+        { fieldKey: 'description', content: values.description ?? '' },
+      ],
+    });
+  }
+
+  private async syncExcludePeriodTranslations(
+    excludePeriods: Array<{ id: string; reason: string }>,
+    updatedAt: Date,
+  ): Promise<void> {
+    await Promise.all(
+      excludePeriods
+        .filter((excludePeriod) => excludePeriod.reason.trim().length > 0)
+        .map(async (excludePeriod) => {
+          await this.contentTranslationService.storeEntityTranslations(
+            TranslatableEntityType.TIME_POLICY_EXCLUDE_PERIOD,
+            excludePeriod.id,
+            AppLanguage.ko,
+            { name: excludePeriod.reason },
+            updatedAt,
+          );
+
+          this.contentTranslationService.queueTranslationsFromKorean({
+            entityType: TranslatableEntityType.TIME_POLICY_EXCLUDE_PERIOD,
+            entityId: excludePeriod.id,
+            sourceUpdatedAt: updatedAt,
+            fields: [{ fieldKey: 'name', content: excludePeriod.reason }],
+          });
+        }),
+    );
+  }
 
   private ensureOrganizationInScope(
     organizationId: string | undefined,
@@ -86,6 +138,12 @@ export class TimePoliciesService {
         excludePeriods: true,
       },
     });
+
+    await this.syncTimePolicyTranslations(policy.id, {
+      name: policy.name,
+      description: policy.description ?? '',
+    }, policy.updatedAt);
+    await this.syncExcludePeriodTranslations(policy.excludePeriods, policy.updatedAt);
 
     return this.toResponseDto(policy);
   }
@@ -270,6 +328,14 @@ export class TimePoliciesService {
         excludePeriods: true,
       },
     });
+
+    await this.syncTimePolicyTranslations(policy.id, {
+      name: policy.name,
+      description: policy.description ?? '',
+    }, policy.updatedAt);
+    if (excludePeriods !== undefined) {
+      await this.syncExcludePeriodTranslations(policy.excludePeriods, policy.updatedAt);
+    }
 
     const impactedPolicies = await this.prisma.controlPolicyTimePolicy.findMany({
       where: { timePolicyId: id },

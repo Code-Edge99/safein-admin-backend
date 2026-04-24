@@ -1,8 +1,9 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
-import { AuditAction } from '@prisma/client';
+import { AppLanguage, AuditAction, TranslatableEntityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
 import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertCompanyOrGroupOrganization } from '../../common/utils/organization-scope.util';
+import { ContentTranslationService } from '@/common/translation/translation.service';
 import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toAllowedAppPresetDetailDto, toAllowedAppPresetResponseDto } from './allowed-app-presets.mapper';
 import {
@@ -22,8 +23,33 @@ export class AllowedAppPresetsService {
 
   constructor(
     private prisma: PrismaService,
+    private readonly contentTranslationService: ContentTranslationService,
     private readonly controlPoliciesService: ControlPoliciesService,
   ) {}
+
+  private async syncAllowedAppPresetTranslations(
+    presetId: string,
+    values: { name: string; description?: string | null },
+    updatedAt: Date,
+  ): Promise<void> {
+    await this.contentTranslationService.storeEntityTranslations(
+      TranslatableEntityType.ALLOWED_APP_PRESET,
+      presetId,
+      AppLanguage.ko,
+      values,
+      updatedAt,
+    );
+
+    this.contentTranslationService.queueTranslationsFromKorean({
+      entityType: TranslatableEntityType.ALLOWED_APP_PRESET,
+      entityId: presetId,
+      sourceUpdatedAt: updatedAt,
+      fields: [
+        { fieldKey: 'name', content: values.name },
+        { fieldKey: 'description', content: values.description ?? '' },
+      ],
+    });
+  }
 
   private ensureOrganizationInScope(
     organizationId: string | undefined,
@@ -143,6 +169,11 @@ export class AllowedAppPresetsService {
         },
       },
     });
+
+    await this.syncAllowedAppPresetTranslations(preset.id, {
+      name: preset.name,
+      description: preset.description ?? '',
+    }, preset.updatedAt);
 
     return this.toDetailDto(preset);
   }
@@ -318,6 +349,11 @@ export class AllowedAppPresetsService {
         },
       },
     });
+
+    await this.syncAllowedAppPresetTranslations(preset.id, {
+      name: preset.name,
+      description: preset.description ?? '',
+    }, preset.updatedAt);
 
     await this.notifyPoliciesByPreset(id);
 

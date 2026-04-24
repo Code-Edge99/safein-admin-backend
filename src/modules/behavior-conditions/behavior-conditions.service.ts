@@ -1,8 +1,9 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
-import { AuditAction } from '@prisma/client';
+import { AppLanguage, AuditAction, TranslatableEntityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
 import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertCompanyOrGroupOrganization } from '../../common/utils/organization-scope.util';
+import { ContentTranslationService } from '@/common/translation/translation.service';
 import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toBehaviorConditionResponseDto } from './behavior-conditions.mapper';
 import {
@@ -18,8 +19,33 @@ import {
 export class BehaviorConditionsService {
   constructor(
     private prisma: PrismaService,
+    private readonly contentTranslationService: ContentTranslationService,
     private readonly controlPoliciesService: ControlPoliciesService,
   ) {}
+
+  private async syncBehaviorConditionTranslations(
+    conditionId: string,
+    values: { name: string; description?: string | null },
+    updatedAt: Date,
+  ): Promise<void> {
+    await this.contentTranslationService.storeEntityTranslations(
+      TranslatableEntityType.BEHAVIOR_CONDITION,
+      conditionId,
+      AppLanguage.ko,
+      values,
+      updatedAt,
+    );
+
+    this.contentTranslationService.queueTranslationsFromKorean({
+      entityType: TranslatableEntityType.BEHAVIOR_CONDITION,
+      entityId: conditionId,
+      sourceUpdatedAt: updatedAt,
+      fields: [
+        { fieldKey: 'name', content: values.name },
+        { fieldKey: 'description', content: values.description ?? '' },
+      ],
+    });
+  }
 
   private ensureOrganizationInScope(
     organizationId: string | undefined,
@@ -75,6 +101,11 @@ export class BehaviorConditionsService {
         _count: { select: { policyBehaviors: true } },
       },
     });
+
+    await this.syncBehaviorConditionTranslations(condition.id, {
+      name: condition.name,
+      description: condition.description ?? '',
+    }, condition.updatedAt);
 
     return this.toResponseDto(condition);
   }
@@ -250,6 +281,11 @@ export class BehaviorConditionsService {
         _count: { select: { policyBehaviors: true } },
       },
     });
+
+    await this.syncBehaviorConditionTranslations(condition.id, {
+      name: condition.name,
+      description: condition.description ?? '',
+    }, condition.updatedAt);
 
     const impactedPolicies = await this.prisma.controlPolicyBehavior.findMany({
       where: { behaviorConditionId: id },

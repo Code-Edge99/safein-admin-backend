@@ -6,8 +6,9 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AuditAction, DeviceOS, EmployeeStatus, Prisma } from '@prisma/client';
+import { AppLanguage, AuditAction, DeviceOS, EmployeeStatus, Prisma, TranslatableEntityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ContentTranslationService } from '@/common/translation/translation.service';
 import {
   ensureOrganizationInScope,
   assertCompanyOrGroupOrganization,
@@ -50,7 +51,32 @@ export class ControlPoliciesService {
   constructor(
     private prisma: PrismaService,
     private readonly configService: ConfigService,
+    private readonly contentTranslationService: ContentTranslationService,
   ) {}
+
+  private async syncControlPolicyTranslations(
+    policyId: string,
+    values: { name: string; description: string },
+    updatedAt: Date,
+  ): Promise<void> {
+    await this.contentTranslationService.storeEntityTranslations(
+      TranslatableEntityType.CONTROL_POLICY,
+      policyId,
+      AppLanguage.ko,
+      values,
+      updatedAt,
+    );
+
+    this.contentTranslationService.queueTranslationsFromKorean({
+      entityType: TranslatableEntityType.CONTROL_POLICY,
+      entityId: policyId,
+      sourceUpdatedAt: updatedAt,
+      fields: [
+        { fieldKey: 'name', content: values.name },
+        { fieldKey: 'description', content: values.description },
+      ],
+    });
+  }
 
   private ensureOrganizationInScope(
     organizationId: string | undefined,
@@ -183,6 +209,15 @@ export class ControlPoliciesService {
     });
 
     const detail = await this.findOneDetail(policy.id, scopeOrganizationIds);
+
+    await this.syncControlPolicyTranslations(
+      policy.id,
+      {
+        name: policy.name,
+        description: policy.description ?? '',
+      },
+      policy.updatedAt,
+    );
 
     await this.notifyPolicyChangedForOrganization({
       policyId: policy.id,
@@ -643,10 +678,22 @@ export class ControlPoliciesService {
         id: true,
         organizationId: true,
         isActive: true,
+        name: true,
+        description: true,
+        updatedAt: true,
       },
     });
 
     if (updatedPolicy) {
+      await this.syncControlPolicyTranslations(
+        updatedPolicy.id,
+        {
+          name: updatedPolicy.name,
+          description: updatedPolicy.description ?? '',
+        },
+        updatedPolicy.updatedAt,
+      );
+
       await this.notifyPolicyChangedForOrganization({
         policyId: updatedPolicy.id,
         organizationId: updatedPolicy.organizationId,

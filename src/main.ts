@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
@@ -75,7 +76,7 @@ async function bootstrap() {
 
   // Global filters / interceptors
   app.useGlobalFilters(new AllExceptionsFilter());
-  app.useGlobalInterceptors(app.get(RequestLoggingInterceptor), new TransformInterceptor());
+  app.useGlobalInterceptors(app.get(RequestLoggingInterceptor), new TransformInterceptor(app.get(Reflector)));
 
   // Validation
   app.useGlobalPipes(

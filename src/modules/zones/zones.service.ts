@@ -1,9 +1,10 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
-import { AuditAction } from '@prisma/client';
+import { AppLanguage, AuditAction, TranslatableEntityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { preferKstTimestamp } from '../../common/utils/kst-time.util';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
 import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertCompanyOrGroupOrganization } from '../../common/utils/organization-scope.util';
+import { ContentTranslationService } from '@/common/translation/translation.service';
 import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toZoneResponseDto } from './zones.mapper';
 import {
@@ -20,8 +21,33 @@ import {
 export class ZonesService {
   constructor(
     private prisma: PrismaService,
+    private readonly contentTranslationService: ContentTranslationService,
     private readonly controlPoliciesService: ControlPoliciesService,
   ) {}
+
+  private async syncZoneTranslations(
+    zoneId: string,
+    values: { name: string; description?: string | null },
+    updatedAt: Date,
+  ): Promise<void> {
+    await this.contentTranslationService.storeEntityTranslations(
+      TranslatableEntityType.ZONE,
+      zoneId,
+      AppLanguage.ko,
+      values,
+      updatedAt,
+    );
+
+    this.contentTranslationService.queueTranslationsFromKorean({
+      entityType: TranslatableEntityType.ZONE,
+      entityId: zoneId,
+      sourceUpdatedAt: updatedAt,
+      fields: [
+        { fieldKey: 'name', content: values.name },
+        { fieldKey: 'description', content: values.description ?? '' },
+      ],
+    });
+  }
 
   private ensureOrganizationInScope(
     organizationId: string | undefined,
@@ -78,6 +104,11 @@ export class ZonesService {
         },
       },
     });
+
+    await this.syncZoneTranslations(zone.id, {
+      name: zone.name,
+      description: zone.description ?? '',
+    }, zone.updatedAt);
 
     return this.toResponseDto(zone);
   }
@@ -237,6 +268,11 @@ export class ZonesService {
         },
       },
     });
+
+    await this.syncZoneTranslations(zone.id, {
+      name: zone.name,
+      description: zone.description ?? '',
+    }, zone.updatedAt);
 
     const impactedPolicies = await this.prisma.controlPolicyZone.findMany({
       where: { zoneId: id },

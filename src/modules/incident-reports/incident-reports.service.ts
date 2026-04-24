@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AppLanguage,
   AuditAction,
   IncidentReportActionType,
   IncidentReportActorType,
@@ -12,11 +13,13 @@ import {
   IncidentReportSeverity,
   IncidentReportStatus,
   Prisma,
+  TranslatableEntityType,
 } from '@prisma/client';
 import { access } from 'fs/promises';
 import * as path from 'path';
 import { decryptLocation } from '../../common/security/location-crypto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ContentTranslationService } from '@/common/translation/translation.service';
 import {
   CreateIncidentReportCommentDto,
   IncidentReportActionDto,
@@ -57,7 +60,48 @@ type IncidentReportDetailRow = Prisma.IncidentReportGetPayload<{
 
 @Injectable()
 export class IncidentReportsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly contentTranslationService: ContentTranslationService,
+  ) {}
+
+  private async clearIncidentReportResolutionTranslations(reportId: string): Promise<void> {
+    await this.contentTranslationService.deleteEntityTranslations(
+      TranslatableEntityType.INCIDENT_REPORT,
+      reportId,
+      ['resolutionSummary'],
+    );
+    await this.contentTranslationService.deletePendingTranslationJobs(
+      TranslatableEntityType.INCIDENT_REPORT,
+      reportId,
+      ['resolutionSummary'],
+    );
+  }
+
+  private async syncIncidentReportResolutionTranslation(
+    reportId: string,
+    resolutionSummary: string,
+    updatedAt: Date,
+  ): Promise<void> {
+    if (!resolutionSummary.trim()) {
+      return;
+    }
+
+    await this.contentTranslationService.storeEntityTranslations(
+      TranslatableEntityType.INCIDENT_REPORT,
+      reportId,
+      AppLanguage.ko,
+      { resolutionSummary },
+      updatedAt,
+    );
+
+    this.contentTranslationService.queueTranslationsFromKorean({
+      entityType: TranslatableEntityType.INCIDENT_REPORT,
+      entityId: reportId,
+      sourceUpdatedAt: updatedAt,
+      fields: [{ fieldKey: 'resolutionSummary', content: resolutionSummary }],
+    });
+  }
 
   private buildResolutionStateForStatusChange(
     previousStatus: IncidentReportStatus,
@@ -467,6 +511,10 @@ export class IncidentReportsService {
       },
     });
 
+    if (report.status === IncidentReportStatus.RESOLVED && dto.status !== IncidentReportStatus.RESOLVED) {
+      await this.clearIncidentReportResolutionTranslations(updated.id);
+    }
+
     return this.buildDetailDto(updated);
   }
 
@@ -564,6 +612,10 @@ export class IncidentReportsService {
         comment: dto.comment?.trim() || null,
       },
     });
+
+    if (report.status === IncidentReportStatus.RESOLVED) {
+      await this.clearIncidentReportResolutionTranslations(updated.id);
+    }
 
     return this.buildDetailDto(updated);
   }
@@ -665,6 +717,8 @@ export class IncidentReportsService {
       changesBefore: { status: report.status, resolutionType: report.resolutionType, resolutionSummary: report.resolutionSummary },
       changesAfter: { status: IncidentReportStatus.RESOLVED, resolutionType: dto.resolutionType, resolutionSummary, comment: dto.comment?.trim() || null },
     });
+
+    await this.syncIncidentReportResolutionTranslation(updated.id, resolutionSummary, updated.updatedAt);
 
     return this.buildDetailDto(updated);
   }

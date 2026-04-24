@@ -4,11 +4,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AdminRole, NoticeAttachment, Prisma } from '@prisma/client';
+import { AdminRole, AppLanguage, NoticeAttachment, Prisma, TranslatableEntityType } from '@prisma/client';
 import { access, unlink } from 'fs/promises';
 import { PaginatedResponse } from '../../common/dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { resolveOrganizationClassification } from '../../common/utils/organization-scope.util';
+import { ContentTranslationService } from '@/common/translation/translation.service';
 import {
   CleanupNoticeUploadsResponseDto,
   CreateNoticeDto,
@@ -51,12 +52,40 @@ type NoticeTemplateWithRelations = Prisma.NoticeTemplateGetPayload<{
 
 @Injectable()
 export class NoticesService {
-  constructor(private readonly prisma: PrismaService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly contentTranslationService: ContentTranslationService,
+  ) {
     ensureNoticeUploadDirs();
   }
 
   private isSuperAdmin(role?: string): boolean {
     return role === AdminRole.SUPER_ADMIN || role === 'SUPER_ADMIN';
+  }
+
+  private async syncNoticeTranslations(
+    noticeId: string,
+    values: { title: string; contentHtml: string; contentText: string },
+    updatedAt: Date,
+  ): Promise<void> {
+    await this.contentTranslationService.storeEntityTranslations(
+      TranslatableEntityType.NOTICE,
+      noticeId,
+      AppLanguage.ko,
+      values,
+      updatedAt,
+    );
+
+    this.contentTranslationService.queueTranslationsFromKorean({
+      entityType: TranslatableEntityType.NOTICE,
+      entityId: noticeId,
+      sourceUpdatedAt: updatedAt,
+      fields: [
+        { fieldKey: 'title', content: values.title },
+        { fieldKey: 'contentHtml', content: values.contentHtml, isHtml: true },
+        { fieldKey: 'contentText', content: values.contentText },
+      ],
+    });
   }
 
   private async resolveEffectiveReadableOrganizationIds(
@@ -774,6 +803,7 @@ export class NoticesService {
     if (!title || !contentHtml) {
       throw new BadRequestException('제목과 본문은 필수입니다.');
     }
+    const contentText = this.extractContentText(contentHtml, dto.contentText);
 
     const attachmentPayload = await this.normalizeAttachments(dto.attachments, []);
     const noticeTemplateId = await this.resolveNoticeTemplateId(
@@ -789,7 +819,7 @@ export class NoticesService {
         isPinned: dto.isPinned === true,
         title,
         contentHtml,
-        contentText: this.extractContentText(contentHtml, dto.contentText),
+        contentText,
         createdById: actorUserId,
         updatedById: actorUserId,
         attachments: {
@@ -807,6 +837,8 @@ export class NoticesService {
         },
       },
     });
+
+    await this.syncNoticeTranslations(created.id, { title, contentHtml, contentText }, created.updatedAt);
 
     return this.toResponseDto(created, actorUserId, actorUserRole);
   }
@@ -865,6 +897,7 @@ export class NoticesService {
     }
 
     const attachmentPayload = await this.normalizeAttachments(dto.attachments, existing.attachments);
+    const contentText = this.extractContentText(contentHtml, dto.contentText);
     const hasNoticeTemplateField = Object.prototype.hasOwnProperty.call(dto, 'noticeTemplateId');
     const noticeTemplateId = hasNoticeTemplateField
       ? await this.resolveNoticeTemplateId(dto.noticeTemplateId, targetOrganizationId, readableOrganizationIds)
@@ -900,7 +933,7 @@ export class NoticesService {
           isPinned,
           title,
           contentHtml,
-          contentText: this.extractContentText(contentHtml, dto.contentText),
+          contentText,
           updatedById: actorUserId,
         },
         include: {
@@ -917,6 +950,8 @@ export class NoticesService {
     if (removedAttachments.length > 0) {
       await this.removePhysicalFiles(removedAttachments);
     }
+
+    await this.syncNoticeTranslations(updated.id, { title, contentHtml, contentText }, updated.updatedAt);
 
     return this.toResponseDto(updated, actorUserId, actorUserRole);
   }

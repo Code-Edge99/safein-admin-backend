@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
-import { AuditAction, Prisma } from '@prisma/client';
+import { AppLanguage, AuditAction, Prisma, TranslatableEntityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ContentTranslationService } from '@/common/translation/translation.service';
 import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toAllowedAppResponseDto } from './allowed-apps.mapper';
 import {
@@ -21,8 +22,30 @@ export class AllowedAppsService {
 
   constructor(
     private prisma: PrismaService,
+    private readonly contentTranslationService: ContentTranslationService,
     private readonly controlPoliciesService: ControlPoliciesService,
   ) {}
+
+  private async syncAllowedAppTranslations(
+    appId: string,
+    name: string,
+    updatedAt: Date,
+  ): Promise<void> {
+    await this.contentTranslationService.storeEntityTranslations(
+      TranslatableEntityType.ALLOWED_APP,
+      appId,
+      AppLanguage.ko,
+      { name },
+      updatedAt,
+    );
+
+    this.contentTranslationService.queueTranslationsFromKorean({
+      entityType: TranslatableEntityType.ALLOWED_APP,
+      entityId: appId,
+      sourceUpdatedAt: updatedAt,
+      fields: [{ fieldKey: 'name', content: name }],
+    });
+  }
 
   private normalizePackageName(packageName: string): string {
     return packageName.trim();
@@ -85,6 +108,8 @@ export class AllowedAppsService {
         },
       },
     });
+
+    await this.syncAllowedAppTranslations(app.id, app.name, app.updatedAt);
 
     return this.toResponseDto(app);
   }
@@ -254,6 +279,8 @@ export class AllowedAppsService {
         },
       },
     });
+
+    await this.syncAllowedAppTranslations(app.id, app.name, app.updatedAt);
 
     await this.notifyPoliciesByAllowedApp(id);
 

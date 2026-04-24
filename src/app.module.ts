@@ -24,6 +24,8 @@ import { NoticesModule } from './modules/notices/notices.module';
 import { IncidentReportsModule } from './modules/incident-reports/incident-reports.module';
 import { ReportMetricSettingsModule } from './modules/report-metric-settings/report-metric-settings.module';
 import { RequestLoggingInterceptor } from './common/interceptors/request-logging.interceptor';
+import { TranslationModule } from './common/translation/translation.module';
+import { TranslationsModule } from './modules/translations/translations.module';
 
 @Module({
   imports: [
@@ -36,6 +38,7 @@ import { RequestLoggingInterceptor } from './common/interceptors/request-logging
 
     // Database
     PrismaModule,
+    TranslationModule,
 
     // Feature Modules
     AuthModule,
@@ -57,6 +60,7 @@ import { RequestLoggingInterceptor } from './common/interceptors/request-logging
     NoticesModule,
     IncidentReportsModule,
     ReportMetricSettingsModule,
+    TranslationsModule,
   ],
   controllers: [],
   providers: [RequestLoggingInterceptor],
