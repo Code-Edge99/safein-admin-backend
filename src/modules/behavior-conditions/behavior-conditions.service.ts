@@ -125,7 +125,7 @@ export class BehaviorConditionsService {
     } = filter;
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    const where: any = { deletedAt: null };
 
     if (search) {
       where.name = { contains: search, mode: 'insensitive' };
@@ -174,8 +174,8 @@ export class BehaviorConditionsService {
   }
 
   async findOne(id: string, scopeOrganizationIds?: string[]): Promise<BehaviorConditionResponseDto> {
-    const condition = await this.prisma.behaviorCondition.findUnique({
-      where: { id },
+    const condition = await this.prisma.behaviorCondition.findFirst({
+      where: { id, deletedAt: null },
       include: {
         organization: { select: { id: true, name: true } },
         _count: { select: { policyBehaviors: true } },
@@ -200,6 +200,7 @@ export class BehaviorConditionsService {
     const conditions = await this.prisma.behaviorCondition.findMany({
       where: {
         organizationId,
+        deletedAt: null,
       },
       include: {
         organization: { select: { id: true, name: true } },
@@ -217,8 +218,8 @@ export class BehaviorConditionsService {
     scopeOrganizationIds?: string[],
     actorUserId?: string,
   ): Promise<BehaviorConditionResponseDto> {
-    const current = await this.prisma.behaviorCondition.findUnique({
-      where: { id },
+    const current = await this.prisma.behaviorCondition.findFirst({
+      where: { id, deletedAt: null },
       include: {
         organization: { select: { id: true, name: true } },
         _count: { select: { policyBehaviors: true } },
@@ -328,7 +329,12 @@ export class BehaviorConditionsService {
       impactedPolicyIds = impacted.map((item: any) => item.policyId);
 
       await tx.controlPolicyBehavior.deleteMany({ where: { behaviorConditionId: id } });
-      await tx.behaviorCondition.delete({ where: { id } });
+      await tx.behaviorCondition.update({
+        where: { id },
+        data: {
+          deletedAt: new Date(),
+        },
+      });
 
       await deactivatePoliciesWithoutConditions(
         tx,
@@ -342,10 +348,14 @@ export class BehaviorConditionsService {
   async getStats(scopeOrganizationIds?: string[]): Promise<BehaviorConditionStatsDto> {
     const [totalConditions, thresholdStats] = await Promise.all([
       this.prisma.behaviorCondition.count({
-        where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
+        where: scopeOrganizationIds
+          ? { organizationId: { in: scopeOrganizationIds }, deletedAt: null }
+          : { deletedAt: null },
       }),
       this.prisma.behaviorCondition.findMany({
-        where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
+        where: scopeOrganizationIds
+          ? { organizationId: { in: scopeOrganizationIds }, deletedAt: null }
+          : { deletedAt: null },
         select: {
           distanceThreshold: true,
           stepsThreshold: true,

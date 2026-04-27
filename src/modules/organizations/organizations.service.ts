@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException 
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditAction, DeviceStatus, EmployeeStatus, Prisma } from '@prisma/client';
 import { randomInt } from 'crypto';
+import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
 import {
   CODEEDGE_ROOT_ORGANIZATION_ID,
   assertOrganizationInScopeOrThrow,
@@ -21,12 +22,16 @@ import {
   TransferResourcesDto,
   TransferResourcesResultDto,
 } from './dto';
+import { ControlPoliciesService } from '../control-policies/control-policies.service';
 
 @Injectable()
 export class OrganizationsService {
   private static readonly TEAM_CODE_CHARSET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly controlPoliciesService: ControlPoliciesService,
+  ) {}
 
   private generateTeamCodeCandidate(): string {
     let value = '';
@@ -84,10 +89,11 @@ export class OrganizationsService {
         id: true,
         parentId: true,
         teamCode: true,
+        deletedAt: true,
       },
     });
 
-    if (!parent) {
+    if (!parent || parent.deletedAt) {
       throw new NotFoundException('상위 현장을 찾을 수 없습니다.');
     }
 
@@ -137,10 +143,10 @@ export class OrganizationsService {
     if (dto.parentId) {
       const parent = await this.prisma.organization.findUnique({
         where: { id: dto.parentId },
-        select: { id: true, parentId: true, teamCode: true },
+        select: { id: true, parentId: true, teamCode: true, deletedAt: true },
       });
 
-      if (!parent) {
+      if (!parent || parent.deletedAt) {
         throw new NotFoundException('상위 현장을 찾을 수 없습니다.');
       }
 
@@ -224,7 +230,10 @@ export class OrganizationsService {
 
   async findAll(scopeOrganizationIds?: string[]): Promise<OrganizationResponseDto[]> {
     const organizations = await this.prisma.organization.findMany({
-      where: scopeOrganizationIds ? { id: { in: scopeOrganizationIds } } : undefined,
+      where: {
+        ...(scopeOrganizationIds ? { id: { in: scopeOrganizationIds } } : {}),
+        deletedAt: null,
+      },
       include: {
         createdBy: {
           select: {
@@ -254,7 +263,10 @@ export class OrganizationsService {
 
   async findTree(scopeOrganizationIds?: string[]): Promise<OrganizationTreeDto[]> {
     const organizations = await this.prisma.organization.findMany({
-      where: scopeOrganizationIds ? { id: { in: scopeOrganizationIds } } : undefined,
+      where: {
+        ...(scopeOrganizationIds ? { id: { in: scopeOrganizationIds } } : {}),
+        deletedAt: null,
+      },
       include: {
         createdBy: {
           select: {
@@ -314,8 +326,8 @@ export class OrganizationsService {
   async findOne(id: string, scopeOrganizationIds?: string[]): Promise<OrganizationResponseDto> {
     this.ensureOrganizationInScope(id, scopeOrganizationIds);
 
-    const organization = await this.prisma.organization.findUnique({
-      where: { id },
+    const organization = await this.prisma.organization.findFirst({
+      where: { id, deletedAt: null },
       include: {
         createdBy: {
           select: {
@@ -349,8 +361,8 @@ export class OrganizationsService {
   async findOneWithStats(id: string, scopeOrganizationIds?: string[]): Promise<OrganizationStatsDto> {
     this.ensureOrganizationInScope(id, scopeOrganizationIds);
 
-    const organization = await this.prisma.organization.findUnique({
-      where: { id },
+    const organization = await this.prisma.organization.findFirst({
+      where: { id, deletedAt: null },
       include: {
         _count: {
           select: {
@@ -393,8 +405,8 @@ export class OrganizationsService {
   ): Promise<OrganizationResponseDto> {
     await this.findOne(id, scopeOrganizationIds); // 존재 여부 확인
     const normalizedManagerPhone = normalizePhoneNumber(dto.managerPhone);
-    const currentOrganization = await this.prisma.organization.findUnique({
-      where: { id },
+    const currentOrganization = await this.prisma.organization.findFirst({
+      where: { id, deletedAt: null },
       select: { id: true, parentId: true, teamCode: true },
     });
 
@@ -419,10 +431,10 @@ export class OrganizationsService {
 
       const targetParent = await this.prisma.organization.findUnique({
         where: { id: nextParentId },
-        select: { id: true, parentId: true, teamCode: true },
+        select: { id: true, parentId: true, teamCode: true, deletedAt: true },
       });
 
-      if (!targetParent) {
+      if (!targetParent || targetParent.deletedAt) {
         throw new NotFoundException('상위 현장을 찾을 수 없습니다.');
       }
 
@@ -442,6 +454,7 @@ export class OrganizationsService {
 
       if (movingNodeType === 'UNIT' && nextParentId !== currentOrganization.parentId) {
         const organizations = await this.prisma.organization.findMany({
+          where: { deletedAt: null },
           select: {
             id: true,
             parentId: true,
@@ -577,13 +590,20 @@ export class OrganizationsService {
       },
     });
 
-    if (!organization) {
+    if (!organization || organization.deletedAt) {
       throw new NotFoundException('현장을 찾을 수 없습니다.');
     }
 
     this.assertOrganizationInScope(organization, scopeOrganizationIds);
 
-    if (organization._count.children > 0) {
+    const activeChildCount = await this.prisma.organization.count({
+      where: {
+        parentId: id,
+        deletedAt: null,
+      },
+    });
+
+    if (activeChildCount > 0) {
       throw new BadRequestException('하위 현장이 있는 현장은 삭제할 수 없습니다.');
     }
 
@@ -632,26 +652,146 @@ export class OrganizationsService {
       });
     }
 
-    if (
-      organization._count.zones > 0 ||
-      organization._count.timePolicies > 0 ||
-      organization._count.behaviorConditions > 0 ||
-      organization._count.allowedAppPresets > 0 ||
-      organization._count.controlPolicies > 0
-    ) {
-      throw new BadRequestException('하위 정책/조건 데이터가 남아 있어 현장을 삭제할 수 없습니다. 관련 데이터를 먼저 정리해주세요.');
-    }
+    const impactedPolicyIdSet = new Set<string>();
 
-    await this.prisma.organization.delete({
-      where: { id },
+    await this.prisma.$transaction(async (tx) => {
+      const now = new Date();
+
+      const [zoneLinks, timePolicyLinks, behaviorLinks, presetLinks, ownedPolicies] = await Promise.all([
+        tx.controlPolicyZone.findMany({
+          where: {
+            OR: [
+              { zone: { organizationId: id, deletedAt: null } },
+              { policy: { organizationId: id, deletedAt: null } },
+            ],
+          },
+          select: { policyId: true },
+        }),
+        tx.controlPolicyTimePolicy.findMany({
+          where: {
+            OR: [
+              { timePolicy: { organizationId: id, deletedAt: null } },
+              { policy: { organizationId: id, deletedAt: null } },
+            ],
+          },
+          select: { policyId: true },
+        }),
+        tx.controlPolicyBehavior.findMany({
+          where: {
+            OR: [
+              { behaviorCondition: { organizationId: id, deletedAt: null } },
+              { policy: { organizationId: id, deletedAt: null } },
+            ],
+          },
+          select: { policyId: true },
+        }),
+        tx.controlPolicyAllowedApp.findMany({
+          where: {
+            OR: [
+              { preset: { organizationId: id, deletedAt: null } },
+              { policy: { organizationId: id, deletedAt: null } },
+            ],
+          },
+          select: { policyId: true },
+        }),
+        tx.controlPolicy.findMany({
+          where: { organizationId: id, deletedAt: null },
+          select: { id: true },
+        }),
+      ]);
+
+      [zoneLinks, timePolicyLinks, behaviorLinks, presetLinks].forEach((items: Array<{ policyId: string }>) => {
+        items.forEach((item) => impactedPolicyIdSet.add(item.policyId));
+      });
+      ownedPolicies.forEach((policy: { id: string }) => impactedPolicyIdSet.add(policy.id));
+
+      await tx.controlPolicyZone.deleteMany({
+        where: {
+          OR: [
+            { zone: { organizationId: id, deletedAt: null } },
+            { policy: { organizationId: id, deletedAt: null } },
+          ],
+        },
+      });
+      await tx.controlPolicyTimePolicy.deleteMany({
+        where: {
+          OR: [
+            { timePolicy: { organizationId: id, deletedAt: null } },
+            { policy: { organizationId: id, deletedAt: null } },
+          ],
+        },
+      });
+      await tx.controlPolicyBehavior.deleteMany({
+        where: {
+          OR: [
+            { behaviorCondition: { organizationId: id, deletedAt: null } },
+            { policy: { organizationId: id, deletedAt: null } },
+          ],
+        },
+      });
+      await tx.controlPolicyAllowedApp.deleteMany({
+        where: {
+          OR: [
+            { preset: { organizationId: id, deletedAt: null } },
+            { policy: { organizationId: id, deletedAt: null } },
+          ],
+        },
+      });
+      await tx.controlPolicyEmployee.deleteMany({
+        where: {
+          policy: {
+            organizationId: id,
+            deletedAt: null,
+          },
+        },
+      });
+
+      await tx.zone.updateMany({
+        where: { organizationId: id, deletedAt: null },
+        data: { deletedAt: now },
+      });
+      await tx.timePolicy.updateMany({
+        where: { organizationId: id, deletedAt: null },
+        data: { deletedAt: now },
+      });
+      await tx.behaviorCondition.updateMany({
+        where: { organizationId: id, deletedAt: null },
+        data: { deletedAt: now },
+      });
+      await tx.allowedAppPreset.updateMany({
+        where: { organizationId: id, deletedAt: null },
+        data: { deletedAt: now },
+      });
+      await tx.controlPolicy.updateMany({
+        where: { organizationId: id, deletedAt: null },
+        data: {
+          deletedAt: now,
+          isActive: false,
+        },
+      });
+      await tx.organization.update({
+        where: { id },
+        data: {
+          deletedAt: now,
+          isActive: false,
+          teamCode: null,
+        },
+      });
+
+      await deactivatePoliciesWithoutConditions(tx, Array.from(impactedPolicyIdSet));
     });
+
+    await this.controlPoliciesService.notifyPoliciesChanged(Array.from(impactedPolicyIdSet), 'deactivate');
   }
 
   async getDescendants(id: string, scopeOrganizationIds?: string[]): Promise<OrganizationResponseDto[]> {
     this.ensureOrganizationInScope(id, scopeOrganizationIds);
 
     const allOrgs = await this.prisma.organization.findMany({
-      where: scopeOrganizationIds ? { id: { in: scopeOrganizationIds } } : undefined,
+      where: {
+        ...(scopeOrganizationIds ? { id: { in: scopeOrganizationIds } } : {}),
+        deletedAt: null,
+      },
       include: {
         _count: {
           select: {
@@ -678,8 +818,8 @@ export class OrganizationsService {
     this.ensureOrganizationInScope(id, scopeOrganizationIds);
 
     const ancestors: OrganizationResponseDto[] = [];
-    let current = await this.prisma.organization.findUnique({
-      where: { id },
+    let current = await this.prisma.organization.findFirst({
+      where: { id, deletedAt: null },
       include: {
         _count: {
           select: {
@@ -700,7 +840,7 @@ export class OrganizationsService {
           },
         },
       });
-      if (parent) {
+      if (parent && !parent.deletedAt) {
         if (scopeOrganizationIds && !scopeOrganizationIds.includes(parent.id)) {
           break;
         }
@@ -731,8 +871,8 @@ export class OrganizationsService {
     }
 
     const [source, target] = await Promise.all([
-      this.prisma.organization.findUnique({ where: { id: sourceOrganizationId } }),
-      this.prisma.organization.findUnique({ where: { id: dto.targetOrganizationId } }),
+      this.prisma.organization.findFirst({ where: { id: sourceOrganizationId, deletedAt: null } }),
+      this.prisma.organization.findFirst({ where: { id: dto.targetOrganizationId, deletedAt: null } }),
     ]);
 
     if (!source) throw new NotFoundException('원본 현장을 찾을 수 없습니다.');

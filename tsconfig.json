@@ -20,7 +20,9 @@
       "@/*": ["./src/*"],
       "@modules/*": ["./src/modules/*"],
       "@common/*": ["./src/common/*"],
-      "@prisma/*": ["./src/prisma/*"]
+      "@prisma/*": ["./src/prisma/*"],
+      "@prisma/client": ["./node_modules/.prisma/client"],
+      "@prisma/client/*": ["./node_modules/.prisma/client/*"]
     }
   },
   "exclude": [

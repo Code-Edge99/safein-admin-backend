@@ -116,7 +116,7 @@ export class AllowedAppPresetsService {
         data: { platform: 'android' },
       }),
       this.prisma.allowedAppPreset.updateMany({
-        where: { platform: { notIn: [...this.validPlatforms] } },
+        where: { platform: { notIn: [...this.validPlatforms] }, deletedAt: null },
         data: { platform: 'android' },
       }),
     ]);
@@ -188,7 +188,7 @@ export class AllowedAppPresetsService {
     const limit = filter.limit || 20;
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    const where: any = { deletedAt: null };
 
     if (filter.search) {
       where.name = { contains: filter.search, mode: 'insensitive' };
@@ -238,8 +238,8 @@ export class AllowedAppPresetsService {
   async findOne(id: string, scopeOrganizationIds?: string[]): Promise<AllowedAppPresetDetailDto> {
     await this.ensureValidPlatformData();
 
-    const preset = await this.prisma.allowedAppPreset.findUnique({
-      where: { id },
+    const preset = await this.prisma.allowedAppPreset.findFirst({
+      where: { id, deletedAt: null },
       include: {
         organization: { select: { id: true, name: true } },
         items: {
@@ -270,8 +270,8 @@ export class AllowedAppPresetsService {
   ): Promise<AllowedAppPresetDetailDto> {
     await this.ensureValidPlatformData();
     const existingPreset = await this.findOne(id, scopeOrganizationIds);
-    const currentPreset = await this.prisma.allowedAppPreset.findUnique({
-      where: { id },
+    const currentPreset = await this.prisma.allowedAppPreset.findFirst({
+      where: { id, deletedAt: null },
       select: { organizationId: true },
     });
 
@@ -380,8 +380,8 @@ export class AllowedAppPresetsService {
   async remove(id: string, scopeOrganizationIds?: string[]): Promise<void> {
     await this.ensureValidPlatformData();
 
-    const preset = await this.prisma.allowedAppPreset.findUnique({
-      where: { id },
+    const preset = await this.prisma.allowedAppPreset.findFirst({
+      where: { id, deletedAt: null },
       include: {
         _count: {
           select: {
@@ -406,7 +406,12 @@ export class AllowedAppPresetsService {
       impactedPolicyIds = impacted.map((item: any) => item.policyId);
 
       await tx.controlPolicyAllowedApp.deleteMany({ where: { presetId: id } });
-      await tx.allowedAppPreset.delete({ where: { id } });
+      await tx.allowedAppPreset.update({
+        where: { id },
+        data: {
+          deletedAt: new Date(),
+        },
+      });
 
       await deactivatePoliciesWithoutConditions(
         tx,
@@ -530,7 +535,7 @@ export class AllowedAppPresetsService {
     this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
 
     const presets = await this.prisma.allowedAppPreset.findMany({
-      where: { organizationId },
+      where: { organizationId, deletedAt: null },
       include: {
         organization: { select: { id: true, name: true } },
         items: {
@@ -555,7 +560,9 @@ export class AllowedAppPresetsService {
       this.prisma.allowedApp.count(),
       this.prisma.allowedApp.count({ where: { isGlobal: true } }),
       this.prisma.allowedAppPreset.count({
-        where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
+        where: scopeOrganizationIds
+          ? { organizationId: { in: scopeOrganizationIds }, deletedAt: null }
+          : { deletedAt: null },
       }),
       this.prisma.allowedApp.groupBy({
         by: ['category'],

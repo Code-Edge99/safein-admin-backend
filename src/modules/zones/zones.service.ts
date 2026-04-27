@@ -306,15 +306,6 @@ export class ZonesService {
   async remove(id: string, scopeOrganizationIds?: string[]): Promise<void> {
     const zone = await this.prisma.zone.findFirst({
       where: { id, deletedAt: null },
-      include: {
-        _count: {
-          select: {
-            policyZones: true,
-            dailyStats: true,
-            zoneVisitSessions: true,
-          },
-        },
-      },
     });
 
     if (!zone) {

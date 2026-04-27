@@ -105,10 +105,10 @@ export class ControlPoliciesService {
 
     const policy = await this.prisma.controlPolicy.findUnique({
       where: { id: policyId },
-      select: { organizationId: true, targetUnitIds: true },
+      select: { organizationId: true, targetUnitIds: true, deletedAt: true },
     });
 
-    if (!policy || !scopeOrganizationIds.includes(policy.organizationId)) {
+    if (!policy || policy.deletedAt || !scopeOrganizationIds.includes(policy.organizationId)) {
       throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
     }
   }
@@ -149,7 +149,7 @@ export class ControlPoliciesService {
     );
 
     const existingPolicy = await this.prisma.controlPolicy.findFirst({
-      where: { organizationId },
+      where: { organizationId, deletedAt: null },
       select: { id: true },
     });
     if (existingPolicy) {
@@ -235,7 +235,7 @@ export class ControlPoliciesService {
     const { search, organizationId, isActive, page = 1, limit = 20 } = filter;
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    const where: any = { deletedAt: null };
 
     if (search) {
       where.name = { contains: search, mode: 'insensitive' };
@@ -323,6 +323,7 @@ export class ControlPoliciesService {
     const policy = await this.prisma.controlPolicy.findFirst({
       where: {
         id,
+        deletedAt: null,
         ...(scopeOrganizationIds
           ? {
               organizationId: { in: scopeOrganizationIds },
@@ -394,7 +395,7 @@ export class ControlPoliciesService {
     this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
 
     const policies = await this.prisma.controlPolicy.findMany({
-      where: { organizationId },
+      where: { organizationId, deletedAt: null },
       orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }],
       include: {
         organization: { select: { id: true, name: true } },
@@ -416,6 +417,7 @@ export class ControlPoliciesService {
     const policy = await this.prisma.controlPolicy.findFirst({
       where: {
         id,
+        deletedAt: null,
         ...(scopeOrganizationIds
           ? {
               organizationId: { in: scopeOrganizationIds },
@@ -505,6 +507,7 @@ export class ControlPoliciesService {
         where: { id },
         select: {
           organizationId: true,
+          deletedAt: true,
           targetUnitIds: true,
           _count: {
             select: {
@@ -514,7 +517,7 @@ export class ControlPoliciesService {
           },
         },
       });
-      if (!currentPolicy) {
+      if (!currentPolicy || currentPolicy.deletedAt) {
         throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
       }
 
@@ -542,6 +545,7 @@ export class ControlPoliciesService {
           const existingPolicyOnTarget = await tx.controlPolicy.findFirst({
             where: {
               organizationId,
+              deletedAt: null,
               id: { not: id },
             },
             select: { id: true },
@@ -726,10 +730,10 @@ export class ControlPoliciesService {
 
     const policy = await this.prisma.controlPolicy.findUnique({
       where: { id },
-      select: { id: true, organizationId: true },
+      select: { id: true, organizationId: true, deletedAt: true },
     });
 
-    if (!policy) {
+    if (!policy || policy.deletedAt) {
       throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
     }
 
@@ -739,7 +743,13 @@ export class ControlPoliciesService {
       await tx.controlPolicyBehavior.deleteMany({ where: { policyId: id } });
       await tx.controlPolicyAllowedApp.deleteMany({ where: { policyId: id } });
       await tx.controlPolicyEmployee.deleteMany({ where: { policyId: id } });
-      await tx.controlPolicy.delete({ where: { id } });
+      await tx.controlPolicy.update({
+        where: { id },
+        data: {
+          isActive: false,
+          deletedAt: new Date(),
+        },
+      });
     });
 
     await this.notifyPolicyChangedForOrganization({
@@ -763,6 +773,7 @@ export class ControlPoliciesService {
     const targetPolicies = await this.prisma.controlPolicy.findMany({
       where: {
         id: { in: uniquePolicyIds },
+        deletedAt: null,
         ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
       },
       select: { id: true, organizationId: true },
@@ -780,7 +791,13 @@ export class ControlPoliciesService {
       await tx.controlPolicyBehavior.deleteMany({ where: { policyId: { in: targetPolicyIds } } });
       await tx.controlPolicyAllowedApp.deleteMany({ where: { policyId: { in: targetPolicyIds } } });
       await tx.controlPolicyEmployee.deleteMany({ where: { policyId: { in: targetPolicyIds } } });
-      await tx.controlPolicy.deleteMany({ where: { id: { in: targetPolicyIds } } });
+      await tx.controlPolicy.updateMany({
+        where: { id: { in: targetPolicyIds } },
+        data: {
+          isActive: false,
+          deletedAt: new Date(),
+        },
+      });
     });
 
     await this.notifyPoliciesByContext(targetPolicies, 'deactivate');
@@ -807,6 +824,7 @@ export class ControlPoliciesService {
     const targetPolicies = await this.prisma.controlPolicy.findMany({
       where: {
         id: { in: uniquePolicyIds },
+        deletedAt: null,
         ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
       },
       select: {
@@ -843,7 +861,7 @@ export class ControlPoliciesService {
     }
 
     const result = await this.prisma.controlPolicy.updateMany({
-      where: { id: { in: changedTargetPolicyIds } },
+      where: { id: { in: changedTargetPolicyIds }, deletedAt: null },
       data: { isActive },
     });
 
@@ -867,6 +885,7 @@ export class ControlPoliciesService {
       select: {
         id: true,
         isActive: true,
+        deletedAt: true,
         _count: {
           select: {
             zones: true,
@@ -875,7 +894,7 @@ export class ControlPoliciesService {
         },
       },
     });
-    if (!policy) {
+    if (!policy || policy.deletedAt) {
       throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
     }
 
@@ -998,7 +1017,7 @@ export class ControlPoliciesService {
     const trigger = input.trigger ?? 'update';
     const uniquePolicyIds = Array.from(new Set((input.policyIds ?? []).filter(Boolean)));
 
-    const where: any = {};
+    const where: any = { deletedAt: null };
 
     if (trigger !== 'deactivate') {
       where.isActive = true;
@@ -1723,12 +1742,14 @@ export class ControlPoliciesService {
         where: scopeOrganizationIds
           ? {
               organizationId: { in: scopeOrganizationIds },
+              deletedAt: null,
             }
-          : undefined,
+          : { deletedAt: null },
       }),
       this.prisma.controlPolicy.count({
         where: {
           isActive: true,
+          deletedAt: null,
           ...(scopeOrganizationIds
             ? {
                 organizationId: { in: scopeOrganizationIds },
@@ -1741,8 +1762,9 @@ export class ControlPoliciesService {
         where: scopeOrganizationIds
           ? {
               organizationId: { in: scopeOrganizationIds },
+              deletedAt: null,
             }
-          : undefined,
+          : { deletedAt: null },
         _count: { organizationId: true },
       }),
     ]);
@@ -1905,6 +1927,7 @@ export class ControlPoliciesService {
         where: {
           id: { in: uniqueTimePolicyIds },
           organizationId: { in: relationSourceOrganizationIds },
+          deletedAt: null,
         },
       });
       if (timePolicyCount !== uniqueTimePolicyIds.length) {
@@ -1918,6 +1941,7 @@ export class ControlPoliciesService {
         where: {
           id: { in: uniqueBehaviorConditionIds },
           organizationId: { in: relationSourceOrganizationIds },
+          deletedAt: null,
         },
       });
       if (behaviorConditionCount !== uniqueBehaviorConditionIds.length) {
@@ -1931,6 +1955,7 @@ export class ControlPoliciesService {
         where: {
           id: { in: uniquePresetIds },
           organizationId: { in: relationSourceOrganizationIds },
+          deletedAt: null,
         },
       });
       if (presetCount !== uniquePresetIds.length) {

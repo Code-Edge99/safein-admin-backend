@@ -155,7 +155,7 @@ export class TimePoliciesService {
     const { search, organizationId, page = 1, limit = 20 } = filter;
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    const where: any = { deletedAt: null };
 
     if (search) {
       where.name = { contains: search, mode: 'insensitive' };
@@ -194,8 +194,8 @@ export class TimePoliciesService {
   }
 
   async findOne(id: string, scopeOrganizationIds?: string[]): Promise<TimePolicyResponseDto> {
-    const policy = await this.prisma.timePolicy.findUnique({
-      where: { id },
+    const policy = await this.prisma.timePolicy.findFirst({
+      where: { id, deletedAt: null },
       include: {
         organization: {
           select: { id: true, name: true },
@@ -222,6 +222,7 @@ export class TimePoliciesService {
     const policies = await this.prisma.timePolicy.findMany({
       where: {
         organizationId,
+        deletedAt: null,
       },
       include: {
         organization: {
@@ -240,8 +241,8 @@ export class TimePoliciesService {
     scopeOrganizationIds?: string[],
     actorUserId?: string,
   ): Promise<TimePolicyResponseDto> {
-    const currentPolicy = await this.prisma.timePolicy.findUnique({
-      where: { id },
+    const currentPolicy = await this.prisma.timePolicy.findFirst({
+      where: { id, deletedAt: null },
       select: { organizationId: true },
     });
 
@@ -367,8 +368,8 @@ export class TimePoliciesService {
   }
 
   async remove(id: string, scopeOrganizationIds?: string[]): Promise<void> {
-    const policy = await this.prisma.timePolicy.findUnique({
-      where: { id },
+    const policy = await this.prisma.timePolicy.findFirst({
+      where: { id, deletedAt: null },
       include: {
         _count: {
           select: {
@@ -393,7 +394,12 @@ export class TimePoliciesService {
       impactedPolicyIds = impacted.map((item: any) => item.policyId);
 
       await tx.controlPolicyTimePolicy.deleteMany({ where: { timePolicyId: id } });
-      await tx.timePolicy.delete({ where: { id } });
+      await tx.timePolicy.update({
+        where: { id },
+        data: {
+          deletedAt: new Date(),
+        },
+      });
 
       await deactivatePoliciesWithoutConditions(
         tx,
@@ -410,7 +416,7 @@ export class TimePoliciesService {
       include: { excludePeriods: true },
     });
 
-    if (!policy) {
+    if (!policy || policy.deletedAt) {
       return false;
     }
 
@@ -458,11 +464,15 @@ export class TimePoliciesService {
   async getStats(scopeOrganizationIds?: string[]): Promise<TimePolicyStatsDto> {
     const [totalPolicies, byOrgResult] = await Promise.all([
       this.prisma.timePolicy.count({
-        where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
+        where: scopeOrganizationIds
+          ? { organizationId: { in: scopeOrganizationIds }, deletedAt: null }
+          : { deletedAt: null },
       }),
       this.prisma.timePolicy.groupBy({
         by: ['organizationId'],
-        where: scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : undefined,
+        where: scopeOrganizationIds
+          ? { organizationId: { in: scopeOrganizationIds }, deletedAt: null }
+          : { deletedAt: null },
         _count: { organizationId: true },
       }),
     ]);

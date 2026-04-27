@@ -89,7 +89,7 @@ try {
   ensurePrismaProjectReady();
   copyDir(sourcePrismaClientDir, targetPrismaClientDir);
   copyDir(sourceAtPrismaClientDir, targetAtPrismaClientDir);
-  console.log('[setup-prisma-client] Prisma client synced to smombie-admin-backend/node_modules');
+  console.log('[setup-prisma-client] Prisma client synced to safein-admin-backend/node_modules');
 } catch (error) {
   console.error(`[setup-prisma-client] ${error.message}`);
   process.exit(1);

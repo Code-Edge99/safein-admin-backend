@@ -29,17 +29,17 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "prisma:generate": "node -e \"console.error('Use smombie-prisma: npm --prefix ../smombie-prisma run prisma:generate'); process.exit(1)\"",
-    "prisma:migrate": "node -e \"console.error('Use smombie-prisma: npm --prefix ../smombie-prisma run prisma:migrate'); process.exit(1)\"",
-    "prisma:migrate:prod": "node -e \"console.error('Use smombie-prisma: npm --prefix ../smombie-prisma run prisma:migrate:deploy'); process.exit(1)\"",
-    "prisma:studio": "node -e \"console.error('Use smombie-prisma: npm --prefix ../smombie-prisma run prisma:studio'); process.exit(1)\"",
-    "prisma:seed": "node -e \"console.error('Use smombie-prisma: npm --prefix ../smombie-prisma run prisma:seed'); process.exit(1)\"",
-    "db:push": "node -e \"console.error('Use smombie-prisma for schema operations.'); process.exit(1)\"",
-    "db:reset": "node -e \"console.error('Use smombie-prisma for schema operations.'); process.exit(1)\""
+    "prisma:generate": "node -e \"console.error('Use safein-prisma: npm --prefix ../safein-prisma run prisma:generate'); process.exit(1)\"",
+    "prisma:migrate": "node -e \"console.error('Use safein-prisma: npm --prefix ../safein-prisma run prisma:migrate'); process.exit(1)\"",
+    "prisma:migrate:prod": "node -e \"console.error('Use safein-prisma: npm --prefix ../safein-prisma run prisma:migrate:deploy'); process.exit(1)\"",
+    "prisma:studio": "node -e \"console.error('Use safein-prisma: npm --prefix ../safein-prisma run prisma:studio'); process.exit(1)\"",
+    "prisma:seed": "node -e \"console.error('Use safein-prisma: npm --prefix ../safein-prisma run prisma:seed'); process.exit(1)\"",
+    "db:push": "node -e \"console.error('Use safein-prisma for schema operations.'); process.exit(1)\"",
+    "db:reset": "node -e \"console.error('Use safein-prisma for schema operations.'); process.exit(1)\""
   },
   "prisma": {
-    "seed": "node -e \"console.error('Use smombie-prisma: npm --prefix ../smombie-prisma run prisma:seed'); process.exit(1)\"",
-    "schema": "../smombie-prisma/prisma/schema.prisma"
+    "seed": "node -e \"console.error('Use safein-prisma: npm --prefix ../safein-prisma run prisma:seed'); process.exit(1)\"",
+    "schema": "../safein-prisma/prisma/schema.prisma"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.18",
@@ -49,7 +49,7 @@
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.1.18",
     "@nestjs/swagger": "^11.2.6",
-    "@prisma/client": "^5.7.1",
+    "@prisma/client": "^5.22.0",
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.0",
@@ -77,7 +77,7 @@
     "eslint-plugin-prettier": "^5.0.0",
     "jest": "^29.5.0",
     "prettier": "^3.0.0",
-    "prisma": "^5.7.1",
+    "prisma": "^5.22.0",
     "source-map-support": "^0.5.21",
     "supertest": "^7.2.2",
     "ts-jest": "^29.1.0",
