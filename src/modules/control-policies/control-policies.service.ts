@@ -334,17 +334,17 @@ export class ControlPoliciesService {
         organization: { select: { id: true, name: true } },
         zones: {
           include: {
-            zone: { select: { id: true, name: true, type: true } },
+            zone: { select: { id: true, name: true, type: true, organizationId: true } },
           },
         },
         timePolicies: {
           include: {
-            timePolicy: { select: { id: true, name: true } },
+            timePolicy: { select: { id: true, name: true, organizationId: true } },
           },
         },
         behaviors: {
           include: {
-            behaviorCondition: { select: { id: true, name: true } },
+            behaviorCondition: { select: { id: true, name: true, organizationId: true } },
           },
         },
         allowedApps: {
@@ -353,6 +353,7 @@ export class ControlPoliciesService {
               select: {
                 id: true,
                 name: true,
+                organizationId: true,
                 items: {
                   include: {
                     allowedApp: {
@@ -428,17 +429,17 @@ export class ControlPoliciesService {
         organization: { select: { id: true, name: true } },
         zones: {
           include: {
-            zone: { select: { id: true, name: true, type: true } },
+            zone: { select: { id: true, name: true, type: true, organizationId: true } },
           },
         },
         timePolicies: {
           include: {
-            timePolicy: { select: { id: true, name: true } },
+            timePolicy: { select: { id: true, name: true, organizationId: true } },
           },
         },
         behaviors: {
           include: {
-            behaviorCondition: { select: { id: true, name: true } },
+            behaviorCondition: { select: { id: true, name: true, organizationId: true } },
           },
         },
         allowedApps: {
@@ -447,6 +448,7 @@ export class ControlPoliciesService {
               select: {
                 id: true,
                 name: true,
+                organizationId: true,
                 items: {
                   include: {
                     allowedApp: {

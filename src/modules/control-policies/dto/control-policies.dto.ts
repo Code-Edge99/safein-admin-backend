@@ -144,18 +144,19 @@ export class ControlPolicyResponseDto {
   targetOrganizationIds?: string[];
 
   @ApiPropertyOptional({ description: '적용 구역 목록' })
-  zones?: { id: string; name: string; type?: string }[];
+  zones?: { id: string; name: string; type?: string; organizationId?: string }[];
 
   @ApiPropertyOptional({ description: '적용 시간 정책 목록' })
-  timePolicies?: { id: string; name: string }[];
+  timePolicies?: { id: string; name: string; organizationId?: string }[];
 
   @ApiPropertyOptional({ description: '적용 행동 조건 목록' })
-  behaviorConditions?: { id: string; name: string; type?: string }[];
+  behaviorConditions?: { id: string; name: string; type?: string; organizationId?: string }[];
 
   @ApiPropertyOptional({ description: '적용 허용앱 프리셋 목록' })
   allowedAppPresets?: {
     id: string;
     name: string;
+    organizationId?: string;
     apps?: {
       id: string;
       name: string;
@@ -173,18 +174,19 @@ export class ControlPolicyResponseDto {
 
 export class ControlPolicyDetailDto extends ControlPolicyResponseDto {
   @ApiProperty({ description: '적용 구역 목록' })
-  zones: { id: string; name: string; type: string }[];
+  zones: { id: string; name: string; type: string; organizationId?: string }[];
 
   @ApiProperty({ description: '적용 시간 정책 목록' })
-  timePolicies: { id: string; name: string }[];
+  timePolicies: { id: string; name: string; organizationId?: string }[];
 
   @ApiProperty({ description: '적용 행동 조건 목록' })
-  behaviorConditions: { id: string; name: string; type: string }[];
+  behaviorConditions: { id: string; name: string; type: string; organizationId?: string }[];
 
   @ApiProperty({ description: '적용 허용앱 프리셋 목록' })
   allowedAppPresets: {
     id: string;
     name: string;
+    organizationId?: string;
     apps?: {
       id: string;
       name: string;
