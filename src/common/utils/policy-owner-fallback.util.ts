@@ -105,9 +105,7 @@ export function selectPreferredOwnerScopedPolicies<T extends PolicyScopeCandidat
     }
 
     const eligiblePolicies = ownerPolicies.filter((policy) => hasRequiredPolicyConditions(policy));
-    if (eligiblePolicies.length > 0) {
-      return eligiblePolicies;
-    }
+    return eligiblePolicies;
   }
 
   return [];
