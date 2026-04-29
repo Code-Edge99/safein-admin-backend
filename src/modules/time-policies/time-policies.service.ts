@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException 
 import { AppLanguage, AuditAction, TranslatableEntityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
-import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertCompanyOrGroupOrganization } from '../../common/utils/organization-scope.util';
+import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertConditionOwnerOrganization } from '../../common/utils/organization-scope.util';
 import { ContentTranslationService } from '@/common/translation/translation.service';
 import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toTimePolicyResponseDto } from './time-policies.mapper';
@@ -102,7 +102,7 @@ export class TimePoliciesService {
       throw new BadRequestException('현장을 찾을 수 없습니다.');
     }
 
-    await assertCompanyOrGroupOrganization(this.prisma, organizationId);
+    await assertConditionOwnerOrganization(this.prisma, organizationId);
 
     const normalizedSlot = this.resolvePrimaryTimeSlot(createTimePolicyDto);
     if (!normalizedSlot) {
@@ -284,7 +284,7 @@ export class TimePoliciesService {
       throw new BadRequestException('현장을 찾을 수 없습니다.');
     }
 
-    await assertCompanyOrGroupOrganization(this.prisma, targetOrganizationId);
+    await assertConditionOwnerOrganization(this.prisma, targetOrganizationId);
 
     const normalizedSlot = this.resolvePrimaryTimeSlot({
       timeSlots,

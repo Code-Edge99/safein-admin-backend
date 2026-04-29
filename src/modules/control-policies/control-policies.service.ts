@@ -11,7 +11,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ContentTranslationService } from '@/common/translation/translation.service';
 import {
   ensureOrganizationInScope,
-  assertCompanyOrGroupOrganization,
+  assertPolicyOwnerOrganization,
   resolveOrganizationClassification,
 } from '../../common/utils/organization-scope.util';
 import { resolveEmployeePrimaryIds } from '../../common/utils/employee-identifier.util';
@@ -140,9 +140,9 @@ export class ControlPoliciesService {
       throw new BadRequestException('현장을 찾을 수 없습니다.');
     }
 
-    await assertCompanyOrGroupOrganization(this.prisma, organizationId);
+    await assertPolicyOwnerOrganization(this.prisma, organizationId);
 
-    const resolvedTargetUnitIds = await this.resolveTargetUnitIds(
+    const resolvedTargetUnitIds = await this.resolvePersistedTargetUnitIds(
       this.prisma,
       organizationId,
       targetOrganizationIds,
@@ -153,7 +153,7 @@ export class ControlPoliciesService {
       select: { id: true },
     });
     if (existingPolicy) {
-      throw new BadRequestException('정책 소유 현장(회사/그룹)당 통제 정책은 1개만 생성할 수 있습니다. 기존 정책을 수정해주세요.');
+      throw new BadRequestException('정책 소유 현장(회사/그룹/팀)당 통제 정책은 1개만 생성할 수 있습니다. 기존 정책을 수정해주세요.');
     }
 
     await this.validatePolicyRelations(this.prisma, organizationId, {
@@ -531,7 +531,7 @@ export class ControlPoliciesService {
             if (scopeOrganizationIds && !scopeOrganizationIds.includes(targetOrganizationId)) {
               throw new ForbiddenException('요청한 현장은 접근 권한 범위를 벗어났습니다.');
             }
-      await assertCompanyOrGroupOrganization(tx, targetOrganizationId);
+      await assertPolicyOwnerOrganization(tx, targetOrganizationId);
 
       const organizationChanged =
         organizationId !== undefined && organizationId !== currentPolicy.organizationId;
@@ -539,7 +539,7 @@ export class ControlPoliciesService {
       if (organizationId) {
         const org = await tx.organization.findUnique({ where: { id: organizationId } });
         if (!org) throw new BadRequestException('현장을 찾을 수 없습니다.');
-        await assertCompanyOrGroupOrganization(tx, organizationId);
+        await assertPolicyOwnerOrganization(tx, organizationId);
 
         if (organizationChanged) {
           const existingPolicyOnTarget = await tx.controlPolicy.findFirst({
@@ -551,14 +551,14 @@ export class ControlPoliciesService {
             select: { id: true },
           });
           if (existingPolicyOnTarget) {
-            throw new BadRequestException('이동 대상 현장에는 이미 통제 정책이 있습니다. 회사/그룹당 1개 정책만 허용됩니다.');
+            throw new BadRequestException('이동 대상 현장에는 이미 통제 정책이 있습니다. 회사/그룹/팀당 1개 정책만 허용됩니다.');
           }
         }
 
         updateData.organizationId = organizationId;
       }
 
-      const resolvedTargetUnitIds = await this.resolveTargetUnitIds(
+      const resolvedTargetUnitIds = await this.resolvePersistedTargetUnitIds(
         tx,
         targetOrganizationId,
         targetOrganizationIds,
@@ -659,12 +659,18 @@ export class ControlPoliciesService {
       }
 
       if (employeeIds === undefined) {
+        const effectiveTargetUnitIds = await this.resolveEffectiveTargetUnitIds(
+          tx,
+          targetOrganizationId,
+          resolvedTargetUnitIds,
+        );
+
         // 정책 현장과 맞지 않는 개별 대상 직원 할당은 항상 정리
         await tx.controlPolicyEmployee.deleteMany({
           where: {
             policyId: id,
             employee: {
-              organizationId: { notIn: resolvedTargetUnitIds },
+              organizationId: { notIn: effectiveTargetUnitIds },
             },
           },
         });
@@ -1904,7 +1910,7 @@ export class ControlPoliciesService {
       employeeIds,
       targetOrganizationIds,
     } = relationIds;
-    const targetUnitIds = this.normalizeIds(targetOrganizationIds);
+    const targetUnitIds = await this.resolveEffectiveTargetUnitIds(tx, organizationId, targetOrganizationIds);
     const relationSourceOrganizationIds = await this.resolveRelationSourceOrganizationIds(tx, organizationId);
 
     const uniqueZoneIds = this.normalizeIds(zoneIds);
@@ -1917,7 +1923,7 @@ export class ControlPoliciesService {
         },
       });
       if (zoneCount !== uniqueZoneIds.length) {
-        throw new BadRequestException('구역 ID가 유효하지 않거나 정책 소유 범위(그룹/회사)와 일치하지 않습니다.');
+        throw new BadRequestException('구역 ID가 유효하지 않거나 정책 소유 범위와 일치하지 않습니다.');
       }
     }
 
@@ -1931,7 +1937,7 @@ export class ControlPoliciesService {
         },
       });
       if (timePolicyCount !== uniqueTimePolicyIds.length) {
-        throw new BadRequestException('시간 정책 ID가 유효하지 않거나 정책 소유 범위(그룹/회사)와 일치하지 않습니다.');
+        throw new BadRequestException('시간 정책 ID가 유효하지 않거나 정책 소유 범위와 일치하지 않습니다.');
       }
     }
 
@@ -1945,7 +1951,7 @@ export class ControlPoliciesService {
         },
       });
       if (behaviorConditionCount !== uniqueBehaviorConditionIds.length) {
-        throw new BadRequestException('행동 조건 ID가 유효하지 않거나 정책 소유 범위(그룹/회사)와 일치하지 않습니다.');
+        throw new BadRequestException('행동 조건 ID가 유효하지 않거나 정책 소유 범위와 일치하지 않습니다.');
       }
     }
 
@@ -1959,7 +1965,7 @@ export class ControlPoliciesService {
         },
       });
       if (presetCount !== uniquePresetIds.length) {
-        throw new BadRequestException('허용앱 프리셋 ID가 유효하지 않거나 정책 소유 범위(그룹/회사)와 일치하지 않습니다.');
+        throw new BadRequestException('허용앱 프리셋 ID가 유효하지 않거나 정책 소유 범위와 일치하지 않습니다.');
       }
     }
 
@@ -1971,7 +1977,7 @@ export class ControlPoliciesService {
 
     if (uniqueEmployeeIds.length > 0) {
       if (targetUnitIds.length === 0) {
-        throw new BadRequestException('직원 개별 지정 시 적용 단위를 먼저 선택해주세요.');
+        throw new BadRequestException('직원 개별 지정 시 적용 팀 범위를 먼저 선택해주세요.');
       }
 
       const employeeCount = await tx.employee.count({
@@ -1993,47 +1999,101 @@ export class ControlPoliciesService {
       throw new NotFoundException('현장을 찾을 수 없습니다.');
     }
 
-    const ids = new Set<string>([organizationId]);
-    const ownerClassification = resolveOrganizationClassification(owner);
-    if (ownerClassification !== 'GROUP') {
-      return Array.from(ids);
-    }
-
-    if (!owner.parentId) {
-      return Array.from(ids);
-    }
-
-    const parent = await tx.organization.findUnique({
-      where: { id: owner.parentId },
+    const organizationById = new Map<string, { id: string; parentId: string | null; teamCode: string | null }>();
+    const organizations = await tx.organization.findMany({
+      where: { deletedAt: null },
       select: { id: true, parentId: true, teamCode: true },
     });
 
-    if (parent && resolveOrganizationClassification(parent) === 'COMPANY') {
-      ids.add(parent.id);
+    organizations.forEach((organization: { id: string; parentId: string | null; teamCode: string | null }) => {
+      organizationById.set(organization.id, organization);
+    });
+
+    const ids = new Set<string>([organizationId]);
+    let currentParentId = owner.parentId;
+
+    while (currentParentId) {
+      const currentParent = organizationById.get(currentParentId);
+      if (!currentParent) {
+        break;
+      }
+
+      const classification = resolveOrganizationClassification(currentParent);
+      if (classification === 'GROUP' || classification === 'COMPANY') {
+        ids.add(currentParent.id);
+      }
+
+      currentParentId = currentParent.parentId;
     }
 
     return Array.from(ids);
   }
 
-  private async resolveTargetUnitIds(
+  private async resolvePersistedTargetUnitIds(
     tx: any,
-    groupOrganizationId: string,
+    ownerOrganizationId: string,
     requestedTargetOrganizationIds?: string[],
   ): Promise<string[]> {
-    const availableUnitIds = await this.getDescendantUnitOrganizationIds(tx, groupOrganizationId);
-    const availableUnitSet = new Set(availableUnitIds);
+    const owner = await tx.organization.findUnique({
+      where: { id: ownerOrganizationId },
+      select: { id: true, parentId: true, teamCode: true },
+    });
+
+    if (!owner) {
+      throw new NotFoundException('현장을 찾을 수 없습니다.');
+    }
 
     const requested = this.normalizeIds(requestedTargetOrganizationIds);
+    const ownerClassification = resolveOrganizationClassification(owner);
+
+    if (ownerClassification === 'UNIT') {
+      const invalidTargetIds = requested.filter((id) => id !== owner.id);
+      if (invalidTargetIds.length > 0) {
+        throw new BadRequestException('팀 정책은 다른 적용 대상 팀을 지정할 수 없습니다.');
+      }
+
+      return [];
+    }
+
+    const availableUnitIds = await this.getDescendantUnitOrganizationIds(tx, ownerOrganizationId);
+    const availableUnitSet = new Set(availableUnitIds);
+
     if (requested.length === 0) {
       return availableUnitIds;
     }
 
     const invalidTargetIds = requested.filter((id) => !availableUnitSet.has(id));
     if (invalidTargetIds.length > 0) {
-      throw new BadRequestException('적용 대상 단위가 유효하지 않거나 선택한 그룹 하위가 아닙니다.');
+      throw new BadRequestException('적용 대상 팀이 유효하지 않거나 선택한 정책 소유 현장 하위가 아닙니다.');
     }
 
     return requested;
+  }
+
+  private async resolveEffectiveTargetUnitIds(
+    tx: any,
+    ownerOrganizationId: string,
+    configuredTargetUnitIds?: string[],
+  ): Promise<string[]> {
+    const owner = await tx.organization.findUnique({
+      where: { id: ownerOrganizationId },
+      select: { id: true, parentId: true, teamCode: true },
+    });
+
+    if (!owner) {
+      throw new NotFoundException('현장을 찾을 수 없습니다.');
+    }
+
+    if (resolveOrganizationClassification(owner) === 'UNIT') {
+      return [owner.id];
+    }
+
+    const normalizedConfigured = this.normalizeIds(configuredTargetUnitIds);
+    if (normalizedConfigured.length > 0) {
+      return normalizedConfigured;
+    }
+
+    return this.getDescendantUnitOrganizationIds(tx, ownerOrganizationId);
   }
 
   private async getDescendantUnitOrganizationIds(tx: any, groupOrganizationId: string): Promise<string[]> {

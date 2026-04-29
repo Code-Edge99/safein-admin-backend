@@ -120,6 +120,44 @@ export async function assertCompanyOrGroupOrganization(
   }
 }
 
+export async function assertPolicyOwnerOrganization(
+  prisma: { organization: { findUnique: (args: any) => Promise<any> } },
+  organizationId: string,
+): Promise<void> {
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { id: true, parentId: true, teamCode: true },
+  });
+
+  if (!organization) {
+    throw new NotFoundException('현장을 찾을 수 없습니다.');
+  }
+
+  const classification = resolveOrganizationClassification(organization);
+  if (classification !== 'COMPANY' && classification !== 'GROUP' && classification !== 'UNIT') {
+    throw new BadRequestException('정책은 회사, 그룹 또는 팀 현장에서만 관리할 수 있습니다.');
+  }
+}
+
+export async function assertConditionOwnerOrganization(
+  prisma: { organization: { findUnique: (args: any) => Promise<any> } },
+  organizationId: string,
+): Promise<void> {
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { id: true, parentId: true, teamCode: true },
+  });
+
+  if (!organization) {
+    throw new NotFoundException('현장을 찾을 수 없습니다.');
+  }
+
+  const classification = resolveOrganizationClassification(organization);
+  if (classification !== 'COMPANY' && classification !== 'GROUP' && classification !== 'UNIT') {
+    throw new BadRequestException('조건은 회사, 그룹 또는 팀 현장에서만 관리할 수 있습니다.');
+  }
+}
+
 export async function assertUnitOrganization(
   prisma: {
     organization: {

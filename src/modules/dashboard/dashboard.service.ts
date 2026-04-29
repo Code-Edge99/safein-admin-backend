@@ -16,6 +16,7 @@ import { findEmployeeByIdentifier, resolveEmployeePrimaryId } from '../../common
 import { buildSiteReportItem, SiteReportTrendPoint } from './dashboard.mapper';
 import { ReaggregateDayDto } from './dto/reaggregate-day.dto';
 import { ReportMetricSettingsService, type ReportMetricSettingsValues } from '../report-metric-settings/report-metric-settings.service';
+import { resolvePolicyOwnerFallbackIds, selectPreferredOwnerScopedPolicies } from '../../common/utils/policy-owner-fallback.util';
 
 @Injectable()
 export class DashboardService {
@@ -95,23 +96,17 @@ export class DashboardService {
     return null;
   }
 
-  private async getSelfAndAncestorOrganizationIds(organizationId: string): Promise<string[]> {
+  private async getPolicySourceOrganizationIds(organizationId: string): Promise<string[]> {
     const organizations = await this.prisma.organization.findMany({
-      select: { id: true, parentId: true },
+      where: { deletedAt: null },
+      select: { id: true, parentId: true, teamCode: true },
     });
 
-    const organizationMap = new Map<string, { id: string; parentId: string | null }>(
+    const organizationMap = new Map<string, { id: string; parentId: string | null; teamCode: string | null }>(
       organizations.map((organization) => [organization.id, organization]),
     );
 
-    const result: string[] = [];
-    let currentId: string | null = organizationId;
-    while (currentId) {
-      result.push(currentId);
-      currentId = organizationMap.get(currentId)?.parentId ?? null;
-    }
-
-    return result;
+    return resolvePolicyOwnerFallbackIds(organizationId, organizationMap);
   }
 
   private summarizeBlockedApps<T extends { employeeId?: string | null; packageName?: string | null; appName?: string | null; type?: string | null; action?: string | null }>(
@@ -1347,7 +1342,7 @@ export class DashboardService {
 
     this.ensureOrganizationInScope(employee.organizationId, scopeOrganizationIds);
 
-    const policySourceOrganizationIds = await this.getSelfAndAncestorOrganizationIds(employee.organizationId);
+    const policySourceOrganizationIds = await this.getPolicySourceOrganizationIds(employee.organizationId);
 
     const now = new Date();
     const startDate30 = getKstDaysAgoStart(30, now);
@@ -1828,8 +1823,13 @@ export class DashboardService {
     // Also find organization-level policies (not individually assigned)
     const orgPolicies = await this.prisma.controlPolicy.findMany({
       where: {
+        deletedAt: null,
         organizationId: { in: candidateOrganizationIds },
         isActive: true,
+        OR: [
+          { targetUnitIds: { has: organizationId } },
+          { targetUnitIds: { isEmpty: true } },
+        ],
       },
       include: {
         zones: {
@@ -1854,10 +1854,17 @@ export class DashboardService {
       },
     });
 
+    const effectiveOrgPolicies = selectPreferredOwnerScopedPolicies(
+      orgPolicies,
+      candidateOrganizationIds,
+      organizationId,
+      { requireRequiredConditions: true },
+    );
+
     const assignedPolicyIds = new Set(assignedPolicies.map((item) => item.policyId));
     const mergedPolicies = [
       ...(assignedPolicies as Array<{ policy: any }>).map((item) => item.policy),
-      ...orgPolicies,
+      ...effectiveOrgPolicies,
     ];
 
     const uniquePolicies = Array.from(new Map(mergedPolicies.map((policy: any) => [policy.id, policy])).values());
