@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException 
 import { AppLanguage, AuditAction, TranslatableEntityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
-import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertConditionOwnerOrganization } from '../../common/utils/organization-scope.util';
+import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertConditionOwnerOrganization, resolvePolicySourceOrganizationIds } from '../../common/utils/organization-scope.util';
 import { ContentTranslationService } from '@/common/translation/translation.service';
 import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toBehaviorConditionResponseDto } from './behavior-conditions.mapper';
@@ -117,6 +117,7 @@ export class BehaviorConditionsService {
     const {
       search,
       organizationId,
+      includePolicySourceOrganizations,
       enableDistanceCondition,
       enableStepsCondition,
       enableSpeedCondition,
@@ -145,7 +146,9 @@ export class BehaviorConditionsService {
 
     if (organizationId) {
       this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
-      where.organizationId = organizationId;
+      where.organizationId = includePolicySourceOrganizations
+        ? { in: await resolvePolicySourceOrganizationIds(this.prisma, organizationId) }
+        : organizationId;
     } else if (scopeOrganizationIds) {
       where.organizationId = { in: scopeOrganizationIds };
     }

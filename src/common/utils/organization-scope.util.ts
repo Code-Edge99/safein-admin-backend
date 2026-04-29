@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { AdminRole } from '@prisma/client';
+import { resolvePolicyOwnerFallbackIds } from './policy-owner-fallback.util';
 import type { AdminActorType } from '../types/admin-actor-type';
 
 export const CODEEDGE_ROOT_ORGANIZATION_ID = 'org-codeedge';
@@ -156,6 +157,26 @@ export async function assertConditionOwnerOrganization(
   if (classification !== 'COMPANY' && classification !== 'GROUP' && classification !== 'UNIT') {
     throw new BadRequestException('조건은 회사, 그룹 또는 팀 현장에서만 관리할 수 있습니다.');
   }
+}
+
+export async function resolvePolicySourceOrganizationIds(
+  prisma: {
+    organization: {
+      findMany: (args: any) => Promise<Array<{ id: string; parentId: string | null; teamCode: string | null }>>;
+    };
+  },
+  organizationId: string,
+): Promise<string[]> {
+  const organizations = await prisma.organization.findMany({
+    where: { deletedAt: null },
+    select: { id: true, parentId: true, teamCode: true },
+  });
+
+  const organizationsById = new Map(
+    organizations.map((organization) => [organization.id, organization] as const),
+  );
+
+  return resolvePolicyOwnerFallbackIds(organizationId, organizationsById);
 }
 
 export async function assertUnitOrganization(

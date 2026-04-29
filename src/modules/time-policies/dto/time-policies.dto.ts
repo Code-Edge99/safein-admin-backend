@@ -201,6 +201,11 @@ export class TimePolicyFilterDto {
   @IsOptional()
   organizationId?: string;
 
+  @ApiPropertyOptional({ description: '정책 생성용 상위 owner 현장(회사/그룹/팀)까지 함께 포함할지 여부' })
+  @IsOptional()
+  @Type(() => Boolean)
+  includePolicySourceOrganizations?: boolean;
+
   @ApiPropertyOptional({ description: '페이지 번호', default: 1 })
   @IsNumber()
   @IsOptional()

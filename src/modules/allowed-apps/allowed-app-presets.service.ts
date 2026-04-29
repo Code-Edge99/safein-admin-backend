@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException 
 import { AppLanguage, AuditAction, TranslatableEntityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
-import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertConditionOwnerOrganization } from '../../common/utils/organization-scope.util';
+import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertConditionOwnerOrganization, resolvePolicySourceOrganizationIds } from '../../common/utils/organization-scope.util';
 import { ContentTranslationService } from '@/common/translation/translation.service';
 import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toAllowedAppPresetDetailDto, toAllowedAppPresetResponseDto } from './allowed-app-presets.mapper';
@@ -196,7 +196,9 @@ export class AllowedAppPresetsService {
 
     if (filter.organizationId) {
       this.ensureOrganizationInScope(filter.organizationId, scopeOrganizationIds);
-      where.organizationId = filter.organizationId;
+      where.organizationId = filter.includePolicySourceOrganizations
+        ? { in: await resolvePolicySourceOrganizationIds(this.prisma, filter.organizationId) }
+        : filter.organizationId;
     } else if (scopeOrganizationIds) {
       where.organizationId = { in: scopeOrganizationIds };
     }

@@ -3,7 +3,7 @@ import { AppLanguage, AuditAction, TranslatableEntityType } from '@prisma/client
 import { PrismaService } from '../../prisma/prisma.service';
 import { preferKstTimestamp } from '../../common/utils/kst-time.util';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
-import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertConditionOwnerOrganization } from '../../common/utils/organization-scope.util';
+import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertConditionOwnerOrganization, resolvePolicySourceOrganizationIds } from '../../common/utils/organization-scope.util';
 import { ContentTranslationService } from '@/common/translation/translation.service';
 import { ControlPoliciesService } from '../control-policies/control-policies.service';
 import { toZoneResponseDto } from './zones.mapper';
@@ -114,7 +114,7 @@ export class ZonesService {
   }
 
   async findAll(filter: ZoneFilterDto, scopeOrganizationIds?: string[]): Promise<ZoneListResponseDto> {
-    const { search, type, organizationId, page = 1, limit = 20 } = filter;
+    const { search, type, organizationId, includePolicySourceOrganizations, page = 1, limit = 20 } = filter;
     const skip = (page - 1) * limit;
 
     const where: any = { deletedAt: null };
@@ -129,7 +129,9 @@ export class ZonesService {
 
     if (organizationId) {
       this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
-      where.organizationId = organizationId;
+      where.organizationId = includePolicySourceOrganizations
+        ? { in: await resolvePolicySourceOrganizationIds(this.prisma, organizationId) }
+        : organizationId;
     } else if (scopeOrganizationIds) {
       where.organizationId = { in: scopeOrganizationIds };
     }
