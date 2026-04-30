@@ -81,8 +81,8 @@ NCP_MAPS_API_KEY=your-ncp-client-secret
 SYSTEM_LOG_PERSIST_ENABLED=true
 SYSTEM_LOG_PERSIST_LEVELS=error,warn,log
 
-# 개발용 Slack 로그 전송 (현재 dev 에서만 동작)
-SLACK_LOG_ENABLED_DEV=true
+# Slack 로그 전송 (stage별 설정)
+SLACK_LOG_ENABLED_DEV=false
 SLACK_LOG_WEBHOOK_URL_DEV=https://hooks.slack.com/services/...
 # 또는 bot token + 채널 ID 조합
 SLACK_LOG_TOKEN_DEV=xoxb-bot-token
@@ -90,14 +90,19 @@ SLACK_LOG_CHANNEL_DEV=세이프인-어드민-백엔드-로그
 SLACK_LOG_LEVELS_DEV=log,warn,error
 SLACK_LOG_FLUSH_INTERVAL_MS_DEV=3000
 SLACK_LOG_BATCH_SIZE_DEV=10
+
+SLACK_LOG_ENABLED_PROD=false
+SLACK_LOG_TOKEN_PROD=xoxb-bot-token
+SLACK_LOG_CHANNEL_PROD=C0B005FETAM
+SLACK_LOG_LEVELS_PROD=error
 ```
 
 주의:
 - `APP_STAGE`는 `dev` 또는 `prod`만 의미 있게 처리됩니다.
 - `CORS_ORIGIN`에 `*`와 명시 도메인을 함께 넣으면 서버가 에러로 종료됩니다.
-- Slack 로그 전송은 dev에서만 활성화됩니다. 채널 이름 대신 채널 ID를 넣어도 됩니다.
+- Slack 로그 전송은 `SLACK_LOG_ENABLED_<STAGE>` 값이 `true`인 stage에서 활성화됩니다. 채널 이름 대신 채널 ID를 넣어도 됩니다.
 - Slack token 방식은 `chat:write:bot` scope가 있는 `xoxb` bot token이어야 하며, `xoxe` 사용자 토큰만으로는 전송되지 않을 수 있습니다.
-- Incoming webhook URL을 쓰면 `SLACK_LOG_WEBHOOK_URL_DEV`만으로 채널별 전송이 가능합니다.
+- Incoming webhook URL을 쓰면 `SLACK_LOG_WEBHOOK_URL_<STAGE>`만으로도 전송할 수 있으며, 이 경우 같은 stage의 `SLACK_LOG_CHANNEL_<STAGE>`는 사용하지 않습니다.
 
 ### 3) 서버 설치/실행
 ```bash

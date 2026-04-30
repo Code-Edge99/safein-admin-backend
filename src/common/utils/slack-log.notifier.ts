@@ -1,6 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import { request as httpsRequest } from 'node:https';
-import { readStageConfig, resolveRuntimeStage } from '../config/stage.config';
+import { readStageConfig } from '../config/stage.config';
 
 type SlackLogLevel = 'log' | 'warn' | 'error' | 'debug' | 'verbose';
 
@@ -486,10 +486,8 @@ export function createSlackLogNotifierFromConfig(
   configService: ConfigService,
   source: string,
 ): SlackLogNotifier {
-  const runtimeStage = resolveRuntimeStage(configService);
-
   return new SlackLogNotifier({
-    enabled: runtimeStage === 'dev' && parseBoolean(
+    enabled: parseBoolean(
       readStageConfig(configService, 'SLACK_LOG_ENABLED', { dev: 'false', prod: 'false' }),
       false,
     ),
