@@ -63,8 +63,8 @@ JWT_REFRESH_ABSOLUTE_EXPIRATION=30d
 CORS_ORIGIN_DEV=http://localhost:5173
 CORS_ORIGIN_PROD=https://admin.example.com
 
-APP_BACKEND_BASE_URL_DEV=http://localhost:3100/api/app
-APP_BACKEND_BASE_URL_PROD=https://app-api.example.com/api/app
+APP_BACKEND_BASE_URL_DEV=http://127.0.0.1:3100/api/app
+APP_BACKEND_BASE_URL_PROD=http://127.0.0.1:3100/api/app
 
 # 좌표 암복호화 키(32 bytes 필요: hex/base64/utf8)
 LOCATION_ENCRYPTION_KEY=0123456789abcdef0123456789abcdef
@@ -100,6 +100,7 @@ SLACK_LOG_LEVELS_PROD=error
 주의:
 - `APP_STAGE`는 `dev` 또는 `prod`만 의미 있게 처리됩니다.
 - `CORS_ORIGIN`에 `*`와 명시 도메인을 함께 넣으면 서버가 에러로 종료됩니다.
+- 같은 서버 배포 기준 내부 포트는 `admin-backend=3000`, `app-backend=3100`을 사용합니다.
 - Slack 로그 전송은 `SLACK_LOG_ENABLED_<STAGE>` 값이 `true`인 stage에서 활성화됩니다. 채널 이름 대신 채널 ID를 넣어도 됩니다.
 - Slack token 방식은 `chat:write:bot` scope가 있는 `xoxb` bot token이어야 하며, `xoxe` 사용자 토큰만으로는 전송되지 않을 수 있습니다.
 - Incoming webhook URL을 쓰면 `SLACK_LOG_WEBHOOK_URL_<STAGE>`만으로도 전송할 수 있으며, 이 경우 같은 stage의 `SLACK_LOG_CHANNEL_<STAGE>`는 사용하지 않습니다.
