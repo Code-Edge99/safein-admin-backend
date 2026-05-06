@@ -31,4 +31,3 @@ prisma/migrations/.migration_lock.toml
 
 # Uploaded files
 uploads/**
-.env
