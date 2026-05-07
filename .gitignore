@@ -20,11 +20,6 @@ logs/
 *.log
 npm-debug.log*
 
-# Environment
-.env
-.env.*
-!.env.example
-
 # Testing
 coverage/
 
