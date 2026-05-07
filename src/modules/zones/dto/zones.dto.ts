@@ -9,6 +9,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { PolicyChangeNoticeDto } from '../../../common/dto/policy-change-notice.dto';
 
 export enum ZoneTypeEnum {
   danger = 'danger',
@@ -151,6 +152,9 @@ export class ZoneResponseDto {
 
   @ApiProperty({ description: '수정일시' })
   updatedAt: Date;
+
+  @ApiPropertyOptional({ description: '조건 변경으로 인한 통제 정책 상태 안내', type: PolicyChangeNoticeDto })
+  policyChangeNotice?: PolicyChangeNoticeDto;
 }
 
 export class ZoneFilterDto {

@@ -9,6 +9,7 @@ import {
   IsIn,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { PolicyChangeNoticeDto } from '../../../common/dto/policy-change-notice.dto';
 
 // ============ AllowedApp DTOs ============
 
@@ -241,6 +242,9 @@ export class AllowedAppPresetResponseDto {
 
   @ApiProperty({ description: '수정일시' })
   updatedAt: Date;
+
+  @ApiPropertyOptional({ description: '조건 변경으로 인한 통제 정책 상태 안내', type: PolicyChangeNoticeDto })
+  policyChangeNotice?: PolicyChangeNoticeDto;
 }
 
 export class AllowedAppPresetDetailDto extends AllowedAppPresetResponseDto {

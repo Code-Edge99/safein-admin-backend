@@ -14,6 +14,7 @@ import {
   Matches,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { PolicyChangeNoticeDto } from '../../../common/dto/policy-change-notice.dto';
 
 const TIME_ONLY_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
@@ -188,6 +189,9 @@ export class TimePolicyResponseDto {
 
   @ApiProperty({ description: '수정일시' })
   updatedAt: Date;
+
+  @ApiPropertyOptional({ description: '조건 변경으로 인한 통제 정책 상태 안내', type: PolicyChangeNoticeDto })
+  policyChangeNotice?: PolicyChangeNoticeDto;
 }
 
 export class TimePolicyFilterDto {

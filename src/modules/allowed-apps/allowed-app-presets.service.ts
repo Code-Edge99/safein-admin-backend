@@ -358,20 +358,26 @@ export class AllowedAppPresetsService {
       description: preset.description ?? '',
     }, preset.updatedAt);
 
-    const detachedPolicyIds = organizationChanged
+    const detachmentResult = organizationChanged
       ? await this.controlPoliciesService.detachInvalidRelationsForMovedResource('allowedAppPreset', id, targetOrganizationId)
-      : [];
+      : { detachedPolicyIds: [], deactivatedPolicyIds: [] };
     const impactedPolicies = await this.prisma.controlPolicyAllowedApp.findMany({
       where: { presetId: id },
       select: { policyId: true },
     });
-    await this.controlPoliciesService.notifyPoliciesChanged(
-      Array.from(new Set([
-        ...detachedPolicyIds,
-        ...impactedPolicies.map((item) => item.policyId),
-      ])),
-      'update',
-    );
+    const deactivatedPolicyIdSet = new Set(detachmentResult.deactivatedPolicyIds);
+    const updatePolicyIds = Array.from(new Set([
+      ...detachmentResult.detachedPolicyIds,
+      ...impactedPolicies.map((item) => item.policyId),
+    ])).filter((policyId) => !deactivatedPolicyIdSet.has(policyId));
+
+    if (updatePolicyIds.length > 0) {
+      await this.controlPoliciesService.notifyPoliciesChanged(updatePolicyIds, 'update');
+    }
+
+    if (detachmentResult.deactivatedPolicyIds.length > 0) {
+      await this.controlPoliciesService.notifyPoliciesChanged(detachmentResult.deactivatedPolicyIds, 'deactivate');
+    }
 
     if (actorUserId) {
       void this.prisma.auditLog.create({

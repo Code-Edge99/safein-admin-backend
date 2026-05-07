@@ -8,6 +8,7 @@ import {
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { PolicyChangeNoticeDto } from '../../../common/dto/policy-change-notice.dto';
 
 export class CreateBehaviorConditionDto {
   @ApiProperty({ description: '조건명' })
@@ -104,6 +105,9 @@ export class BehaviorConditionResponseDto {
 
   @ApiProperty({ description: '수정일시' })
   updatedAt: Date;
+
+  @ApiPropertyOptional({ description: '조건 변경으로 인한 통제 정책 상태 안내', type: PolicyChangeNoticeDto })
+  policyChangeNotice?: PolicyChangeNoticeDto;
 }
 
 export class BehaviorConditionFilterDto {

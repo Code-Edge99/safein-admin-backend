@@ -47,6 +47,11 @@ type PolicyPushTarget = {
 
 type PolicyRelationResourceType = 'zone' | 'timePolicy' | 'behaviorCondition' | 'allowedAppPreset';
 
+type MovedResourceDetachResult = {
+  detachedPolicyIds: string[];
+  deactivatedPolicyIds: string[];
+};
+
 @Injectable()
 export class ControlPoliciesService {
   private readonly logger = new Logger(ControlPoliciesService.name);
@@ -992,7 +997,7 @@ export class ControlPoliciesService {
     resourceType: PolicyRelationResourceType,
     resourceId: string,
     targetOrganizationId: string,
-  ): Promise<string[]> {
+  ): Promise<MovedResourceDetachResult> {
     return this.prisma.$transaction((tx) => (
       this.detachInvalidRelationsForMovedResourceTx(tx, resourceType, resourceId, targetOrganizationId)
     ));
@@ -1032,10 +1037,13 @@ export class ControlPoliciesService {
     resourceType: PolicyRelationResourceType,
     resourceId: string,
     targetOrganizationId: string,
-  ): Promise<string[]> {
+  ): Promise<MovedResourceDetachResult> {
     const relations = await this.findPolicyRelationsByMovedResource(tx, resourceType, resourceId);
     if (relations.length === 0) {
-      return [];
+      return {
+        detachedPolicyIds: [],
+        deactivatedPolicyIds: [],
+      };
     }
 
     const organizations = await tx.organization.findMany({
@@ -1059,8 +1067,24 @@ export class ControlPoliciesService {
     );
 
     if (invalidPolicyIds.length === 0) {
-      return [];
+      return {
+        detachedPolicyIds: [],
+        deactivatedPolicyIds: [],
+      };
     }
+
+    const policiesBeforeDetach = await tx.controlPolicy.findMany({
+      where: {
+        id: { in: invalidPolicyIds },
+      },
+      select: {
+        id: true,
+        isActive: true,
+      },
+    });
+    const deactivatedPolicyIds = policiesBeforeDetach
+      .filter((policy: { id: string; isActive: boolean }) => policy.isActive)
+      .map((policy: { id: string; isActive: boolean }) => policy.id);
 
     switch (resourceType) {
       case 'zone':
@@ -1096,12 +1120,28 @@ export class ControlPoliciesService {
         });
         break;
       default:
-        return [];
+        return {
+          detachedPolicyIds: [],
+          deactivatedPolicyIds: [],
+        };
+    }
+
+    if (deactivatedPolicyIds.length > 0) {
+      await tx.controlPolicy.updateMany({
+        where: {
+          id: { in: deactivatedPolicyIds },
+          isActive: true,
+        },
+        data: { isActive: false },
+      });
     }
 
     await deactivatePoliciesWithoutConditions(tx, invalidPolicyIds);
 
-    return invalidPolicyIds;
+    return {
+      detachedPolicyIds: invalidPolicyIds,
+      deactivatedPolicyIds,
+    };
   }
 
   private async findPolicyRelationsByMovedResource(
