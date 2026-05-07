@@ -841,9 +841,6 @@ export class OrganizationsService {
         },
       });
       if (parent && !parent.deletedAt) {
-        if (scopeOrganizationIds && !scopeOrganizationIds.includes(parent.id)) {
-          break;
-        }
         ancestors.unshift(this.toResponseDto(parent));
         current = parent;
       } else {

@@ -253,8 +253,9 @@ export class BehaviorConditionsService {
     };
 
     const targetOrganizationId = organizationId === undefined
-      ? current.organization.id
+      ? current.organizationId
       : organizationId;
+    const organizationChanged = targetOrganizationId !== current.organizationId;
 
     if (!targetOrganizationId) {
       throw new BadRequestException('현장을 찾을 수 없습니다.');
@@ -291,12 +292,19 @@ export class BehaviorConditionsService {
       description: condition.description ?? '',
     }, condition.updatedAt);
 
+    const detachedPolicyIds = organizationChanged
+      ? await this.controlPoliciesService.detachInvalidRelationsForMovedResource('behaviorCondition', id, targetOrganizationId)
+      : [];
+
     const impactedPolicies = await this.prisma.controlPolicyBehavior.findMany({
       where: { behaviorConditionId: id },
       select: { policyId: true },
     });
     await this.controlPoliciesService.notifyPoliciesChanged(
-      impactedPolicies.map((item) => item.policyId),
+      Array.from(new Set([
+        ...detachedPolicyIds,
+        ...impactedPolicies.map((item) => item.policyId),
+      ])),
       'update',
     );
 

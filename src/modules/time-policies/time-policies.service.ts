@@ -269,6 +269,7 @@ export class TimePoliciesService {
     const targetOrganizationId = organizationId === undefined
       ? currentPolicy.organizationId
       : organizationId;
+    const organizationChanged = targetOrganizationId !== currentPolicy.organizationId;
 
     if (!targetOrganizationId) {
       throw new BadRequestException('현장을 찾을 수 없습니다.');
@@ -340,12 +341,19 @@ export class TimePoliciesService {
       await this.syncExcludePeriodTranslations(policy.excludePeriods, policy.updatedAt);
     }
 
+    const detachedPolicyIds = organizationChanged
+      ? await this.controlPoliciesService.detachInvalidRelationsForMovedResource('timePolicy', id, targetOrganizationId)
+      : [];
+
     const impactedPolicies = await this.prisma.controlPolicyTimePolicy.findMany({
       where: { timePolicyId: id },
       select: { policyId: true },
     });
     await this.controlPoliciesService.notifyPoliciesChanged(
-      impactedPolicies.map((item) => item.policyId),
+      Array.from(new Set([
+        ...detachedPolicyIds,
+        ...impactedPolicies.map((item) => item.policyId),
+      ])),
       'update',
     );
 

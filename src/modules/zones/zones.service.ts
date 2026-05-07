@@ -239,6 +239,7 @@ export class ZonesService {
     const targetOrganizationId = organizationId === undefined
       ? currentZone.organizationId
       : organizationId;
+    const organizationChanged = targetOrganizationId !== currentZone.organizationId;
 
     if (!targetOrganizationId) {
       throw new BadRequestException('현장을 찾을 수 없습니다.');
@@ -276,12 +277,19 @@ export class ZonesService {
       description: zone.description ?? '',
     }, zone.updatedAt);
 
+    const detachedPolicyIds = organizationChanged
+      ? await this.controlPoliciesService.detachInvalidRelationsForMovedResource('zone', id, targetOrganizationId)
+      : [];
+
     const impactedPolicies = await this.prisma.controlPolicyZone.findMany({
       where: { zoneId: id },
       select: { policyId: true },
     });
     await this.controlPoliciesService.notifyPoliciesChanged(
-      impactedPolicies.map((item) => item.policyId),
+      Array.from(new Set([
+        ...detachedPolicyIds,
+        ...impactedPolicies.map((item) => item.policyId),
+      ])),
       'update',
     );
 

@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { AppLanguage, AuditAction, DeviceOS, EmployeeStatus, Prisma, TranslatableEntityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ContentTranslationService } from '@/common/translation/translation.service';
+import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
 import {
   ensureOrganizationInScope,
   assertPolicyOwnerOrganization,
@@ -43,6 +44,8 @@ type PolicyPushTarget = {
   os: DeviceOS;
   employeeId: string;
 };
+
+type PolicyRelationResourceType = 'zone' | 'timePolicy' | 'behaviorCondition' | 'allowedAppPreset';
 
 @Injectable()
 export class ControlPoliciesService {
@@ -985,6 +988,16 @@ export class ControlPoliciesService {
     }
   }
 
+  async detachInvalidRelationsForMovedResource(
+    resourceType: PolicyRelationResourceType,
+    resourceId: string,
+    targetOrganizationId: string,
+  ): Promise<string[]> {
+    return this.prisma.$transaction((tx) => (
+      this.detachInvalidRelationsForMovedResourceTx(tx, resourceType, resourceId, targetOrganizationId)
+    ));
+  }
+
   private async notifyPoliciesByContext(
     policies: Array<{ id: string; organizationId: string }>,
     trigger: 'create' | 'activate' | 'update' | 'deactivate',
@@ -1012,6 +1025,207 @@ export class ControlPoliciesService {
         }
       });
     }
+  }
+
+  private async detachInvalidRelationsForMovedResourceTx(
+    tx: any,
+    resourceType: PolicyRelationResourceType,
+    resourceId: string,
+    targetOrganizationId: string,
+  ): Promise<string[]> {
+    const relations = await this.findPolicyRelationsByMovedResource(tx, resourceType, resourceId);
+    if (relations.length === 0) {
+      return [];
+    }
+
+    const organizations = await tx.organization.findMany({
+      where: { deletedAt: null },
+      select: { id: true, parentId: true, teamCode: true },
+    });
+    const organizationById = new Map<string, { id: string; parentId: string | null; teamCode: string | null }>(
+      organizations.map((organization: { id: string; parentId: string | null; teamCode: string | null }) => (
+        [organization.id, organization] as const
+      )),
+    );
+
+    const invalidPolicyIds = this.normalizeIds(
+      relations
+        .filter((relation) => !this.isResourceOrganizationAllowedForPolicyOwner(
+          organizationById,
+          relation.policyOrganizationId,
+          targetOrganizationId,
+        ))
+        .map((relation) => relation.policyId),
+    );
+
+    if (invalidPolicyIds.length === 0) {
+      return [];
+    }
+
+    switch (resourceType) {
+      case 'zone':
+        await tx.controlPolicyZone.deleteMany({
+          where: {
+            zoneId: resourceId,
+            policyId: { in: invalidPolicyIds },
+          },
+        });
+        break;
+      case 'timePolicy':
+        await tx.controlPolicyTimePolicy.deleteMany({
+          where: {
+            timePolicyId: resourceId,
+            policyId: { in: invalidPolicyIds },
+          },
+        });
+        break;
+      case 'behaviorCondition':
+        await tx.controlPolicyBehavior.deleteMany({
+          where: {
+            behaviorConditionId: resourceId,
+            policyId: { in: invalidPolicyIds },
+          },
+        });
+        break;
+      case 'allowedAppPreset':
+        await tx.controlPolicyAllowedApp.deleteMany({
+          where: {
+            presetId: resourceId,
+            policyId: { in: invalidPolicyIds },
+          },
+        });
+        break;
+      default:
+        return [];
+    }
+
+    await deactivatePoliciesWithoutConditions(tx, invalidPolicyIds);
+
+    return invalidPolicyIds;
+  }
+
+  private async findPolicyRelationsByMovedResource(
+    tx: any,
+    resourceType: PolicyRelationResourceType,
+    resourceId: string,
+  ): Promise<Array<{ policyId: string; policyOrganizationId: string }>> {
+    switch (resourceType) {
+      case 'zone': {
+        const relations = await tx.controlPolicyZone.findMany({
+          where: { zoneId: resourceId },
+          select: {
+            policyId: true,
+            policy: {
+              select: {
+                organizationId: true,
+                deletedAt: true,
+              },
+            },
+          },
+        });
+        return relations
+          .filter((relation: any) => !relation.policy?.deletedAt)
+          .map((relation: any) => ({
+            policyId: relation.policyId,
+            policyOrganizationId: relation.policy.organizationId,
+          }));
+      }
+      case 'timePolicy': {
+        const relations = await tx.controlPolicyTimePolicy.findMany({
+          where: { timePolicyId: resourceId },
+          select: {
+            policyId: true,
+            policy: {
+              select: {
+                organizationId: true,
+                deletedAt: true,
+              },
+            },
+          },
+        });
+        return relations
+          .filter((relation: any) => !relation.policy?.deletedAt)
+          .map((relation: any) => ({
+            policyId: relation.policyId,
+            policyOrganizationId: relation.policy.organizationId,
+          }));
+      }
+      case 'behaviorCondition': {
+        const relations = await tx.controlPolicyBehavior.findMany({
+          where: { behaviorConditionId: resourceId },
+          select: {
+            policyId: true,
+            policy: {
+              select: {
+                organizationId: true,
+                deletedAt: true,
+              },
+            },
+          },
+        });
+        return relations
+          .filter((relation: any) => !relation.policy?.deletedAt)
+          .map((relation: any) => ({
+            policyId: relation.policyId,
+            policyOrganizationId: relation.policy.organizationId,
+          }));
+      }
+      case 'allowedAppPreset': {
+        const relations = await tx.controlPolicyAllowedApp.findMany({
+          where: { presetId: resourceId },
+          select: {
+            policyId: true,
+            policy: {
+              select: {
+                organizationId: true,
+                deletedAt: true,
+              },
+            },
+          },
+        });
+        return relations
+          .filter((relation: any) => !relation.policy?.deletedAt)
+          .map((relation: any) => ({
+            policyId: relation.policyId,
+            policyOrganizationId: relation.policy.organizationId,
+          }));
+      }
+      default:
+        return [];
+    }
+  }
+
+  private isResourceOrganizationAllowedForPolicyOwner(
+    organizationById: Map<string, { id: string; parentId: string | null; teamCode: string | null }>,
+    policyOrganizationId: string,
+    resourceOrganizationId: string,
+  ): boolean {
+    let current = organizationById.get(policyOrganizationId);
+
+    while (current) {
+      if (current.id === resourceOrganizationId) {
+        return true;
+      }
+
+      const parentId = current.parentId;
+      if (!parentId) {
+        break;
+      }
+
+      const parent = organizationById.get(parentId);
+      if (!parent) {
+        break;
+      }
+
+      const classification = resolveOrganizationClassification(parent);
+      if (classification !== 'GROUP' && classification !== 'COMPANY') {
+        break;
+      }
+
+      current = parent;
+    }
+
+    return false;
   }
 
   async dispatchPolicyChangedByFilter(

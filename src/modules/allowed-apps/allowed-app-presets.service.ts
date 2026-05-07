@@ -284,6 +284,7 @@ export class AllowedAppPresetsService {
     const targetOrganizationId = dto.organizationId === undefined
       ? currentPreset.organizationId
       : dto.organizationId;
+    const organizationChanged = targetOrganizationId !== currentPreset.organizationId;
 
     if (!targetOrganizationId) {
       throw new BadRequestException('현장을 찾을 수 없습니다.');
@@ -357,7 +358,20 @@ export class AllowedAppPresetsService {
       description: preset.description ?? '',
     }, preset.updatedAt);
 
-    await this.notifyPoliciesByPreset(id);
+    const detachedPolicyIds = organizationChanged
+      ? await this.controlPoliciesService.detachInvalidRelationsForMovedResource('allowedAppPreset', id, targetOrganizationId)
+      : [];
+    const impactedPolicies = await this.prisma.controlPolicyAllowedApp.findMany({
+      where: { presetId: id },
+      select: { policyId: true },
+    });
+    await this.controlPoliciesService.notifyPoliciesChanged(
+      Array.from(new Set([
+        ...detachedPolicyIds,
+        ...impactedPolicies.map((item) => item.policyId),
+      ])),
+      'update',
+    );
 
     if (actorUserId) {
       void this.prisma.auditLog.create({
