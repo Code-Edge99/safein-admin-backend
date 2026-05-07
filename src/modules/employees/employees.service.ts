@@ -902,8 +902,8 @@ export class EmployeesService {
     reason: 'ADMIN_DELETE' | 'RESIGNED' | 'SELF_WITHDRAW' | 'STATUS_DELETE' = 'ADMIN_DELETE',
   ): Promise<void> {
     const archiveEmployeeId = this.buildDeletedEmployeeArchiveId(employeeId);
-    const archivePasswordHash = await bcrypt.hash(randomUUID(), 10);
     const now = new Date();
+    const purgeAfterAt = new Date(now.getTime() + EmployeesService.DELETED_RETENTION_DAYS * 24 * 60 * 60 * 1000);
 
     await this.prisma.$transaction(async (tx) => {
       const employeeDevices = await tx.device.findMany({
@@ -918,7 +918,11 @@ export class EmployeesService {
           name: employeeName || '삭제된 직원',
           organizationId,
           status: 'DELETE' as EmployeeStatus,
-          memo: `삭제 아카이브 계정 (원본 직원ID: ${employeeId}) | 사유: ${reason} | 삭제시각: ${now.toISOString()}`,
+          deletedAt: now,
+          purgeAfterAt,
+          deletedReason: reason,
+          originalEmployeeId: employeeId,
+          memo: null,
           phone: null,
           email: null,
           position: null,
@@ -993,7 +997,6 @@ export class EmployeesService {
           data: {
             employeeId: archiveEmployeeId,
             isActive: false,
-            passwordHash: archivePasswordHash,
           },
         });
       }
@@ -1309,12 +1312,22 @@ export class EmployeesService {
     const targetEmployees = await this.prisma.employee.findMany({
       where: {
         status: 'DELETE' as EmployeeStatus,
-        createdAt: { lte: fallbackThreshold },
-        memo: { contains: '삭제 아카이브 계정' },
+        OR: [
+          {
+            originalEmployeeId: { not: null },
+            purgeAfterAt: { lte: now },
+          },
+          {
+            originalEmployeeId: null,
+            purgeAfterAt: null,
+            createdAt: { lte: fallbackThreshold },
+            memo: { contains: '삭제 아카이브 계정' },
+          },
+        ],
         ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
       },
       orderBy: {
-        createdAt: 'asc',
+        purgeAfterAt: 'asc',
       },
       take: limit,
       select: {
@@ -1452,6 +1465,7 @@ export class EmployeesService {
         name: true,
         organizationId: true,
         status: true,
+        originalEmployeeId: true,
         memo: true,
       },
     });
@@ -1509,7 +1523,8 @@ export class EmployeesService {
           name: '하드삭제 사용자',
           organizationId: deletedEmployeeWithOriginalId.organizationId,
           status: 'DELETE' as EmployeeStatus,
-          memo: `통계 보존용 비식별 사용자(원본 아카이브: ${deletedEmployeeWithOriginalId.id}) | 하드삭제시각: ${now.toISOString()}`,
+          deletedAt: now,
+          memo: null,
           phone: null,
           email: null,
           position: null,
@@ -1589,6 +1604,11 @@ export class EmployeesService {
   }
 
   private resolveOriginalEmployeeIdForRestore(employee: any): string | null {
+    const explicitOriginalEmployeeId = String(employee?.originalEmployeeId ?? '').trim();
+    if (explicitOriginalEmployeeId) {
+      return explicitOriginalEmployeeId;
+    }
+
     const memoText = String(employee?.memo ?? '');
     const matched = memoText.match(/원본\s*직원ID\s*:\s*([^\s)]+)/i);
     if (matched?.[1]) {
@@ -1683,14 +1703,35 @@ export class EmployeesService {
     const reason = dto.reason?.trim() || '관리자 요청: 다음 로그인 전까지 정책 미적용';
     const now = new Date();
 
-    await this.prisma.device.update({
-      where: { id: device.id },
-      data: {
-        mdmManualUnblockUntilLogin: true,
-        mdmManualUnblockReason: reason,
-        mdmManualUnblockSetAt: now,
-      },
-    });
+    if (device.os === DeviceOS.iOS) {
+      return this.forceLogoutDeviceUntilNextLogin(
+        employee.id,
+        {
+          deviceId: device.deviceId,
+          reason,
+        },
+        scopeOrganizationIds,
+      );
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.device.update({
+        where: { id: device.id },
+        data: {
+          mdmManualUnblockUntilLogin: true,
+          mdmManualUnblockReason: reason,
+          mdmManualUnblockSetAt: now,
+        },
+      }),
+      this.prisma.deviceToken.updateMany({
+        where: { deviceId: device.id },
+        data: {
+          isValid: false,
+          refreshToken: null,
+          expiresAt: now,
+        },
+      }),
+    ]);
 
     const endpointUrl = `${this.getAppBackendBaseUrl()}/internal/push/fcm/send`;
     const token = device.pushToken?.trim();
@@ -1721,32 +1762,14 @@ export class EmployeesService {
       }
     }
 
-    let mdmDispatched = false;
-    let mdmDispatchError: string | null = null;
-
-    if (device.os === DeviceOS.iOS) {
-      try {
-        await this.callAppBackendSendBlockedAppsAllowAll({
-          deviceId: device.deviceId,
-        });
-        mdmDispatched = true;
-      } catch (error) {
-        mdmDispatchError = String(error);
-        this.logger.warn(
-          `수동 해제 iOS MDM 전체 허용 전송 실패(deviceId=${device.id}, employeeId=${employee.id}): ${mdmDispatchError}`,
-        );
-      }
-    }
-
     return {
       ok: true,
       employeeId: employee.id,
       deviceId: device.deviceId,
       reason,
       policyBypassUntilNextLogin: true,
+      jwtExpired: true,
       pushDispatched,
-      mdmDispatched,
-      ...(mdmDispatchError ? { mdmDispatchError } : {}),
     };
   }
 
@@ -1924,8 +1947,8 @@ export class EmployeesService {
     }
 
     const archiveEmployeeId = this.buildDeletedEmployeeArchiveId(employeeId);
-    const archivePasswordHash = await bcrypt.hash(randomUUID(), 10);
     const now = new Date();
+    const purgeAfterAt = new Date(now.getTime() + EmployeesService.DELETED_RETENTION_DAYS * 24 * 60 * 60 * 1000);
 
     const employeeDevices = await tx.device.findMany({
       where: { employeeId },
@@ -1943,7 +1966,11 @@ export class EmployeesService {
         status: 'DELETE' as EmployeeStatus,
         phone: source.phone,
         email: source.email,
-        memo: [source.memo, reason, `삭제 아카이브 계정 (원본 직원ID: ${employeeId})`].filter(Boolean).join(' | '),
+        deletedAt: now,
+        purgeAfterAt,
+        deletedReason: 'STATUS_DELETE',
+        originalEmployeeId: employeeId,
+        memo: source.memo,
         createdById: source.createdById,
         updatedById: source.updatedById,
         pendingMdmUdid: source.pendingMdmUdid,
@@ -1989,7 +2016,6 @@ export class EmployeesService {
         data: {
           employeeId: archiveEmployeeId,
           isActive: false,
-          passwordHash: archivePasswordHash,
         },
       });
     }
