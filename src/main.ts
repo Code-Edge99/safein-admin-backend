@@ -53,7 +53,7 @@ async function bootstrap() {
   // CORS
   const corsOrigin = readStageConfig(configService, 'CORS_ORIGIN', {
     dev: 'http://localhost:5173',
-    prod: 'http://localhost:5173',
+    prod: 'https://safein.code-edge.com',
   });
   const parsedOrigins = corsOrigin
     .split(',')

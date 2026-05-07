@@ -2036,7 +2036,7 @@ export class EmployeesService {
   private getAppBackendBaseUrl(): string {
     const baseUrl = readStageConfig(this.configService, 'APP_BACKEND_BASE_URL', {
       dev: 'http://localhost:3100/api/app',
-      prod: 'http://localhost:3100/api/app',
+      prod: 'https://safein.code-edge.com/api/app',
     });
     return baseUrl.trim().replace(/\/$/, '');
   }
