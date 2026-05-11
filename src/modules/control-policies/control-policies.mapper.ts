@@ -1,6 +1,6 @@
 import { ControlPolicyDetailDto, ControlPolicyResponseDto } from './dto';
 
-type RequiredConditionCode = 'ZONE' | 'TIME_POLICY';
+type RequiredConditionCode = 'ZONE' | 'TIME_POLICY' | 'BEHAVIOR_OR_ALLOWED_APP';
 
 function resolveRequiredConditionState(policy: any): {
   missingRequiredConditions: RequiredConditionCode[];
@@ -10,6 +10,8 @@ function resolveRequiredConditionState(policy: any): {
 } {
   const zoneCount = policy._count?.zones ?? policy.zones?.length ?? 0;
   const timePolicyCount = policy._count?.timePolicies ?? policy.timePolicies?.length ?? 0;
+  const behaviorConditionCount = policy._count?.behaviors ?? policy.behaviors?.length ?? 0;
+  const allowedAppCount = policy._count?.allowedApps ?? policy.allowedApps?.length ?? 0;
 
   const missingRequiredConditions: RequiredConditionCode[] = [];
   const missingRequiredConditionMessages: string[] = [];
@@ -22,6 +24,11 @@ function resolveRequiredConditionState(policy: any): {
   if (timePolicyCount === 0) {
     missingRequiredConditions.push('TIME_POLICY');
     missingRequiredConditionMessages.push('시간 조건이 누락되었습니다.');
+  }
+
+  if (behaviorConditionCount === 0 && allowedAppCount === 0) {
+    missingRequiredConditions.push('BEHAVIOR_OR_ALLOWED_APP');
+    missingRequiredConditionMessages.push('행동관리 또는 허용앱관리 조건이 누락되었습니다.');
   }
 
   const policyStatus: 'ACTIVE' | 'INACTIVE' | 'REVIEW_REQUIRED' =

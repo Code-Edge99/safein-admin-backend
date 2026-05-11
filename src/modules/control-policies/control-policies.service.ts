@@ -180,10 +180,19 @@ export class ControlPoliciesService {
 
     this.ensureRequiredConditionInputsOnCreate({ zoneIds, timePolicyIds });
 
+    const requestedIsActive = rest.isActive ?? true;
+    const missingRequiredConditionsOnCreate = this.resolveMissingRequiredConditionsFromCounts({
+      zones: this.normalizeIds(zoneIds).length,
+      timePolicies: this.normalizeIds(timePolicyIds).length,
+      behaviors: this.normalizeIds(behaviorConditionIds).length,
+      allowedApps: this.normalizeIds(allowedAppPresetIds).length,
+    });
+
     // Create policy with all relations
     const policy = await this.prisma.controlPolicy.create({
       data: {
         ...rest,
+        isActive: missingRequiredConditionsOnCreate.length === 0 ? requestedIsActive : false,
         organizationId,
         targetUnitIds: resolvedTargetUnitIds,
         createdById: actorUserId,
@@ -523,6 +532,8 @@ export class ControlPoliciesService {
             select: {
               zones: true,
               timePolicies: true,
+              behaviors: true,
+              allowedApps: true,
             },
           },
         },
@@ -535,6 +546,8 @@ export class ControlPoliciesService {
         this.resolveMissingRequiredConditionsFromCounts({
           zones: currentPolicy._count.zones,
           timePolicies: currentPolicy._count.timePolicies,
+          behaviors: currentPolicy._count.behaviors,
+          allowedApps: currentPolicy._count.allowedApps,
         }).length > 0;
 
       const targetOrganizationId = organizationId ?? currentPolicy.organizationId;
@@ -850,6 +863,8 @@ export class ControlPoliciesService {
           select: {
             zones: true,
             timePolicies: true,
+            behaviors: true,
+            allowedApps: true,
           },
         },
       },
@@ -864,6 +879,8 @@ export class ControlPoliciesService {
         return this.resolveMissingRequiredConditionsFromCounts({
           zones: policy._count.zones,
           timePolicies: policy._count.timePolicies,
+          behaviors: policy._count.behaviors,
+          allowedApps: policy._count.allowedApps,
         }).length === 0;
       })
       .map((policy) => policy.id);
@@ -906,6 +923,8 @@ export class ControlPoliciesService {
           select: {
             zones: true,
             timePolicies: true,
+            behaviors: true,
+            allowedApps: true,
           },
         },
       },
@@ -918,11 +937,13 @@ export class ControlPoliciesService {
       const missingRequiredConditions = this.resolveMissingRequiredConditionsFromCounts({
         zones: policy._count.zones,
         timePolicies: policy._count.timePolicies,
+        behaviors: policy._count.behaviors,
+        allowedApps: policy._count.allowedApps,
       });
 
       if (missingRequiredConditions.length > 0) {
         throw new BadRequestException(
-          '시간 조건과 구역 조건이 모두 충족되어야 활성화할 수 있습니다. 정책을 수정해 누락 조건을 해소해주세요.',
+          '시간 조건, 구역 조건, 그리고 행동관리 또는 허용앱관리 중 하나가 충족되어야 활성화할 수 있습니다. 정책을 수정해 누락 조건을 해소해주세요.',
         );
       }
     }
@@ -1778,6 +1799,8 @@ export class ControlPoliciesService {
           select: {
             zones: true,
             timePolicies: true,
+            behaviors: true,
+            allowedApps: true,
           },
         },
       },
@@ -1790,6 +1813,8 @@ export class ControlPoliciesService {
       this.resolveMissingRequiredConditionsFromCounts({
         zones: policy._count.zones,
         timePolicies: policy._count.timePolicies,
+        behaviors: policy._count.behaviors,
+        allowedApps: policy._count.allowedApps,
       }).length > 0;
 
     await this.validatePolicyRelations(this.prisma, policy.organizationId, { zoneIds });
@@ -1827,6 +1852,8 @@ export class ControlPoliciesService {
           select: {
             zones: true,
             timePolicies: true,
+            behaviors: true,
+            allowedApps: true,
           },
         },
       },
@@ -1839,6 +1866,8 @@ export class ControlPoliciesService {
       this.resolveMissingRequiredConditionsFromCounts({
         zones: policy._count.zones,
         timePolicies: policy._count.timePolicies,
+        behaviors: policy._count.behaviors,
+        allowedApps: policy._count.allowedApps,
       }).length > 0;
 
     await this.validatePolicyRelations(this.prisma, policy.organizationId, { timePolicyIds });
@@ -1877,6 +1906,8 @@ export class ControlPoliciesService {
           select: {
             zones: true,
             timePolicies: true,
+            behaviors: true,
+            allowedApps: true,
           },
         },
       },
@@ -1889,6 +1920,8 @@ export class ControlPoliciesService {
       this.resolveMissingRequiredConditionsFromCounts({
         zones: policy._count.zones,
         timePolicies: policy._count.timePolicies,
+        behaviors: policy._count.behaviors,
+        allowedApps: policy._count.allowedApps,
       }).length > 0;
 
     await this.validatePolicyRelations(this.prisma, policy.organizationId, { behaviorConditionIds });
@@ -1930,6 +1963,8 @@ export class ControlPoliciesService {
           select: {
             zones: true,
             timePolicies: true,
+            behaviors: true,
+            allowedApps: true,
           },
         },
       },
@@ -1942,6 +1977,8 @@ export class ControlPoliciesService {
       this.resolveMissingRequiredConditionsFromCounts({
         zones: policy._count.zones,
         timePolicies: policy._count.timePolicies,
+        behaviors: policy._count.behaviors,
+        allowedApps: policy._count.allowedApps,
       }).length > 0;
 
     await this.validatePolicyRelations(this.prisma, policy.organizationId, { allowedAppPresetIds });
@@ -2074,8 +2111,10 @@ export class ControlPoliciesService {
   private resolveMissingRequiredConditionsFromCounts(counts: {
     zones: number;
     timePolicies: number;
-  }): Array<'ZONE' | 'TIME_POLICY'> {
-    const missing: Array<'ZONE' | 'TIME_POLICY'> = [];
+    behaviors: number;
+    allowedApps: number;
+  }): Array<'ZONE' | 'TIME_POLICY' | 'BEHAVIOR_OR_ALLOWED_APP'> {
+    const missing: Array<'ZONE' | 'TIME_POLICY' | 'BEHAVIOR_OR_ALLOWED_APP'> = [];
 
     if (counts.zones === 0) {
       missing.push('ZONE');
@@ -2083,6 +2122,10 @@ export class ControlPoliciesService {
 
     if (counts.timePolicies === 0) {
       missing.push('TIME_POLICY');
+    }
+
+    if (counts.behaviors === 0 && counts.allowedApps === 0) {
+      missing.push('BEHAVIOR_OR_ALLOWED_APP');
     }
 
     return missing;
@@ -2101,6 +2144,8 @@ export class ControlPoliciesService {
           select: {
             zones: true,
             timePolicies: true,
+            behaviors: true,
+            allowedApps: true,
           },
         },
       },
@@ -2113,6 +2158,8 @@ export class ControlPoliciesService {
     const missingRequiredConditions = this.resolveMissingRequiredConditionsFromCounts({
       zones: policy._count.zones,
       timePolicies: policy._count.timePolicies,
+      behaviors: policy._count.behaviors,
+      allowedApps: policy._count.allowedApps,
     });
 
     if (missingRequiredConditions.length > 0) {

@@ -8,6 +8,7 @@ import {
   IsNumber,
   MinLength,
   Matches,
+  ValidateIf,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { normalizeOptionalPhoneNumber } from '../../../common/utils/phone.util';
@@ -26,6 +27,18 @@ export enum AccountStatusEnum {
 
 // ============ Account DTOs ============
 
+function normalizeOptionalEmail(value: unknown): unknown {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  return value.trim();
+}
+
 export class CreateAccountDto {
   @ApiProperty({ description: '사용자명 (로그인 ID)' })
   @IsString()
@@ -42,9 +55,11 @@ export class CreateAccountDto {
   @IsNotEmpty()
   name: string;
 
-  @ApiProperty({ description: '이메일' })
+  @ApiPropertyOptional({ description: '이메일' })
+  @Transform(({ value }) => normalizeOptionalEmail(value))
+  @ValidateIf((_, value) => value !== undefined && value !== null && value !== '')
   @IsEmail()
-  email: string;
+  email?: string;
 
   @ApiPropertyOptional({ description: '전화번호' })
   @Transform(({ value }) => normalizeOptionalPhoneNumber(value))

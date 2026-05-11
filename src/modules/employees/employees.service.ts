@@ -17,6 +17,8 @@ import {
   assertOrganizationInScopeOrThrow,
   ensureOrganizationInScope,
   assertUnitOrganization,
+  CODEEDGE_ROOT_ORGANIZATION_ID,
+  LEGACY_ROOT_ORGANIZATION_ID,
   resolveOrganizationClassification,
 } from '../../common/utils/organization-scope.util';
 import { findEmployeeByIdentifier, normalizePhoneEmployeeId, resolveEmployeePrimaryIds } from '../../common/utils/employee-identifier.util';
@@ -166,6 +168,32 @@ export class EmployeesService {
         teamCode: true,
       },
     });
+  }
+
+  private resolveCompanyOrganizationIdFromNodes(
+    organizationId: string,
+    organizations: Array<{ id: string; parentId: string | null; teamCode: string | null }>,
+  ): string | null {
+    const organizationById = new Map(organizations.map((organization) => [organization.id, organization] as const));
+    const visited = new Set<string>();
+    let current = organizationById.get(organizationId) || null;
+
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      const classification = resolveOrganizationClassification(current);
+      if (classification === 'COMPANY') {
+        return current.id;
+      }
+
+      const parentId = current.parentId;
+      if (!parentId) {
+        break;
+      }
+
+      current = organizationById.get(parentId) || null;
+    }
+
+    return null;
   }
 
   private resolveDescendantUnitIds(
@@ -618,6 +646,19 @@ export class EmployeesService {
       andConditions.push({
         status: filter.status as EmployeeStatus,
       });
+
+      if (filter.statusGroup === EmployeeStatusGroupEnum.ACTIVE) {
+        andConditions.push({
+          NOT: {
+            status: EmployeeStatus.EXCEPTION,
+            organization: {
+              parentId: {
+                in: [CODEEDGE_ROOT_ORGANIZATION_ID, LEGACY_ROOT_ORGANIZATION_ID],
+              },
+            },
+          },
+        });
+      }
     } else if (filter.statusGroup === EmployeeStatusGroupEnum.DELETED) {
       andConditions.push({
         OR: [
@@ -631,6 +672,19 @@ export class EmployeesService {
           notIn: ['DELETE', 'PHONE_INFO_REVIEW'] as EmployeeStatus[],
         },
       });
+
+      if (filter.statusGroup === EmployeeStatusGroupEnum.ACTIVE) {
+        andConditions.push({
+          NOT: {
+            status: EmployeeStatus.EXCEPTION,
+            organization: {
+              parentId: {
+                in: [CODEEDGE_ROOT_ORGANIZATION_ID, LEGACY_ROOT_ORGANIZATION_ID],
+              },
+            },
+          },
+        });
+      }
     }
 
     if (andConditions.length > 0) {
@@ -1247,15 +1301,17 @@ export class EmployeesService {
       throw new ConflictException('동일 번호의 활성 사용자 계정이 존재하여 복원할 수 없습니다.');
     }
 
+    const restoreContext = await this.resolveDeletedEmployeeRestoreContext(deletedEmployee);
+
     const restored = await this.prisma.$transaction(async (tx) => {
       await tx.employee.create({
         data: {
           id: originalEmployeeId,
           name: deletedEmployee.name,
-          organizationId: deletedEmployee.organizationId,
+          organizationId: restoreContext.organizationId,
           position: deletedEmployee.position,
           role: deletedEmployee.role,
-          status: EmployeeStatus.ACTIVE,
+          status: restoreContext.status,
           phone: deletedEmployee.phone,
           email: deletedEmployee.email,
           memo: deletedEmployee.memo,
@@ -1272,7 +1328,7 @@ export class EmployeesService {
         where: { id: originalEmployeeId },
         data: {
           referenceId: deletedEmployee.referenceId,
-          status: EmployeeStatus.ACTIVE,
+          status: restoreContext.status,
           updatedAt: new Date(),
         },
       });
@@ -1285,8 +1341,10 @@ export class EmployeesService {
       await tx.device.updateMany({
         where: { employeeId: originalEmployeeId },
         data: {
+          organizationId: restoreContext.organizationId,
           status: 'NORMAL' as any,
           deviceStatus: DeviceOperationStatus.LOGGED_OUT,
+          deactivatedAt: null,
           deactivatedReason: null,
         } as any,
       });
@@ -1601,6 +1659,59 @@ export class EmployeesService {
 
   private buildHardDeletedStatsAnchorId(fromEmployeeId: string): string {
     return `hard-deleted:${fromEmployeeId}:${randomUUID()}`;
+  }
+
+  private async resolveDeletedEmployeeRestoreContext(
+    deletedEmployee: { organizationId: string },
+  ): Promise<{ organizationId: string; status: EmployeeStatus }> {
+    const organization = await this.prisma.organization.findUnique({
+      where: { id: deletedEmployee.organizationId },
+      select: {
+        id: true,
+        parentId: true,
+        teamCode: true,
+        deletedAt: true,
+      },
+    });
+
+    if (organization && !organization.deletedAt) {
+      const classification = resolveOrganizationClassification(organization);
+      if (classification === 'UNIT') {
+        return {
+          organizationId: organization.id,
+          status: EmployeeStatus.ACTIVE,
+        };
+      }
+
+      if (classification === 'COMPANY') {
+        return {
+          organizationId: organization.id,
+          status: EmployeeStatus.EXCEPTION,
+        };
+      }
+    }
+
+    const activeOrganizations = await this.prisma.organization.findMany({
+      where: { deletedAt: null },
+      select: {
+        id: true,
+        parentId: true,
+        teamCode: true,
+      },
+    });
+    const companyOrganizationId = this.resolveCompanyOrganizationIdFromNodes(
+      deletedEmployee.organizationId,
+      activeOrganizations,
+    );
+
+    if (!companyOrganizationId) {
+      throw new BadRequestException('복원 가능한 회사 소속 정보가 없습니다.');
+    }
+
+    return {
+      organizationId: companyOrganizationId,
+      status: EmployeeStatus.EXCEPTION,
+    };
   }
 
   private resolveOriginalEmployeeIdForRestore(employee: any): string | null {

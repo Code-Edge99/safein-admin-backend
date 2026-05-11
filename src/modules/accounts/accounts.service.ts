@@ -50,6 +50,14 @@ const ACCOUNT_ORGANIZATION_SELECT = {
 export class AccountsService {
   constructor(private prisma: PrismaService) {}
 
+  private normalizeOptionalEmail(value?: string | null): string {
+    if (typeof value !== 'string') {
+      return '';
+    }
+
+    return value.trim();
+  }
+
   private async resolveActorAccessScope(actor: AccountActorContext): Promise<AccountAccessScope> {
     if (actor.role === AdminRole.SUPER_ADMIN) {
       return { tier: 'SUPER_ADMIN' };
@@ -217,6 +225,7 @@ export class AccountsService {
 
   async create(dto: CreateAccountDto, actor: AccountActorContext): Promise<AccountResponseDto> {
     const normalizedPhone = normalizePhoneNumber(dto.phone);
+    const normalizedEmail = this.normalizeOptionalEmail(dto.email);
     const role = dto.role as unknown as AdminRole;
     const actorAccessScope = await this.resolveActorAccessScope(actor);
     const resolvedOrganizationId = await this.resolveOrganizationIdForRole(role, dto.organizationId, actorAccessScope);
@@ -238,7 +247,7 @@ export class AccountsService {
         username: dto.username,
         passwordHash,
         name: dto.name,
-        email: dto.email,
+        email: normalizedEmail,
         phone: normalizedPhone || undefined,
         role,
         organizationId: resolvedOrganizationId,
@@ -397,6 +406,7 @@ export class AccountsService {
   async update(id: string, dto: UpdateAccountDto, actor: AccountActorContext): Promise<AccountResponseDto> {
     const actorAccessScope = await this.resolveActorAccessScope(actor);
     const normalizedPhone = normalizePhoneNumber(dto.phone);
+    const normalizedEmail = dto.email === undefined ? undefined : this.normalizeOptionalEmail(dto.email);
     const currentAccount = await this.prisma.account.findUnique({
       where: { id },
       select: { id: true, username: true, role: true, organizationId: true },
@@ -437,7 +447,7 @@ export class AccountsService {
       data: {
         username: dto.username,
         name: dto.name,
-        email: dto.email,
+        email: normalizedEmail,
         phone: dto.phone === undefined ? undefined : normalizedPhone || null,
         role: nextRole,
         organizationId: resolvedOrganizationId,

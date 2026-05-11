@@ -16,6 +16,8 @@ export type PolicyScopeCandidate = {
   targetUnitIds?: string[] | null;
   zones?: unknown[] | null;
   timePolicies?: unknown[] | null;
+  behaviors?: unknown[] | null;
+  allowedApps?: unknown[] | null;
 };
 
 type OrganizationClassification = 'ADMIN' | 'COMPANY' | 'GROUP' | 'UNIT';
@@ -72,12 +74,16 @@ export function doesPolicyTargetOrganization(
 }
 
 export function hasRequiredPolicyConditions(
-  policy: Pick<PolicyScopeCandidate, 'zones' | 'timePolicies'>,
+  policy: Pick<PolicyScopeCandidate, 'zones' | 'timePolicies' | 'behaviors' | 'allowedApps'>,
 ): boolean {
+  const hasBehaviorCondition = Array.isArray(policy.behaviors) && policy.behaviors.length > 0;
+  const hasAllowedAppCondition = Array.isArray(policy.allowedApps) && policy.allowedApps.length > 0;
+
   return Array.isArray(policy.zones)
     && policy.zones.length > 0
     && Array.isArray(policy.timePolicies)
-    && policy.timePolicies.length > 0;
+    && policy.timePolicies.length > 0
+    && (hasBehaviorCondition || hasAllowedAppCondition);
 }
 
 export function selectPreferredOwnerScopedPolicies<T extends PolicyScopeCandidate>(
@@ -105,7 +111,9 @@ export function selectPreferredOwnerScopedPolicies<T extends PolicyScopeCandidat
     }
 
     const eligiblePolicies = ownerPolicies.filter((policy) => hasRequiredPolicyConditions(policy));
-    return eligiblePolicies;
+    if (eligiblePolicies.length > 0) {
+      return eligiblePolicies;
+    }
   }
 
   return [];

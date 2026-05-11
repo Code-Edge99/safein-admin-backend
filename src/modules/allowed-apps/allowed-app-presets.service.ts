@@ -313,44 +313,43 @@ export class AllowedAppPresetsService {
 
     this.validateAppsPlatform(appsToValidate, targetPlatform);
 
-    // 앱 목록이 변경되는 경우 처리
-    if (dto.appIds !== undefined) {
-      // 기존 연결 삭제
-      await this.prisma.allowedAppPresetItem.deleteMany({
-        where: { presetId: id },
-      });
-
-      // 새 연결 생성
-      if (dto.appIds.length > 0) {
-        await this.prisma.allowedAppPresetItem.createMany({
-          data: dto.appIds.map((appId) => ({
-            presetId: id,
-            allowedAppId: appId,
-          })),
+    const preset = await this.prisma.$transaction(async (tx) => {
+      if (dto.appIds !== undefined) {
+        await tx.allowedAppPresetItem.deleteMany({
+          where: { presetId: id },
         });
-      }
-    }
 
-    const preset = await this.prisma.allowedAppPreset.update({
-      where: { id },
-      data: {
-        name: dto.name,
-        description: dto.description,
-        platform: explicitPlatform !== undefined || inferredPlatform !== undefined ? targetPlatform : undefined,
-        organizationId: dto.organizationId === undefined ? undefined : targetOrganizationId,
-        updatedById: actorUserId,
-      },
-      include: {
-        organization: { select: { id: true, name: true } },
-        items: {
-          include: {
-            allowedApp: true,
+        if (dto.appIds.length > 0) {
+          await tx.allowedAppPresetItem.createMany({
+            data: dto.appIds.map((appId) => ({
+              presetId: id,
+              allowedAppId: appId,
+            })),
+          });
+        }
+      }
+
+      return tx.allowedAppPreset.update({
+        where: { id },
+        data: {
+          name: dto.name,
+          description: dto.description,
+          platform: explicitPlatform !== undefined || inferredPlatform !== undefined ? targetPlatform : undefined,
+          organizationId: dto.organizationId === undefined ? undefined : targetOrganizationId,
+          updatedById: actorUserId,
+        },
+        include: {
+          organization: { select: { id: true, name: true } },
+          items: {
+            include: {
+              allowedApp: true,
+            },
+          },
+          _count: {
+            select: { policyPresets: true },
           },
         },
-        _count: {
-          select: { policyPresets: true },
-        },
-      },
+      });
     });
 
     await this.syncAllowedAppPresetTranslations(preset.id, {

@@ -79,6 +79,40 @@ export class OrganizationsService {
     return null;
   }
 
+  private async resolveArchivedEmployeeTransferOrganizationId(organizationId: string): Promise<string> {
+    if (organizationId === CODEEDGE_ROOT_ORGANIZATION_ID) {
+      return organizationId;
+    }
+
+    const organizations = await this.prisma.organization.findMany({
+      where: { deletedAt: null },
+      select: {
+        id: true,
+        parentId: true,
+        teamCode: true,
+      },
+    });
+
+    const organizationMap = new Map(organizations.map((organization) => [organization.id, organization] as const));
+    const currentOrganization = organizationMap.get(organizationId) || null;
+
+    if (currentOrganization) {
+      const classification = resolveOrganizationClassification(currentOrganization);
+      if (classification === 'UNIT' || classification === 'GROUP') {
+        const companyOrganizationId = this.resolveAncestorCompanyId(organizationMap, organizationId);
+        if (companyOrganizationId) {
+          return companyOrganizationId;
+        }
+      }
+    }
+
+    if (organizationMap.has(CODEEDGE_ROOT_ORGANIZATION_ID)) {
+      return CODEEDGE_ROOT_ORGANIZATION_ID;
+    }
+
+    throw new BadRequestException('루트 조직 정보가 없어 삭제 대기 직원 데이터를 이관할 수 없습니다.');
+  }
+
   private async assertParentSupportsChildType(
     parentId: string,
     childNodeType: CreateOrganizationNodeTypeEnum,
@@ -631,23 +665,28 @@ export class OrganizationsService {
     });
 
     if (archivedEmployees.length > 0 && id !== CODEEDGE_ROOT_ORGANIZATION_ID) {
-      const rootOrganization = await this.prisma.organization.findUnique({
-        where: { id: CODEEDGE_ROOT_ORGANIZATION_ID },
-        select: { id: true },
-      });
-
-      if (!rootOrganization) {
-        throw new BadRequestException('루트 조직 정보가 없어 삭제 대기 직원 데이터를 이관할 수 없습니다.');
-      }
+      const transferOrganizationId = await this.resolveArchivedEmployeeTransferOrganizationId(id);
+      const archivedEmployeeIds = archivedEmployees.map((employee) => employee.id);
 
       await this.prisma.employee.updateMany({
         where: {
           id: {
-            in: archivedEmployees.map((employee) => employee.id),
+            in: archivedEmployeeIds,
           },
         },
         data: {
-          organizationId: CODEEDGE_ROOT_ORGANIZATION_ID,
+          organizationId: transferOrganizationId,
+        },
+      });
+
+      await this.prisma.device.updateMany({
+        where: {
+          employeeId: {
+            in: archivedEmployeeIds,
+          },
+        },
+        data: {
+          organizationId: transferOrganizationId,
         },
       });
     }

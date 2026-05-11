@@ -108,10 +108,10 @@ export class ControlPolicyResponseDto {
 
   @ApiProperty({
     description: '누락된 필수 조건 목록',
-    enum: ['ZONE', 'TIME_POLICY'],
+    enum: ['ZONE', 'TIME_POLICY', 'BEHAVIOR_OR_ALLOWED_APP'],
     isArray: true,
   })
-  missingRequiredConditions: Array<'ZONE' | 'TIME_POLICY'>;
+  missingRequiredConditions: Array<'ZONE' | 'TIME_POLICY' | 'BEHAVIOR_OR_ALLOWED_APP'>;
 
   @ApiPropertyOptional({ description: '누락 필수 조건 안내 메시지', type: [String] })
   missingRequiredConditionMessages?: string[];

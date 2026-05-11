@@ -99,27 +99,19 @@ const CATEGORY_ORDER: Record<string, number> = {
 };
 
 const NON_DELEGABLE_GROUP_MANAGER_CODES = new Set([
+  'ACCOUNT_READ',
+  'ACCOUNT_WRITE',
   'PERMISSION_READ',
   'PERMISSION_WRITE',
 ]);
 
-function getDefaultEnabled(code: string, role: 'SUPER_ADMIN' | 'SITE_ADMIN'): boolean {
-  if (role === 'SUPER_ADMIN') {
+function getDefaultEnabled(code: string, role: AdminRole): boolean {
+  if (role === AdminRole.SUPER_ADMIN) {
     return true;
   }
 
-  const readOnlyCode = code.endsWith('_READ');
-
-  if (role === 'SITE_ADMIN') {
-    if (code === 'ACCOUNT_READ' || code === 'ACCOUNT_WRITE' || code === 'PERMISSION_WRITE') {
-      return false;
-    }
-
-    if (code === 'PERMISSION_READ') {
-      return true;
-    }
-
-    return readOnlyCode;
+  if (role === AdminRole.SITE_ADMIN) {
+    return true;
   }
 
   return false;
@@ -128,6 +120,22 @@ function getDefaultEnabled(code: string, role: 'SUPER_ADMIN' | 'SITE_ADMIN'): bo
 @Injectable()
 export class PermissionsService {
   constructor(private prisma: PrismaService) {}
+
+  private async resolveModifierLabel(actorId: string | undefined, fallback: string): Promise<string> {
+    if (!actorId) {
+      return fallback;
+    }
+
+    const actor = await this.prisma.account.findUnique({
+      where: { id: actorId },
+      select: {
+        name: true,
+        username: true,
+      },
+    });
+
+    return actor?.name || actor?.username || fallback;
+  }
 
   private sortRows<T extends { category: string; name: string }>(rows: T[]): T[] {
     return [...rows].sort((left, right) => {
@@ -607,15 +615,35 @@ export class PermissionsService {
       map.set(permission.code, permission);
     });
 
-    const missingDefaults: Array<{ role: any; permissionId: string }> = [];
+    const existingRolePermissions = await this.prisma.rolePermission.findMany({
+      where: {
+        role: {
+          in: [AdminRole.SUPER_ADMIN, AdminRole.SITE_ADMIN],
+        },
+        permissionId: {
+          in: synced.map((permission) => permission.id),
+        },
+      },
+      select: {
+        role: true,
+        permissionId: true,
+      },
+    });
+
+    const existingRolePermissionKeys = new Set(
+      existingRolePermissions.map((row) => `${row.role}:${row.permissionId}`),
+    );
+
+    const missingDefaults: Array<{ role: AdminRole; permissionId: string }> = [];
 
     for (const permission of synced) {
-      if (existingPermissionCodes.has(permission.code)) {
-        continue;
-      }
-
-      for (const role of ['SUPER_ADMIN', 'SITE_ADMIN'] as const) {
+      for (const role of [AdminRole.SUPER_ADMIN, AdminRole.SITE_ADMIN] as const) {
         if (!getDefaultEnabled(permission.code, role)) {
+          continue;
+        }
+
+        const key = `${role}:${permission.id}`;
+        if (existingRolePermissionKeys.has(key)) {
           continue;
         }
 
@@ -752,31 +780,76 @@ export class PermissionsService {
           targetRole: PrismaPermissionTargetRole.COMPANY_MANAGER,
         },
       },
+      include: {
+        updatedBy: {
+          select: {
+            name: true,
+            username: true,
+          },
+        },
+      },
     });
 
     if (enabled === baseEnabled) {
-      if (existingOverride) {
-        await this.prisma.groupManagerPermissionOverride.delete({
-          where: {
-            organizationId_permissionId_targetRole: {
-              organizationId: companyScope.id,
-              permissionId: permission.id,
-              targetRole: PrismaPermissionTargetRole.COMPANY_MANAGER,
-            },
-          },
-        });
+      if (!existingOverride) {
+        return {
+          success: true,
+          changed: false,
+          enabled: baseEnabled,
+          lastModified: permission.updatedAt,
+          modifiedBy: '전역 기본값',
+        };
       }
+
+      if (existingOverride.isEnabled === enabled) {
+        return {
+          success: true,
+          changed: false,
+          enabled: baseEnabled,
+          lastModified: existingOverride.updatedAt,
+          modifiedBy: existingOverride.updatedBy?.name || existingOverride.updatedBy?.username || '슈퍼 관리자',
+        };
+      }
+
+      const touchedAt = new Date();
+      const modifierLabel = await this.resolveModifierLabel(actorId, '슈퍼 관리자');
+
+      await this.prisma.groupManagerPermissionOverride.update({
+        where: {
+          organizationId_permissionId_targetRole: {
+            organizationId: companyScope.id,
+            permissionId: permission.id,
+            targetRole: PrismaPermissionTargetRole.COMPANY_MANAGER,
+          },
+        },
+        data: {
+          isEnabled: enabled,
+          updatedById: actorId || null,
+          updatedAt: touchedAt,
+        },
+      });
 
       return {
         success: true,
-        changed: Boolean(existingOverride),
+        changed: true,
         enabled: baseEnabled,
-        lastModified: permission.updatedAt,
-        modifiedBy: '전역 기본값',
+        lastModified: touchedAt,
+        modifiedBy: modifierLabel,
       };
     }
 
     const touchedAt = new Date();
+    const modifierLabel = await this.resolveModifierLabel(actorId, '슈퍼 관리자');
+
+    if (existingOverride?.isEnabled === enabled) {
+      return {
+        success: true,
+        changed: false,
+        enabled,
+        lastModified: existingOverride.updatedAt,
+        modifiedBy: existingOverride.updatedBy?.name || existingOverride.updatedBy?.username || '슈퍼 관리자',
+      };
+    }
 
     await this.prisma.groupManagerPermissionOverride.upsert({
       where: {
@@ -808,7 +881,7 @@ export class PermissionsService {
       changed: existingOverride?.isEnabled !== enabled,
       enabled,
       lastModified: touchedAt,
-      modifiedBy: actorId ? '슈퍼 관리자' : '전역 설정',
+      modifiedBy: modifierLabel,
     };
   }
 
@@ -838,31 +911,76 @@ export class PermissionsService {
           targetRole: PrismaPermissionTargetRole.GROUP_MANAGER,
         },
       },
+      include: {
+        updatedBy: {
+          select: {
+            name: true,
+            username: true,
+          },
+        },
+      },
     });
 
     if (enabled === baseEnabled) {
-      if (existingOverride) {
-        await this.prisma.groupManagerPermissionOverride.delete({
-          where: {
-            organizationId_permissionId_targetRole: {
-              organizationId: companyScope.id,
-              permissionId: permission.id,
-              targetRole: PrismaPermissionTargetRole.GROUP_MANAGER,
-            },
-          },
-        });
+      if (!existingOverride) {
+        return {
+          success: true,
+          changed: false,
+          enabled: baseEnabled,
+          lastModified: baseEnabled ? permission.updatedAt : undefined,
+          modifiedBy: baseEnabled ? '회사 관리자 기본값' : '회사 관리자 미보유',
+        };
       }
+
+      if (existingOverride.isEnabled === enabled) {
+        return {
+          success: true,
+          changed: false,
+          enabled: baseEnabled,
+          lastModified: existingOverride.updatedAt,
+          modifiedBy: existingOverride.updatedBy?.name || existingOverride.updatedBy?.username || modifiedByLabel,
+        };
+      }
+
+      const touchedAt = new Date();
+      const modifierLabel = await this.resolveModifierLabel(actorId, modifiedByLabel);
+
+      await this.prisma.groupManagerPermissionOverride.update({
+        where: {
+          organizationId_permissionId_targetRole: {
+            organizationId: companyScope.id,
+            permissionId: permission.id,
+            targetRole: PrismaPermissionTargetRole.GROUP_MANAGER,
+          },
+        },
+        data: {
+          isEnabled: enabled,
+          updatedById: actorId || null,
+          updatedAt: touchedAt,
+        },
+      });
 
       return {
         success: true,
-        changed: Boolean(existingOverride),
+        changed: true,
         enabled: baseEnabled,
-        lastModified: baseEnabled ? permission.updatedAt : undefined,
-        modifiedBy: baseEnabled ? '회사 관리자 기본값' : '회사 관리자 미보유',
+        lastModified: touchedAt,
+        modifiedBy: modifierLabel,
       };
     }
 
     const touchedAt = new Date();
+    const modifierLabel = await this.resolveModifierLabel(actorId, modifiedByLabel);
+
+    if (existingOverride?.isEnabled === enabled) {
+      return {
+        success: true,
+        changed: false,
+        enabled,
+        lastModified: existingOverride.updatedAt,
+        modifiedBy: existingOverride.updatedBy?.name || existingOverride.updatedBy?.username || modifiedByLabel,
+      };
+    }
 
     await this.prisma.groupManagerPermissionOverride.upsert({
       where: {
@@ -894,7 +1012,7 @@ export class PermissionsService {
       changed: existingOverride?.isEnabled !== enabled,
       enabled,
       lastModified: touchedAt,
-      modifiedBy: actorId ? modifiedByLabel : '회사 설정',
+      modifiedBy: modifierLabel,
     };
   }
 

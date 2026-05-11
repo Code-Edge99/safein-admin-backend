@@ -25,7 +25,11 @@ export async function deactivatePoliciesWithoutConditions(tx: any, policyIds: st
     .map((p: any) => p.id);
 
   const reviewRequiredPolicyIds = policies
-    .filter((p: any) => p._count.zones === 0 || p._count.timePolicies === 0)
+    .filter(
+      (p: any) => p._count.zones === 0
+        || p._count.timePolicies === 0
+        || (p._count.behaviors === 0 && p._count.allowedApps === 0),
+    )
     .map((p: any) => p.id);
 
   if (reviewRequiredPolicyIds.length > 0) {
