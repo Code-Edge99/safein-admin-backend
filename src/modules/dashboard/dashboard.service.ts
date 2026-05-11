@@ -30,6 +30,7 @@ export class DashboardService {
 
   private static readonly KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
+  private static readonly AGGREGATED_STAT_DATE_SHIFT_MS = (24 * 60 * 60 * 1000) - DashboardService.KST_OFFSET_MS;
   private parseKstDateInput(dateText: string): Date {
     const raw = String(dateText || '').trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
@@ -46,6 +47,19 @@ export class DashboardService {
 
   private getKstHourFromUtc(value: Date): number {
     return new Date(value.getTime() + DashboardService.KST_OFFSET_MS).getUTCHours();
+  }
+
+  private getAggregatedStatStoredDate(value: Date): Date {
+    return new Date(value.getTime() - DashboardService.AGGREGATED_STAT_DATE_SHIFT_MS);
+  }
+
+  private getAggregatedStatBucketStart(value: Date): Date {
+    return new Date(value.getTime() + DashboardService.AGGREGATED_STAT_DATE_SHIFT_MS);
+  }
+
+  private formatAggregatedStatDateKey(value: Date): string {
+    // Aggregated @db.Date rows persist the UTC calendar portion of a KST day bucket.
+    return formatKstDateKey(this.getAggregatedStatBucketStart(value));
   }
 
   private async buildPackageNameToAppNameMap(packageNames: string[]): Promise<Map<string, string>> {
@@ -696,7 +710,7 @@ export class DashboardService {
     ]);
 
     const latestAggregatedAt = latestHourlyStat
-      ? new Date(latestHourlyStat.date.getTime() + latestHourlyStat.hour * 60 * 60 * 1000)
+      ? new Date(this.getAggregatedStatBucketStart(latestHourlyStat.date).getTime() + latestHourlyStat.hour * 60 * 60 * 1000)
       : null;
 
     const lagMinutes = latestRawLog && latestAggregatedAt
@@ -1346,10 +1360,11 @@ export class DashboardService {
 
     const now = new Date();
     const startDate30 = getKstDaysAgoStart(30, now);
+    const startDate30Stat = this.getAggregatedStatStoredDate(startDate30);
 
     // 2. 일별 통계 (EmployeeDailyStat, 30일)
     const dailyStats = await this.prisma.employeeDailyStat.findMany({
-      where: { employeeId: employee.id, date: { gte: startDate30 } },
+      where: { employeeId: employee.id, date: { gte: startDate30Stat } },
       orderBy: { date: 'asc' },
     });
 
@@ -1429,9 +1444,11 @@ export class DashboardService {
     // 최근 7일 vs 이전 7일 비교
     const day7Ago = getKstDaysAgoStart(7, now);
     const day14Ago = getKstDaysAgoStart(14, now);
+    const day7AgoStat = this.getAggregatedStatStoredDate(day7Ago);
+    const day14AgoStat = this.getAggregatedStatStoredDate(day14Ago);
 
-    const recentStats = dailyStats.filter((s) => s.date >= day7Ago);
-    const olderStats = dailyStats.filter((s) => s.date >= day14Ago && s.date < day7Ago);
+    const recentStats = dailyStats.filter((s) => s.date >= day7AgoStat);
+    const olderStats = dailyStats.filter((s) => s.date >= day14AgoStat && s.date < day7AgoStat);
     const recentTotal = recentStats.reduce((s, d) => s + d.totalBlocks, 0);
     const olderTotal = olderStats.reduce((s, d) => s + d.totalBlocks, 0);
 
@@ -1603,7 +1620,7 @@ export class DashboardService {
     const peerSiteStats = await this.prisma.employeeDailyStat.aggregate({
       where: {
         organizationId: { in: siteScopeOrganizationIds },
-        date: { gte: startDate30 },
+        date: { gte: startDate30Stat },
         employeeId: { not: employee.id },
       },
       _avg: { totalBlocks: true },
@@ -1614,7 +1631,7 @@ export class DashboardService {
 
     // ── 추이 데이터 (일별) ──
     const trendData = dailyStats.map((s) => ({
-      date: formatKstMonthDay(s.date),
+      date: formatKstMonthDay(this.getAggregatedStatBucketStart(s.date)),
       앱제어: s.appControlBlocks,
       행동차단: s.behaviorBlocks,
     }));
@@ -1956,6 +1973,10 @@ export class DashboardService {
     const currentStartDate = getKstDaysAgoStart(safeDays - 1, endDate);
     const trendStartDate = getKstDaysAgoStart(29, endDate);
     const previousRangeStartDate = getKstDaysAgoStart((safeDays * 2) - 1, endDate);
+    const currentStartStatDate = this.getAggregatedStatStoredDate(currentStartDate);
+    const trendStartStatDate = this.getAggregatedStatStoredDate(trendStartDate);
+    const previousRangeStartStatDate = this.getAggregatedStatStoredDate(previousRangeStartDate);
+    const todayStatDate = this.getAggregatedStatStoredDate(getKstStartOfDay(endDate));
 
     // 회사(root) 제외 모든 현장 조회 (현장, 부서, 팀, 현장조 등)
     const sites = await this.prisma.organization.findMany({
@@ -2018,7 +2039,7 @@ export class DashboardService {
       this.prisma.organizationDailyStat.findMany({
         where: {
           organizationId: { in: relevantOrganizationIds },
-          date: { gte: previousRangeStartDate, lte: endDate },
+          date: { gte: previousRangeStartStatDate, lte: todayStatDate },
         },
         orderBy: { date: 'asc' },
       }),
@@ -2127,15 +2148,15 @@ export class DashboardService {
       const subtreeIds = getSubtreeIds(site.id);
       const subtreeIdSet = new Set(subtreeIds);
       const orgStats = subtreeIds.flatMap((subtreeId) => dailyStatsByOrg.get(subtreeId) || []);
-      const currentStats = orgStats.filter((s) => s.date >= currentStartDate);
-      const trendStats = orgStats.filter((s) => s.date >= trendStartDate);
+      const currentStats = orgStats.filter((s) => s.date >= currentStartStatDate);
+      const trendStats = orgStats.filter((s) => s.date >= trendStartStatDate);
 
-      const prevStats = orgStats.filter((s) => s.date >= previousRangeStartDate && s.date < currentStartDate);
+      const prevStats = orgStats.filter((s) => s.date >= previousRangeStartStatDate && s.date < currentStartStatDate);
       const prevTotal = prevStats.reduce((sum, s) => sum + s.totalBlocks, 0);
 
       const dailyStatMap = new Map<string, { allowed: number; behavior: number }>();
       trendStats.forEach((item) => {
-        const key = formatKstDateKey(item.date);
+        const key = this.formatAggregatedStatDateKey(item.date);
         const existing = dailyStatMap.get(key) || { allowed: 0, behavior: 0 };
         dailyStatMap.set(key, {
           allowed: existing.allowed + item.appControlBlocks,
