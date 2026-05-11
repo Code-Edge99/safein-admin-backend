@@ -111,6 +111,7 @@ export class OrganizationsController {
       req.organizationScopeIds ?? undefined,
       req.user?.id,
       req.user?.role,
+      req.user?.organizationId,
     );
   }
 

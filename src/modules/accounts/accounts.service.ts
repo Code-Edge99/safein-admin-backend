@@ -172,10 +172,15 @@ export class AccountsService {
       throw new ForbiddenException('요청한 조직은 계정 관리 권한 범위를 벗어났습니다.');
     }
 
-    if (selectedClassification !== 'GROUP') {
+    if (selectedClassification === 'COMPANY') {
       if (actorAccessScope.tier === 'COMPANY_MANAGER') {
-        throw new ForbiddenException('관리자는 그룹 담당자 계정만 생성/수정할 수 있습니다.');
+        if (actorAccessScope.organizationId !== selectedOrganization.id) {
+          throw new ForbiddenException('회사 관리자는 자신의 회사 조직만 선택할 수 있습니다.');
+        }
+
+        return selectedOrganization.id;
       }
+
       throw new ForbiddenException('그룹 담당자는 그룹 조직만 선택할 수 있습니다.');
     }
 
@@ -218,6 +223,14 @@ export class AccountsService {
     }
 
     const targetClassification = resolveOrganizationClassification(targetOrganization);
+    if (actorAccessScope.tier === 'COMPANY_MANAGER') {
+      if (targetClassification === 'COMPANY' || targetClassification === 'GROUP') {
+        return;
+      }
+
+      throw new ForbiddenException('회사 관리자는 회사 관리자 또는 그룹 담당자 계정만 관리할 수 있습니다.');
+    }
+
     if (targetClassification !== 'GROUP') {
       throw new ForbiddenException('회사/그룹 관리자는 그룹 담당자 계정만 관리할 수 있습니다.');
     }
@@ -289,11 +302,9 @@ export class AccountsService {
     }
 
     if (actorAccessScope.tier !== 'SUPER_ADMIN') {
-      const scopedGroupOrganizationIds = await this.collectScopedGroupOrganizationIds(
-        actorAccessScope.scopeOrganizationIds ?? [],
-      );
+      const scopedOrganizationIds = actorAccessScope.scopeOrganizationIds ?? [];
 
-      if (scopedGroupOrganizationIds.length === 0) {
+      if (scopedOrganizationIds.length === 0) {
         return {
           data: [],
           total: 0,
@@ -316,7 +327,7 @@ export class AccountsService {
       where.role = AdminRole.SITE_ADMIN;
 
       if (typeof filter.organizationId === 'string' && filter.organizationId.length > 0) {
-        if (!scopedGroupOrganizationIds.includes(filter.organizationId)) {
+        if (!scopedOrganizationIds.includes(filter.organizationId)) {
           return {
             data: [],
             total: 0,
@@ -327,7 +338,7 @@ export class AccountsService {
         }
         where.organizationId = filter.organizationId;
       } else {
-        where.organizationId = { in: scopedGroupOrganizationIds };
+        where.organizationId = { in: scopedOrganizationIds };
       }
     }
 

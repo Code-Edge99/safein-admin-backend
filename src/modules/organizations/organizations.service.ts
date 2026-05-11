@@ -8,6 +8,7 @@ import {
   assertOrganizationInScopeOrThrow,
   assertUnitOrganization,
   ensureOrganizationInScope,
+  resolveAdminActorType,
   resolveOrganizationClassification,
 } from '../../common/utils/organization-scope.util';
 import { normalizePhoneNumber } from '../../common/utils/phone.util';
@@ -436,6 +437,7 @@ export class OrganizationsService {
     scopeOrganizationIds?: string[],
     actorUserId?: string,
     actorRole?: string,
+    actorOrganizationId?: string,
   ): Promise<OrganizationResponseDto> {
     await this.findOne(id, scopeOrganizationIds); // 존재 여부 확인
     const normalizedManagerPhone = normalizePhoneNumber(dto.managerPhone);
@@ -455,6 +457,17 @@ export class OrganizationsService {
       && nextParentId
       && nextParentId !== currentOrganization.parentId,
     );
+
+    if (isUnitTransfer && actorOrganizationId) {
+      const actorOrganization = await this.prisma.organization.findFirst({
+        where: { id: actorOrganizationId, deletedAt: null },
+        select: { id: true, parentId: true, teamCode: true },
+      });
+
+      if (resolveAdminActorType(actorRole, actorOrganization) === 'GROUP_MANAGER') {
+        throw new ForbiddenException('그룹 담당자는 단위 이관을 수행할 수 없습니다.');
+      }
+    }
 
     // 순환 참조 방지
     if (nextParentId) {
