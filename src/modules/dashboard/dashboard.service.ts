@@ -440,6 +440,10 @@ export class DashboardService {
     const activeEmployeeStatusCondition = {
       notIn: [...DashboardService.NON_REPORTABLE_EMPLOYEE_STATUSES],
     };
+    const reportableEmployeeWhere = {
+      deletedAt: null,
+      status: activeEmployeeStatusCondition,
+    };
 
     const [
       totalEmployees,
@@ -458,14 +462,15 @@ export class DashboardService {
         where: targetOrganizationIds
           ? {
               organizationId: { in: targetOrganizationIds },
-              status: activeEmployeeStatusCondition,
+              ...reportableEmployeeWhere,
             }
           : {
-              status: activeEmployeeStatusCondition,
+              ...reportableEmployeeWhere,
             },
       }),
       this.prisma.employee.count({
         where: {
+          deletedAt: null,
           status: 'ACTIVE',
           ...(targetOrganizationIds
             ? {
@@ -514,6 +519,9 @@ export class DashboardService {
         where: {
           action: 'blocked',
           timestamp: { gte: todayStart },
+          employee: {
+            deletedAt: null,
+          },
           ...(controlLogScopeCondition ? { AND: [controlLogScopeCondition] } : {}),
         },
       }),
@@ -521,6 +529,9 @@ export class DashboardService {
         where: {
           action: 'blocked',
           timestamp: { gte: yesterdayStart, lt: todayStart },
+          employee: {
+            deletedAt: null,
+          },
           ...(controlLogScopeCondition ? { AND: [controlLogScopeCondition] } : {}),
         },
       }),
@@ -529,6 +540,7 @@ export class DashboardService {
         where: {
           employeeId: { not: null },
           employee: {
+            deletedAt: null,
             status: activeEmployeeStatusCondition,
           },
           status: 'NORMAL',
@@ -543,7 +555,7 @@ export class DashboardService {
         this.prisma.employee.count({
           where: {
             createdAt: { gte: monthStart },
-            status: activeEmployeeStatusCondition,
+            ...reportableEmployeeWhere,
             ...(targetOrganizationIds
               ? {
                   organizationId: { in: targetOrganizationIds },
@@ -554,7 +566,7 @@ export class DashboardService {
         this.prisma.employee.count({
           where: {
             createdAt: { gte: previousMonthStart, lt: monthStart },
-            status: activeEmployeeStatusCondition,
+            ...reportableEmployeeWhere,
             ...(targetOrganizationIds
               ? {
                   organizationId: { in: targetOrganizationIds },
@@ -604,46 +616,19 @@ export class DashboardService {
     const controlLogScopeCondition = targetOrganizationIds
       ? this.buildControlLogOrganizationIdsCondition(targetOrganizationIds)
       : this.buildControlLogOrganizationScopeCondition(scopeOrganizationIds, organizationId);
-    if (targetOrganizationIds) {
-      where.organizationId = { in: targetOrganizationIds };
-    }
-
-    let stats = await this.prisma.hourlyBlockStat.findMany({
-      where,
-      orderBy: { hour: 'asc' },
-    });
-
-    // 오늘 데이터가 없으면 어제 데이터 조회
-    if (stats.length === 0 && !date) {
-      const yesterday = new Date(targetDate.getTime() - (24 * 60 * 60 * 1000));
-      where.date = yesterday;
-      stats = await this.prisma.hourlyBlockStat.findMany({
-        where,
-        orderBy: { hour: 'asc' },
-      });
-      targetDate = yesterday;
-    }
-
-    // 24시간 데이터 구성 (없는 시간대는 0으로)
     const hourlyMap = new Map<number, any>();
-    stats.forEach((s) => {
-      const existing = hourlyMap.get(s.hour) || { totalBlocks: 0, behaviorBlocks: 0, allowedAppBlocks: 0 };
-      hourlyMap.set(s.hour, {
-        totalBlocks: existing.totalBlocks + s.totalBlocks,
-        behaviorBlocks: existing.behaviorBlocks + s.behaviorBlocks,
-        allowedAppBlocks: existing.allowedAppBlocks + s.appControlBlocks,
-      });
-    });
-
-    if (stats.length === 0) {
-      const dayStart = new Date(targetDate);
-      const dayEnd = new Date(targetDate);
+    const loadDailyBlockedLogs = async (day: Date) => {
+      const dayStart = new Date(day);
+      const dayEnd = new Date(day);
       dayEnd.setDate(dayEnd.getDate() + 1);
 
-      const logs = await this.prisma.controlLog.findMany({
+      return this.prisma.controlLog.findMany({
         where: {
           action: 'blocked',
           timestamp: { gte: dayStart, lt: dayEnd },
+          employee: {
+            deletedAt: null,
+          },
           ...(controlLogScopeCondition ? { AND: [controlLogScopeCondition] } : {}),
         },
         select: {
@@ -651,17 +636,24 @@ export class DashboardService {
           type: true,
         },
       });
+    };
 
-      logs.forEach((log) => {
-        const hour = this.getKstHourFromUtc(log.timestamp);
-        const existing = hourlyMap.get(hour) || { totalBlocks: 0, behaviorBlocks: 0, allowedAppBlocks: 0 };
-        hourlyMap.set(hour, {
-          totalBlocks: existing.totalBlocks + 1,
-          behaviorBlocks: existing.behaviorBlocks + (log.type === 'behavior' ? 1 : 0),
-          allowedAppBlocks: existing.allowedAppBlocks + (log.type === 'app_control' ? 1 : 0),
-        });
-      });
+    let logs = await loadDailyBlockedLogs(targetDate);
+
+    if (logs.length === 0 && !date) {
+      targetDate = new Date(targetDate.getTime() - (24 * 60 * 60 * 1000));
+      logs = await loadDailyBlockedLogs(targetDate);
     }
+
+    logs.forEach((log) => {
+      const hour = this.getKstHourFromUtc(log.timestamp);
+      const existing = hourlyMap.get(hour) || { totalBlocks: 0, behaviorBlocks: 0, allowedAppBlocks: 0 };
+      hourlyMap.set(hour, {
+        totalBlocks: existing.totalBlocks + 1,
+        behaviorBlocks: existing.behaviorBlocks + (log.type === 'behavior' ? 1 : 0),
+        allowedAppBlocks: existing.allowedAppBlocks + (log.type === 'app_control' ? 1 : 0),
+      });
+    });
 
     const result = [];
     for (let h = 0; h < 24; h++) {
@@ -781,6 +773,9 @@ export class DashboardService {
       const logs = await this.prisma.controlLog.findMany({
         where: {
           timestamp: { gte: targetDate, lt: nextDate },
+          employee: {
+            deletedAt: null,
+          },
           ...(controlLogScopeCondition ? { AND: [controlLogScopeCondition] } : {}),
         },
         select: {
@@ -869,7 +864,7 @@ export class DashboardService {
       }
 
       const [totalEmployees, activeDevices] = await Promise.all([
-        this.prisma.employee.count({ where: { organizationId, status: 'ACTIVE' } }),
+        this.prisma.employee.count({ where: { organizationId, status: 'ACTIVE', deletedAt: null } }),
         this.prisma.device.count({ where: { organizationId, status: 'NORMAL' } }),
       ]);
 
@@ -1821,14 +1816,14 @@ export class DashboardService {
             timePolicies: {
               include: {
                 timePolicy: {
-                  select: { id: true, name: true, startTime: true, endTime: true, days: true },
+                  select: { id: true, name: true, startTime: true, endTime: true, days: true, deletedAt: true },
                 },
               },
             },
             behaviors: {
               include: {
                 behaviorCondition: {
-                  select: { id: true, name: true, description: true },
+                  select: { id: true, name: true, description: true, deletedAt: true },
                 },
               },
             },
@@ -1857,14 +1852,14 @@ export class DashboardService {
         timePolicies: {
           include: {
             timePolicy: {
-              select: { id: true, name: true, startTime: true, endTime: true, days: true },
+              select: { id: true, name: true, startTime: true, endTime: true, days: true, deletedAt: true },
             },
           },
         },
         behaviors: {
           include: {
             behaviorCondition: {
-              select: { id: true, name: true, description: true },
+              select: { id: true, name: true, description: true, deletedAt: true },
             },
           },
         },
@@ -1906,15 +1901,20 @@ export class DashboardService {
       isActive: !!selectedPolicy.isActive,
       priority: selectedPolicy.priority,
       source: assignedPolicyIds.has(selectedPolicy.id) ? 'EMPLOYEE' : 'ORGANIZATION',
-      timePolicies: (selectedPolicy.timePolicies || []).map((item: any) => ({
-        ...item.timePolicy,
-        startTime: this.formatPolicyTime(item.timePolicy?.startTime),
-        endTime: this.formatPolicyTime(item.timePolicy?.endTime),
-      })),
+      timePolicies: (selectedPolicy.timePolicies || [])
+        .map((item: any) => item.timePolicy)
+        .filter((timePolicy: any) => timePolicy && !timePolicy.deletedAt)
+        .map((timePolicy: any) => ({
+          ...timePolicy,
+          startTime: this.formatPolicyTime(timePolicy.startTime),
+          endTime: this.formatPolicyTime(timePolicy.endTime),
+        })),
       zones: (selectedPolicy.zones || [])
         .map((item: any) => item.zone)
-        .filter((zone: any) => zone?.isActive && !zone?.deletedAt),
-      behaviorConditions: (selectedPolicy.behaviors || []).map((item: any) => item.behaviorCondition),
+        .filter((zone: any) => zone && !zone.deletedAt),
+      behaviorConditions: (selectedPolicy.behaviors || [])
+        .map((item: any) => item.behaviorCondition)
+        .filter((behaviorCondition: any) => behaviorCondition && !behaviorCondition.deletedAt),
     };
   }
 

@@ -382,6 +382,19 @@ export class AllowedAppsService {
             status: 'unchanged',
           });
         } catch (error) {
+          if (this.isStoreLookupMissingError(error)) {
+            results.push({
+              id: app.id,
+              packageName: app.packageName,
+              platform: normalizedPlatform,
+              previousIconUrl,
+              iconUrl: previousIconUrl,
+              status: 'missing',
+              message: '스토어에 등록되지 않아 아이콘을 찾지 못했습니다.',
+            });
+            continue;
+          }
+
           results.push({
             id: app.id,
             packageName: app.packageName,
@@ -564,9 +577,53 @@ export class AllowedAppsService {
   }
 
   private async fetchAndroidIconUrl(packageName: string): Promise<string | null> {
-    const url = `https://play.google.com/store/apps/details?id=${encodeURIComponent(packageName)}&hl=ko&gl=KR`;
-    const html = await this.fetchText(url);
+    let playLookupError: unknown;
 
+    try {
+      const url = `https://play.google.com/store/apps/details?id=${encodeURIComponent(packageName)}&hl=ko&gl=KR`;
+      const html = await this.fetchText(url);
+      const playIconUrl = this.extractIconUrlFromStoreHtml(html);
+      if (playIconUrl) {
+        return playIconUrl;
+      }
+    } catch (error) {
+      playLookupError = error;
+    }
+
+    if (this.hasSamsungGalaxyStoreFallback(packageName)) {
+      try {
+        const samsungIconUrl = await this.fetchSamsungGalaxyIconUrl(packageName);
+        if (samsungIconUrl) {
+          return samsungIconUrl;
+        }
+      } catch (error) {
+        if (!playLookupError) {
+          throw error;
+        }
+      }
+    }
+
+    if (playLookupError) {
+      throw playLookupError;
+    }
+
+    return null;
+  }
+
+  private async fetchIosIconUrl(bundleId: string): Promise<string | null> {
+    const url = `https://itunes.apple.com/lookup?bundleId=${encodeURIComponent(bundleId)}`;
+    const json = await this.fetchJson<any>(url);
+    const first = Array.isArray(json?.results) ? json.results[0] : null;
+    return first?.artworkUrl512 || first?.artworkUrl100 || null;
+  }
+
+  private async fetchSamsungGalaxyIconUrl(packageName: string): Promise<string | null> {
+    const url = `https://galaxystore.samsung.com/detail/${encodeURIComponent(packageName)}`;
+    const html = await this.fetchText(url);
+    return this.extractIconUrlFromStoreHtml(html);
+  }
+
+  private extractIconUrlFromStoreHtml(html: string): string | null {
     const ogImageMatch = html.match(/<meta\s+property="og:image"\s+content="([^"]+)"\s*\/?\s*>/i);
     if (ogImageMatch?.[1]) {
       return ogImageMatch[1].replace(/&amp;/g, '&');
@@ -580,11 +637,16 @@ export class AllowedAppsService {
     return null;
   }
 
-  private async fetchIosIconUrl(bundleId: string): Promise<string | null> {
-    const url = `https://itunes.apple.com/lookup?bundleId=${encodeURIComponent(bundleId)}`;
-    const json = await this.fetchJson<any>(url);
-    const first = Array.isArray(json?.results) ? json.results[0] : null;
-    return first?.artworkUrl512 || first?.artworkUrl100 || null;
+  private hasSamsungGalaxyStoreFallback(packageName: string): boolean {
+    return packageName.startsWith('com.samsung.') || packageName.startsWith('com.sec.');
+  }
+
+  private isStoreLookupMissingError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    return /^HTTP (404|410)$/.test(error.message);
   }
 
   private async fetchText(url: string): Promise<string> {
