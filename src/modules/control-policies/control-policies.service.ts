@@ -1578,7 +1578,7 @@ export class ControlPoliciesService {
           action: this.resolveAuditActionByTrigger(params.trigger),
           resourceType: 'ControlPolicyPush',
           resourceId: params.policyId,
-          resourceName: 'policy_changed 발송',
+          resourceName: '통제 정책',
           organizationId: params.organizationId,
           changesAfter: summary,
         },

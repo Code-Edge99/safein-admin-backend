@@ -27,6 +27,16 @@ const actionLabelMap: Record<string, string> = {
   DEACTIVATE: '비활성화',
 };
 
+const adminActorTypeLabelMap: Record<string, string> = {
+  SUPER_ADMIN: '슈퍼관리자',
+  COMPANY_MANAGER: '회사 관리자',
+  GROUP_MANAGER: '그룹 담당자',
+};
+
+const legacyAdminRoleLabelMap: Record<string, string> = {
+  SITE_ADMIN: '회사/그룹 관리자',
+};
+
 const resourceLabelMap: Record<string, string> = {
   organization: '현장',
   accounts: '계정 관리',
@@ -45,9 +55,19 @@ const resourceLabelMap: Record<string, string> = {
   'audit-logs': '감사 로그',
   'login-history': '로그인 이력',
   'control-logs': '제어 로그',
+  controlpolicypush: '통제 정책',
   devices: '디바이스 관리',
   'system-log': '시스템 로그',
 };
+
+function toNumberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function resolveDisplayValue(value: unknown): string {
+  const raw = toStringOrEmpty(value);
+  return adminActorTypeLabelMap[raw] || legacyAdminRoleLabelMap[raw] || raw;
+}
 
 function looksLikeHttpRequestResourceName(value: string): boolean {
   return /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\/|https?:\/\/)/i.test(value);
@@ -59,14 +79,14 @@ function resolveActionLabel(action: unknown): string {
 }
 
 function resolveResourceLabel(resourceType: unknown, resourceName: unknown): string {
-  const rawName = toStringOrEmpty(resourceName);
+  const rawName = resolveDisplayValue(resourceName);
   const typeKey = toStringOrEmpty(resourceType).toLowerCase();
 
   if (rawName && typeKey !== 'system-log' && !looksLikeHttpRequestResourceName(rawName)) {
     return rawName;
   }
 
-  return resourceLabelMap[typeKey] || typeKey || '관리자 기능';
+  return resourceLabelMap[typeKey] || resolveDisplayValue(resourceType) || typeKey || '관리자 기능';
 }
 
 function resolveAuditSeverity(action: string): FallbackSummary['severity'] {
@@ -121,6 +141,66 @@ function buildUnitTransferSummary(
   };
 }
 
+function resolvePolicyPushTriggerLabel(trigger: string): string {
+  switch (trigger) {
+    case 'create':
+      return '정책 생성';
+    case 'activate':
+      return '정책 활성화';
+    case 'deactivate':
+      return '정책 비활성화';
+    case 'update':
+    default:
+      return '정책 변경';
+  }
+}
+
+function buildControlPolicyPushSummary(
+  log: any,
+  changesAfter: Record<string, unknown> | null,
+): FallbackSummary | null {
+  const typeKey = toStringOrEmpty(log.resourceType).toLowerCase();
+  if (typeKey !== 'controlpolicypush') {
+    return null;
+  }
+
+  const triggerLabel = resolvePolicyPushTriggerLabel(toStringOrEmpty(changesAfter?.trigger));
+  const targetEmployees = toNumberOrNull(changesAfter?.targetEmployees);
+  const targetTokens = toNumberOrNull(changesAfter?.targetTokens);
+  const successCount = toNumberOrNull(changesAfter?.successCount) ?? 0;
+  const failedCount = toNumberOrNull(changesAfter?.failedCount) ?? 0;
+  const markedAsErrorCount = toNumberOrNull(changesAfter?.markedAsErrorCount) ?? 0;
+
+  const detailsParts = [`유형: ${triggerLabel}`];
+
+  if (typeof targetEmployees === 'number') {
+    detailsParts.push(`대상 직원: ${targetEmployees}명`);
+  }
+
+  if (typeof targetTokens === 'number') {
+    detailsParts.push(`발송 토큰: ${targetTokens}건`);
+  }
+
+  detailsParts.push(`성공: ${successCount}건`);
+
+  if (failedCount > 0) {
+    detailsParts.push(`실패: ${failedCount}건`);
+  }
+
+  if (markedAsErrorCount > 0) {
+    detailsParts.push(`오류 처리 토큰: ${markedAsErrorCount}건`);
+  }
+
+  return {
+    action: `${triggerLabel} 알림 전송`,
+    target: '통제 정책',
+    details: detailsParts.join(' / '),
+    severity: failedCount > 0 ? 'warning' : 'success',
+    result: failedCount > 0 ? 'failure' : 'success',
+    category: 'batch',
+  };
+}
+
 function buildFallbackSummary(
   log: any,
   changesBefore: Record<string, unknown> | null,
@@ -129,6 +209,11 @@ function buildFallbackSummary(
   const unitTransferSummary = buildUnitTransferSummary(log, changesBefore, changesAfter);
   if (unitTransferSummary) {
     return unitTransferSummary;
+  }
+
+  const controlPolicyPushSummary = buildControlPolicyPushSummary(log, changesAfter);
+  if (controlPolicyPushSummary) {
+    return controlPolicyPushSummary;
   }
 
   const action = resolveActionLabel(log.action);
