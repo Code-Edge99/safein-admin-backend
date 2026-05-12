@@ -8,7 +8,7 @@ export class NoticeFilterDto extends PaginationDto {
   @IsString()
   search?: string;
 
-  @ApiPropertyOptional({ description: '현장 ID 필터' })
+  @ApiPropertyOptional({ description: '회사/그룹 ID 필터(하위 조직 포함)' })
   @IsOptional()
   @IsString()
   @MaxLength(120)

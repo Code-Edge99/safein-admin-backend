@@ -52,7 +52,7 @@ export class NoticeAttachmentPayloadDto {
 }
 
 export class CreateNoticeDto {
-  @ApiProperty({ description: '게시 대상 현장 ID' })
+  @ApiProperty({ description: '게시 대상 회사/그룹 ID' })
   @IsString()
   @IsNotEmpty()
   @MaxLength(120)

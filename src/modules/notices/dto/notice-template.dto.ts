@@ -2,7 +2,7 @@ import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class NoticeTemplateFilterDto {
-  @ApiPropertyOptional({ description: '현장 ID 필터' })
+  @ApiPropertyOptional({ description: '회사/그룹 ID 필터' })
   @IsOptional()
   @IsString()
   @MaxLength(120)
@@ -16,7 +16,7 @@ export class NoticeTemplateFilterDto {
 }
 
 export class CreateNoticeTemplateDto {
-  @ApiProperty({ description: '양식 소속 현장 ID' })
+  @ApiProperty({ description: '양식 소속 회사/그룹 ID' })
   @IsString()
   @IsNotEmpty()
   @MaxLength(120)

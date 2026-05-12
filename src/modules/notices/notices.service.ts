@@ -50,6 +50,18 @@ type NoticeTemplateWithRelations = Prisma.NoticeTemplateGetPayload<{
   };
 }>;
 
+type NoticePermissionTarget = {
+  organizationId: string;
+  createdById: string | null;
+};
+
+type NoticeActorAccessContext = {
+  actorType: 'SUPER_ADMIN' | 'COMPANY_MANAGER' | 'GROUP_MANAGER';
+  manageableOrganizationIds?: string[];
+  companyOrganizationId?: string;
+  canEditScopedNotices: boolean;
+};
+
 @Injectable()
 export class NoticesService {
   constructor(
@@ -90,10 +102,9 @@ export class NoticesService {
 
   private async resolveEffectiveReadableOrganizationIds(
     scopeOrganizationIds?: string[],
-    currentUserId?: string,
-    currentUserRole?: string,
+    actorContext?: NoticeActorAccessContext,
   ): Promise<string[] | undefined> {
-    const actorReadableOrganizationIds = await this.resolveActorReadableOrganizationIds(currentUserId, currentUserRole);
+    const actorReadableOrganizationIds = actorContext?.manageableOrganizationIds;
     if (actorReadableOrganizationIds) {
       return actorReadableOrganizationIds;
     }
@@ -244,6 +255,72 @@ export class NoticesService {
     return null;
   }
 
+  private async resolveActorAccessContext(
+    actorUserId?: string,
+    actorUserRole?: string,
+  ): Promise<NoticeActorAccessContext> {
+    if (this.isSuperAdmin(actorUserRole)) {
+      return {
+        actorType: 'SUPER_ADMIN',
+        canEditScopedNotices: true,
+      };
+    }
+
+    if (!actorUserId) {
+      throw new ForbiddenException('사용자 정보를 확인할 수 없습니다.');
+    }
+
+    const account = await this.prisma.account.findUnique({
+      where: { id: actorUserId },
+      select: {
+        organizationId: true,
+        organization: {
+          select: { id: true, parentId: true, teamCode: true },
+        },
+      },
+    });
+
+    if (!account?.organizationId) {
+      throw new ForbiddenException('소속 회사 정보를 확인할 수 없습니다.');
+    }
+
+    const companyOrganizationId = await this.resolveAncestorCompanyId(account.organizationId);
+    if (!companyOrganizationId) {
+      throw new ForbiddenException('소속 회사 정보를 확인할 수 없습니다.');
+    }
+
+    const classification = account.organization
+      ? resolveOrganizationClassification(account.organization)
+      : null;
+
+    if (classification === 'COMPANY') {
+      return {
+        actorType: 'COMPANY_MANAGER',
+        manageableOrganizationIds: await this.collectDescendantOrganizationIds(companyOrganizationId),
+        companyOrganizationId,
+        canEditScopedNotices: true,
+      };
+    }
+
+    const groupOrganizationId = await this.resolveAncestorGroupId(account.organizationId);
+    if (!groupOrganizationId) {
+      return {
+        actorType: 'GROUP_MANAGER',
+        manageableOrganizationIds: [companyOrganizationId],
+        companyOrganizationId,
+        canEditScopedNotices: false,
+      };
+    }
+
+    const groupDescendantIds = await this.collectDescendantOrganizationIds(groupOrganizationId);
+    return {
+      actorType: 'GROUP_MANAGER',
+      manageableOrganizationIds: Array.from(new Set([companyOrganizationId, ...groupDescendantIds])),
+      companyOrganizationId,
+      canEditScopedNotices: false,
+    };
+  }
+
   private async resolveActorReadableOrganizationIds(
     actorUserId?: string,
     actorUserRole?: string,
@@ -298,6 +375,33 @@ export class NoticesService {
     }
 
     return readableOrganizationIds.includes(organizationId);
+  }
+
+  private canAccessNotice(
+    notice: NoticePermissionTarget,
+    currentUserId: string | undefined,
+    actorContext: NoticeActorAccessContext,
+    readableOrganizationIds?: string[],
+  ): boolean {
+    if (actorContext.actorType === 'GROUP_MANAGER') {
+      return notice.organizationId === actorContext.companyOrganizationId
+        || Boolean(currentUserId && notice.createdById === currentUserId);
+    }
+
+    return this.canReadNotice(notice.organizationId, readableOrganizationIds);
+  }
+
+  private assertReadableNotice(
+    notice: NoticePermissionTarget,
+    currentUserId: string | undefined,
+    actorContext: NoticeActorAccessContext,
+    readableOrganizationIds?: string[],
+  ): void {
+    if (this.canAccessNotice(notice, currentUserId, actorContext, readableOrganizationIds)) {
+      return;
+    }
+
+    throw new ForbiddenException('다른 그룹 공지사항에는 접근할 수 없습니다.');
   }
 
   private assertReadableOrganization(
@@ -444,15 +548,76 @@ export class NoticesService {
     return deleted ? 'deleted' : 'missing';
   }
 
-  private async ensureActiveOrganizationExists(organizationId: string): Promise<void> {
+  private async ensureActiveNoticeTargetOrganizationExists(organizationId: string): Promise<void> {
     const organization = await this.prisma.organization.findUnique({
       where: { id: organizationId },
-      select: { id: true, isActive: true },
+      select: { id: true, isActive: true, parentId: true, teamCode: true },
     });
 
     if (!organization || !organization.isActive) {
       throw new NotFoundException('유효한 현장을 찾을 수 없습니다.');
     }
+
+    const classification = resolveOrganizationClassification(organization);
+    if (classification !== 'COMPANY' && classification !== 'GROUP') {
+      throw new BadRequestException('공지사항과 공지 양식은 회사 또는 그룹 현장에만 연결할 수 있습니다.');
+    }
+  }
+
+  private async resolveScopedNoticeFilterOrganizationIds(
+    organizationId: string,
+    readableOrganizationIds?: string[],
+  ): Promise<string[]> {
+    const descendantOrganizationIds = await this.collectDescendantOrganizationIds(organizationId);
+
+    if (!readableOrganizationIds) {
+      return descendantOrganizationIds;
+    }
+
+    return descendantOrganizationIds.filter((candidateId) => readableOrganizationIds.includes(candidateId));
+  }
+
+  private async canActorEditScopedNotices(actorUserId?: string, actorUserRole?: string): Promise<boolean> {
+    if (this.isSuperAdmin(actorUserRole)) {
+      return true;
+    }
+
+    if (!actorUserId) {
+      return false;
+    }
+
+    const account = await this.prisma.account.findUnique({
+      where: { id: actorUserId },
+      select: {
+        organization: {
+          select: { id: true, parentId: true, teamCode: true },
+        },
+      },
+    });
+
+    if (!account?.organization) {
+      return false;
+    }
+
+    return resolveOrganizationClassification(account.organization) === 'COMPANY';
+  }
+
+  private canEditNotice(
+    notice: NoticePermissionTarget,
+    currentUserId?: string,
+    currentUserRole?: string,
+    readableOrganizationIds?: string[],
+    canEditScopedNotices: boolean = false,
+  ): boolean {
+    if (this.isSuperAdmin(currentUserRole)) {
+      return true;
+    }
+
+    if (canEditScopedNotices && this.canReadNotice(notice.organizationId, readableOrganizationIds)) {
+      return true;
+    }
+
+    return Boolean(currentUserId && notice.createdById === currentUserId);
   }
 
   private async resolveNoticeTemplateId(
@@ -482,7 +647,13 @@ export class NoticesService {
     return template.id;
   }
 
-  private toResponseDto(notice: NoticeWithRelations, currentUserId?: string, currentUserRole?: string): NoticeResponseDto {
+  private toResponseDto(
+    notice: NoticeWithRelations,
+    currentUserId?: string,
+    currentUserRole?: string,
+    readableOrganizationIds?: string[],
+    canEditScopedNotices: boolean = false,
+  ): NoticeResponseDto {
     const canRevealAuthor = this.isSuperAdmin(currentUserRole)
       || Boolean(currentUserId && notice.createdById === currentUserId);
 
@@ -499,7 +670,13 @@ export class NoticesService {
       createdById: notice.createdById ?? undefined,
       createdByName: canRevealAuthor ? notice.createdBy?.name ?? undefined : undefined,
       createdByRole: canRevealAuthor ? notice.createdBy?.role ?? undefined : undefined,
-      isEditableByMe: this.isSuperAdmin(currentUserRole) || Boolean(currentUserId && notice.createdById === currentUserId),
+      isEditableByMe: this.canEditNotice(
+        notice,
+        currentUserId,
+        currentUserRole,
+        readableOrganizationIds,
+        canEditScopedNotices,
+      ),
       attachments: notice.attachments.map((attachment) => ({
         id: attachment.id,
         fileName: attachment.fileName,
@@ -535,20 +712,35 @@ export class NoticesService {
     currentUserId?: string,
     currentUserRole?: string,
   ): Promise<PaginatedResponse<NoticeResponseDto>> {
+    const actorContext = await this.resolveActorAccessContext(currentUserId, currentUserRole);
     const readableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
       scopeOrganizationIds,
-      currentUserId,
-      currentUserRole,
+      actorContext,
     );
     const whereConditions: Prisma.NoticeWhereInput[] = [];
 
-    if (readableOrganizationIds) {
+    if (actorContext.actorType === 'GROUP_MANAGER' && currentUserId) {
+      whereConditions.push({
+        OR: [
+          { organizationId: actorContext.companyOrganizationId },
+          { createdById: currentUserId },
+        ],
+      });
+    } else if (readableOrganizationIds) {
       whereConditions.push({ organizationId: { in: readableOrganizationIds } });
     }
 
     if (filter.organizationId) {
+      if (actorContext.actorType === 'GROUP_MANAGER') {
+        throw new BadRequestException('현장 담당자는 조직 필터를 사용할 수 없습니다.');
+      }
+
       this.assertOrganizationInReadableScope(filter.organizationId, readableOrganizationIds);
-      whereConditions.push({ organizationId: filter.organizationId });
+      const scopedOrganizationIds = await this.resolveScopedNoticeFilterOrganizationIds(
+        filter.organizationId,
+        readableOrganizationIds,
+      );
+      whereConditions.push({ organizationId: { in: scopedOrganizationIds } });
     }
 
     const trimmedSearch = filter.search?.trim();
@@ -587,7 +779,13 @@ export class NoticesService {
     ]);
 
     return new PaginatedResponse(
-      rows.map((row) => this.toResponseDto(row, currentUserId, currentUserRole)),
+      rows.map((row) => this.toResponseDto(
+        row,
+        currentUserId,
+        currentUserRole,
+        readableOrganizationIds,
+        actorContext.canEditScopedNotices,
+      )),
       total,
       filter.page ?? 1,
       filter.limit ?? 20,
@@ -616,14 +814,20 @@ export class NoticesService {
       throw new NotFoundException('공지사항을 찾을 수 없습니다.');
     }
 
+    const actorContext = await this.resolveActorAccessContext(currentUserId, currentUserRole);
     const readableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
       scopeOrganizationIds,
+      actorContext,
+    );
+    this.assertReadableNotice(row, currentUserId, actorContext, readableOrganizationIds);
+
+    return this.toResponseDto(
+      row,
       currentUserId,
       currentUserRole,
+      readableOrganizationIds,
+      actorContext.canEditScopedNotices,
     );
-    this.assertReadableOrganization(row.organizationId, readableOrganizationIds);
-
-    return this.toResponseDto(row, currentUserId, currentUserRole);
   }
 
   async findTemplates(
@@ -632,10 +836,10 @@ export class NoticesService {
     currentUserId?: string,
     currentUserRole?: string,
   ): Promise<NoticeTemplateResponseDto[]> {
+    const actorContext = await this.resolveActorAccessContext(currentUserId, currentUserRole);
     const readableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
       scopeOrganizationIds,
-      currentUserId,
-      currentUserRole,
+      actorContext,
     );
     const whereConditions: Prisma.NoticeTemplateWhereInput[] = [];
 
@@ -682,13 +886,13 @@ export class NoticesService {
       throw new ForbiddenException('사용자 정보를 확인할 수 없습니다.');
     }
 
+    const actorContext = await this.resolveActorAccessContext(actorUserId, actorUserRole);
     const readableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
       scopeOrganizationIds,
-      actorUserId,
-      actorUserRole,
+      actorContext,
     );
     this.assertOrganizationInReadableScope(dto.organizationId, readableOrganizationIds);
-    await this.ensureActiveOrganizationExists(dto.organizationId);
+    await this.ensureActiveNoticeTargetOrganizationExists(dto.organizationId);
 
     const name = dto.name.trim();
     const title = dto.title.trim();
@@ -737,10 +941,10 @@ export class NoticesService {
       throw new NotFoundException('공지 양식을 찾을 수 없습니다.');
     }
 
+    const actorContext = await this.resolveActorAccessContext(actorUserId, actorUserRole);
     const readableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
       scopeOrganizationIds,
-      actorUserId,
-      actorUserRole,
+      actorContext,
     );
     this.assertReadableOrganization(existing.organizationId, readableOrganizationIds);
 
@@ -749,7 +953,7 @@ export class NoticesService {
     }
 
     const targetOrganizationId = dto.organizationId ?? existing.organizationId;
-    await this.ensureActiveOrganizationExists(targetOrganizationId);
+    await this.ensureActiveNoticeTargetOrganizationExists(targetOrganizationId);
 
     const name = dto.name !== undefined ? dto.name.trim() : existing.name;
     const title = dto.title !== undefined ? dto.title.trim() : existing.title;
@@ -790,13 +994,13 @@ export class NoticesService {
       throw new ForbiddenException('사용자 정보를 확인할 수 없습니다.');
     }
 
+    const actorContext = await this.resolveActorAccessContext(actorUserId, actorUserRole);
     const readableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
       scopeOrganizationIds,
-      actorUserId,
-      actorUserRole,
+      actorContext,
     );
     this.assertOrganizationInReadableScope(dto.organizationId, readableOrganizationIds);
-    await this.ensureActiveOrganizationExists(dto.organizationId);
+    await this.ensureActiveNoticeTargetOrganizationExists(dto.organizationId);
 
     const title = dto.title.trim();
     const contentHtml = dto.contentHtml.trim();
@@ -840,7 +1044,13 @@ export class NoticesService {
 
     await this.syncNoticeTranslations(created.id, { title, contentHtml, contentText }, created.updatedAt);
 
-    return this.toResponseDto(created, actorUserId, actorUserRole);
+    return this.toResponseDto(
+      created,
+      actorUserId,
+      actorUserRole,
+      readableOrganizationIds,
+      actorContext.canEditScopedNotices,
+    );
   }
 
   async update(
@@ -870,15 +1080,15 @@ export class NoticesService {
       throw new NotFoundException('공지사항을 찾을 수 없습니다.');
     }
 
+    const actorContext = await this.resolveActorAccessContext(actorUserId, actorUserRole);
     const readableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
       scopeOrganizationIds,
-      actorUserId,
-      actorUserRole,
+      actorContext,
     );
-    this.assertReadableOrganization(existing.organizationId, readableOrganizationIds);
+    this.assertReadableNotice(existing, actorUserId, actorContext, readableOrganizationIds);
 
-    if (!this.isSuperAdmin(actorUserRole) && existing.createdById !== actorUserId) {
-      throw new ForbiddenException('작성자 본인 또는 슈퍼관리자만 수정할 수 있습니다.');
+    if (!this.canEditNotice(existing, actorUserId, actorUserRole, readableOrganizationIds, actorContext.canEditScopedNotices)) {
+      throw new ForbiddenException('슈퍼관리자, 회사 관리자 또는 작성자 본인만 수정할 수 있습니다.');
     }
 
     if (dto.organizationId) {
@@ -886,7 +1096,7 @@ export class NoticesService {
     }
 
     const targetOrganizationId = dto.organizationId ?? existing.organizationId;
-    await this.ensureActiveOrganizationExists(targetOrganizationId);
+    await this.ensureActiveNoticeTargetOrganizationExists(targetOrganizationId);
 
     const title = dto.title !== undefined ? dto.title.trim() : existing.title;
     const contentHtml = dto.contentHtml !== undefined ? dto.contentHtml.trim() : existing.contentHtml;
@@ -953,7 +1163,13 @@ export class NoticesService {
 
     await this.syncNoticeTranslations(updated.id, { title, contentHtml, contentText }, updated.updatedAt);
 
-    return this.toResponseDto(updated, actorUserId, actorUserRole);
+    return this.toResponseDto(
+      updated,
+      actorUserId,
+      actorUserRole,
+      readableOrganizationIds,
+      actorContext.canEditScopedNotices,
+    );
   }
 
   async remove(
@@ -980,15 +1196,15 @@ export class NoticesService {
       throw new NotFoundException('공지사항을 찾을 수 없습니다.');
     }
 
+    const actorContext = await this.resolveActorAccessContext(actorUserId, actorUserRole);
     const readableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
       scopeOrganizationIds,
-      actorUserId,
-      actorUserRole,
+      actorContext,
     );
-    this.assertReadableOrganization(existing.organizationId, readableOrganizationIds);
+    this.assertReadableNotice(existing, actorUserId, actorContext, readableOrganizationIds);
 
-    if (!this.isSuperAdmin(actorUserRole) && existing.createdById !== actorUserId) {
-      throw new ForbiddenException('작성자 본인 또는 슈퍼관리자만 삭제할 수 있습니다.');
+    if (!this.canEditNotice(existing, actorUserId, actorUserRole, readableOrganizationIds, actorContext.canEditScopedNotices)) {
+      throw new ForbiddenException('슈퍼관리자, 회사 관리자 또는 작성자 본인만 삭제할 수 있습니다.');
     }
 
     await this.prisma.notice.delete({ where: { id: existing.id } });
@@ -1014,10 +1230,10 @@ export class NoticesService {
       throw new NotFoundException('공지 양식을 찾을 수 없습니다.');
     }
 
+    const actorContext = await this.resolveActorAccessContext(actorUserId, actorUserRole);
     const readableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
       scopeOrganizationIds,
-      actorUserId,
-      actorUserRole,
+      actorContext,
     );
     this.assertReadableOrganization(existing.organizationId, readableOrganizationIds);
 
