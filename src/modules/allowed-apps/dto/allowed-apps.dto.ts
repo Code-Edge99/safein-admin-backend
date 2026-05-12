@@ -46,7 +46,10 @@ export class CreateAllowedAppDto {
   isGlobal?: boolean;
 }
 
-export class UpdateAllowedAppDto extends PartialType(CreateAllowedAppDto) {}
+export class UpdateAllowedAppDto extends PartialType(CreateAllowedAppDto) {
+  declare packageName?: string;
+  declare platform?: string;
+}
 
 export class AllowedAppResponseDto {
   @ApiProperty({ description: '앱 ID' })
