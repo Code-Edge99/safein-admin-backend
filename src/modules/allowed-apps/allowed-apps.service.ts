@@ -240,12 +240,19 @@ export class AllowedAppsService {
 
     await this.findOne(id);
 
-    const updateData: any = { ...dto };
-    if (dto.platform !== undefined) {
-      updateData.platform = this.normalizePlatform(dto.platform);
+    const updateDto = dto as UpdateAllowedAppDto & {
+      packageName?: string;
+      platform?: string;
+    };
+
+    const updateData: any = { ...updateDto };
+    if (updateDto.platform !== undefined) {
+      updateData.platform = this.normalizePlatform(updateDto.platform);
     }
 
-    const normalizedPackageName = dto.packageName ? this.normalizePackageName(dto.packageName) : undefined;
+    const normalizedPackageName = updateDto.packageName
+      ? this.normalizePackageName(updateDto.packageName)
+      : undefined;
     if (normalizedPackageName) {
       updateData.packageName = normalizedPackageName;
     }
