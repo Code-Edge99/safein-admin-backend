@@ -2113,8 +2113,8 @@ export class ControlPoliciesService {
     timePolicies: number;
     behaviors: number;
     allowedApps: number;
-  }): Array<'ZONE' | 'TIME_POLICY' | 'BEHAVIOR_OR_ALLOWED_APP'> {
-    const missing: Array<'ZONE' | 'TIME_POLICY' | 'BEHAVIOR_OR_ALLOWED_APP'> = [];
+  }): Array<'ZONE' | 'TIME_POLICY'> {
+    const missing: Array<'ZONE' | 'TIME_POLICY'> = [];
 
     if (counts.zones === 0) {
       missing.push('ZONE');
@@ -2122,10 +2122,6 @@ export class ControlPoliciesService {
 
     if (counts.timePolicies === 0) {
       missing.push('TIME_POLICY');
-    }
-
-    if (counts.behaviors === 0 && counts.allowedApps === 0) {
-      missing.push('BEHAVIOR_OR_ALLOWED_APP');
     }
 
     return missing;

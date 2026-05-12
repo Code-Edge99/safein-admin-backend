@@ -76,14 +76,10 @@ export function doesPolicyTargetOrganization(
 export function hasRequiredPolicyConditions(
   policy: Pick<PolicyScopeCandidate, 'zones' | 'timePolicies' | 'behaviors' | 'allowedApps'>,
 ): boolean {
-  const hasBehaviorCondition = Array.isArray(policy.behaviors) && policy.behaviors.length > 0;
-  const hasAllowedAppCondition = Array.isArray(policy.allowedApps) && policy.allowedApps.length > 0;
-
   return Array.isArray(policy.zones)
     && policy.zones.length > 0
     && Array.isArray(policy.timePolicies)
-    && policy.timePolicies.length > 0
-    && (hasBehaviorCondition || hasAllowedAppCondition);
+    && policy.timePolicies.length > 0;
 }
 
 export function selectPreferredOwnerScopedPolicies<T extends PolicyScopeCandidate>(

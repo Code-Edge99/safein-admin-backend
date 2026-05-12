@@ -342,18 +342,29 @@ export class NoticesService {
       throw new ForbiddenException('소속 회사 정보를 확인할 수 없습니다.');
     }
 
-    const companyOrganizationId = await this.resolveAncestorCompanyId(account.organizationId);
-    if (!companyOrganizationId) {
-      throw new ForbiddenException('소속 회사 정보를 확인할 수 없습니다.');
+    return this.resolveReadableOrganizationIds([account.organizationId]);
+  }
+
+  private async resolveEffectiveNoticeViewOrganizationIds(
+    scopeOrganizationIds?: string[],
+    actorUserId?: string,
+    actorUserRole?: string,
+  ): Promise<string[] | undefined> {
+    const [actorReadableOrganizationIds, scopedReadableOrganizationIds] = await Promise.all([
+      this.resolveActorReadableOrganizationIds(actorUserId, actorUserRole),
+      scopeOrganizationIds && scopeOrganizationIds.length > 0
+        ? this.resolveReadableOrganizationIds(scopeOrganizationIds)
+        : Promise.resolve(undefined),
+    ]);
+
+    if (actorReadableOrganizationIds && scopedReadableOrganizationIds) {
+      return Array.from(new Set([
+        ...actorReadableOrganizationIds,
+        ...scopedReadableOrganizationIds,
+      ]));
     }
 
-    const groupOrganizationId = await this.resolveAncestorGroupId(account.organizationId);
-    if (!groupOrganizationId) {
-      return this.collectDescendantOrganizationIds(companyOrganizationId);
-    }
-
-    const groupDescendantIds = await this.collectDescendantOrganizationIds(groupOrganizationId);
-    return Array.from(new Set([companyOrganizationId, ...groupDescendantIds]));
+    return actorReadableOrganizationIds ?? scopedReadableOrganizationIds;
   }
 
   private assertOrganizationInReadableScope(organizationId: string, readableOrganizationIds?: string[]): void {
@@ -383,9 +394,8 @@ export class NoticesService {
     actorContext: NoticeActorAccessContext,
     readableOrganizationIds?: string[],
   ): boolean {
-    if (actorContext.actorType === 'GROUP_MANAGER') {
-      return notice.organizationId === actorContext.companyOrganizationId
-        || Boolean(currentUserId && notice.createdById === currentUserId);
+    if (currentUserId && notice.createdById === currentUserId) {
+      return true;
     }
 
     return this.canReadNotice(notice.organizationId, readableOrganizationIds);
@@ -654,9 +664,6 @@ export class NoticesService {
     readableOrganizationIds?: string[],
     canEditScopedNotices: boolean = false,
   ): NoticeResponseDto {
-    const canRevealAuthor = this.isSuperAdmin(currentUserRole)
-      || Boolean(currentUserId && notice.createdById === currentUserId);
-
     return {
       id: notice.id,
       organizationId: notice.organizationId,
@@ -668,8 +675,8 @@ export class NoticesService {
       contentHtml: notice.contentHtml,
       contentText: notice.contentText ?? undefined,
       createdById: notice.createdById ?? undefined,
-      createdByName: canRevealAuthor ? notice.createdBy?.name ?? undefined : undefined,
-      createdByRole: canRevealAuthor ? notice.createdBy?.role ?? undefined : undefined,
+      createdByName: notice.createdBy?.name ?? undefined,
+      createdByRole: notice.createdBy?.role ?? undefined,
       isEditableByMe: this.canEditNotice(
         notice,
         currentUserId,
@@ -713,21 +720,28 @@ export class NoticesService {
     currentUserRole?: string,
   ): Promise<PaginatedResponse<NoticeResponseDto>> {
     const actorContext = await this.resolveActorAccessContext(currentUserId, currentUserRole);
-    const readableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
+    const readableOrganizationIds = await this.resolveEffectiveNoticeViewOrganizationIds(
+      scopeOrganizationIds,
+      currentUserId,
+      currentUserRole,
+    );
+    const manageableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
       scopeOrganizationIds,
       actorContext,
     );
     const whereConditions: Prisma.NoticeWhereInput[] = [];
 
-    if (actorContext.actorType === 'GROUP_MANAGER' && currentUserId) {
-      whereConditions.push({
-        OR: [
-          { organizationId: actorContext.companyOrganizationId },
-          { createdById: currentUserId },
-        ],
-      });
-    } else if (readableOrganizationIds) {
-      whereConditions.push({ organizationId: { in: readableOrganizationIds } });
+    if (readableOrganizationIds) {
+      if (currentUserId) {
+        whereConditions.push({
+          OR: [
+            { organizationId: { in: readableOrganizationIds } },
+            { createdById: currentUserId },
+          ],
+        });
+      } else {
+        whereConditions.push({ organizationId: { in: readableOrganizationIds } });
+      }
     }
 
     if (filter.organizationId) {
@@ -783,7 +797,7 @@ export class NoticesService {
         row,
         currentUserId,
         currentUserRole,
-        readableOrganizationIds,
+        manageableOrganizationIds,
         actorContext.canEditScopedNotices,
       )),
       total,
@@ -815,7 +829,12 @@ export class NoticesService {
     }
 
     const actorContext = await this.resolveActorAccessContext(currentUserId, currentUserRole);
-    const readableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
+    const readableOrganizationIds = await this.resolveEffectiveNoticeViewOrganizationIds(
+      scopeOrganizationIds,
+      currentUserId,
+      currentUserRole,
+    );
+    const manageableOrganizationIds = await this.resolveEffectiveReadableOrganizationIds(
       scopeOrganizationIds,
       actorContext,
     );
@@ -825,7 +844,7 @@ export class NoticesService {
       row,
       currentUserId,
       currentUserRole,
-      readableOrganizationIds,
+      manageableOrganizationIds,
       actorContext.canEditScopedNotices,
     );
   }
