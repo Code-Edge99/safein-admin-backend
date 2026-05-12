@@ -35,18 +35,28 @@ const RESOURCE_MATCHERS: Array<{ matcher: RegExp; info: ResourceInfo }> = [
   { matcher: /^\/employees(?:\/|$)/, info: { label: '직원 관리', category: 'audit' } },
   { matcher: /^\/organizations(?:\/|$)/, info: { label: '현장 관리', category: 'audit' } },
   { matcher: /^\/zones(?:\/|$)/, info: { label: '구역 관리', category: 'audit' } },
-  { matcher: /^\/time-policies(?:\/|$)/, info: { label: '시간관리', category: 'audit' } },
-  { matcher: /^\/behavior-conditions(?:\/|$)/, info: { label: '행동관리', category: 'audit' } },
-  { matcher: /^\/(?:control-policies|policies)(?:\/|$)/, info: { label: '통제 정책', category: 'audit' } },
-  { matcher: /^\/allowed-apps(?:\/|$)/, info: { label: '허용앱 관리', category: 'audit' } },
+  { matcher: /^\/time-policies(?:\/|$)/, info: { label: '시간 정책 관리', category: 'audit' } },
+  { matcher: /^\/behavior-conditions(?:\/|$)/, info: { label: '행동 조건 관리', category: 'audit' } },
+  { matcher: /^\/(?:control-policies|policies)(?:\/|$)/, info: { label: '통제 정책 관리', category: 'audit' } },
+  { matcher: /^\/allowed-apps(?:\/|$)/, info: { label: '허용 앱 관리', category: 'audit' } },
   { matcher: /^\/permissions(?:\/|$)/, info: { label: '권한 관리', category: 'audit' } },
-  { matcher: /^\/maps(?:\/|$)/, info: { label: '지도', category: 'audit' } },
+  { matcher: /^\/maps(?:\/|$)/, info: { label: '지도 관리', category: 'audit' } },
+  { matcher: /^\/translations(?:\/|$)/, info: { label: '번역 관리', category: 'audit' } },
   { matcher: /^\/audit-logs(?:\/|$)/, info: { label: '감사 로그', category: 'audit' } },
   { matcher: /^\/login-history(?:\/|$)/, info: { label: '로그인 이력', category: 'auth' } },
   { matcher: /^\/control-logs(?:\/|$)/, info: { label: '제어 로그', category: 'control' } },
   { matcher: /^\/devices(?:\/|$)/, info: { label: '디바이스 관리', category: 'batch' } },
   { matcher: /^\/health(?:\/|$)/, info: { label: '시스템 상태', category: 'batch' } },
 ];
+
+const APPLICATION_CONTEXT_LABELS: Record<string, ResourceInfo> = {
+  ContentTranslationService: { label: '번역 처리', category: 'batch' },
+  PrismaService: { label: '데이터베이스 처리', category: 'batch' },
+  AllExceptionsFilter: { label: '예외 처리', category: 'batch' },
+  RequestLoggingInterceptor: { label: '요청 처리', category: 'batch' },
+  DashboardService: { label: '대시보드 집계', category: 'batch' },
+  EmployeesHardDeleteScheduler: { label: '직원 정리 작업', category: 'batch' },
+};
 
 const IMPORTANT_READ_PREFIXES = [
   '/dashboard',
@@ -222,23 +232,54 @@ export function createApplicationLogSummary(params: {
   context: string;
   message: string;
 }): SystemLogSummary {
+  const contextInfo = resolveApplicationContextInfo(params.context);
   const severity = severityFromLogLevel(params.level);
   const action = params.level === 'error'
-    ? '시스템 오류 기록'
+    ? `${contextInfo.label} 실패`
     : params.level === 'warn'
-      ? '시스템 경고 기록'
+      ? `${contextInfo.label} 경고`
       : params.level === 'debug'
-        ? '시스템 디버그 기록'
+        ? `${contextInfo.label} 디버그 기록`
         : params.level === 'verbose'
-          ? '시스템 상세 기록'
-          : '시스템 로그 기록';
+          ? `${contextInfo.label} 상세 기록`
+          : `${contextInfo.label} 처리`;
 
   return {
     action,
-    target: params.context || '애플리케이션',
+    target: contextInfo.label,
     details: `메시지: ${params.message}`,
     severity,
     result: params.level === 'error' ? 'failure' : 'success',
-    category: 'batch',
+    category: contextInfo.category,
   };
+}
+
+function resolveApplicationContextInfo(context: string): ResourceInfo {
+  const normalized = context.trim();
+  if (!normalized) {
+    return { label: '시스템 처리', category: 'batch' };
+  }
+
+  const mapped = APPLICATION_CONTEXT_LABELS[normalized];
+  if (mapped) {
+    return mapped;
+  }
+
+  if (/Scheduler$/i.test(normalized)) {
+    return { label: '자동 작업', category: 'batch' };
+  }
+
+  if (/Filter$/i.test(normalized)) {
+    return { label: '예외 처리', category: 'batch' };
+  }
+
+  if (/Interceptor$/i.test(normalized)) {
+    return { label: '요청 처리', category: 'batch' };
+  }
+
+  if (/Service$/i.test(normalized)) {
+    return { label: '관리 기능 처리', category: 'batch' };
+  }
+
+  return { label: '시스템 처리', category: 'batch' };
 }
