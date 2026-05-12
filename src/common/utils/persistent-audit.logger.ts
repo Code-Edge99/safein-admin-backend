@@ -72,6 +72,10 @@ export class PersistentAuditLogger extends ConsoleLogger {
     }
 
     const normalizedContext = this.normalizeMessage(context) || 'Application';
+    if (this.shouldSkipPersistence(level, normalizedContext, normalizedMessage)) {
+      return;
+    }
+
     // HTTP 요청 로그는 RequestLoggingInterceptor에서 구조화하여 저장하므로 중복 저장을 방지한다.
     if (normalizedContext === 'RequestLoggingInterceptor') {
       return;
@@ -94,6 +98,19 @@ export class PersistentAuditLogger extends ConsoleLogger {
       timestamp,
       summary,
     });
+  }
+
+  private shouldSkipPersistence(level: PersistLogLevel, context: string, message: string): boolean {
+    if (context !== 'ContentTranslationService') {
+      return false;
+    }
+
+    if (level === 'warn' || level === 'error') {
+      return false;
+    }
+
+    return message.startsWith('번역 저장 완료(')
+      || message.startsWith('번역 요청 완료(');
   }
 
   private async persistAuditLogWithFallback(params: {

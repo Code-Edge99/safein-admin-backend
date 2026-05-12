@@ -33,20 +33,25 @@ const resourceLabelMap: Record<string, string> = {
   employees: '직원 관리',
   organizations: '현장 관리',
   zones: '구역 관리',
-  'time-policies': '시간관리',
-  'behavior-conditions': '행동관리',
-  'control-policies': '통제 정책',
-  policies: '통제 정책',
-  'allowed-apps': '허용앱 관리',
+  'time-policies': '시간 정책 관리',
+  'behavior-conditions': '행동 조건 관리',
+  'control-policies': '통제 정책 관리',
+  policies: '통제 정책 관리',
+  'allowed-apps': '허용 앱 관리',
   permissions: '권한 관리',
   dashboard: '대시보드',
-  maps: '지도',
+  maps: '지도 관리',
+  translations: '번역 관리',
   'audit-logs': '감사 로그',
   'login-history': '로그인 이력',
   'control-logs': '제어 로그',
   devices: '디바이스 관리',
   'system-log': '시스템 로그',
 };
+
+function looksLikeHttpRequestResourceName(value: string): boolean {
+  return /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\/|https?:\/\/)/i.test(value);
+}
 
 function resolveActionLabel(action: unknown): string {
   const raw = toStringOrEmpty(action);
@@ -55,11 +60,12 @@ function resolveActionLabel(action: unknown): string {
 
 function resolveResourceLabel(resourceType: unknown, resourceName: unknown): string {
   const rawName = toStringOrEmpty(resourceName);
-  if (rawName) {
+  const typeKey = toStringOrEmpty(resourceType).toLowerCase();
+
+  if (rawName && typeKey !== 'system-log' && !looksLikeHttpRequestResourceName(rawName)) {
     return rawName;
   }
 
-  const typeKey = toStringOrEmpty(resourceType).toLowerCase();
   return resourceLabelMap[typeKey] || typeKey || '관리자 기능';
 }
 
