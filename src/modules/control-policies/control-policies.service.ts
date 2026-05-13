@@ -21,6 +21,8 @@ import { readStageConfig } from '../../common/config/stage.config';
 import {
   CreateControlPolicyDto,
   UpdateControlPolicyDto,
+  ControlPolicyImpactPreviewDto,
+  ControlPolicyImpactPreviewResponseDto,
   ControlPolicyFilterDto,
   ControlPolicyResponseDto,
   ControlPolicyDetailDto,
@@ -119,6 +121,49 @@ export class ControlPoliciesService {
     if (!policy || policy.deletedAt || !scopeOrganizationIds.includes(policy.organizationId)) {
       throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
     }
+  }
+
+  async previewImpact(
+    dto: ControlPolicyImpactPreviewDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<ControlPolicyImpactPreviewResponseDto> {
+    const ownerOrganizationId = String(dto.organizationId || '').trim();
+    this.ensureOrganizationInScope(ownerOrganizationId, scopeOrganizationIds);
+
+    await assertPolicyOwnerOrganization(this.prisma, ownerOrganizationId);
+
+    const resolvedTargetUnitIds = await this.resolvePersistedTargetUnitIds(
+      this.prisma,
+      ownerOrganizationId,
+      dto.targetOrganizationIds,
+    );
+
+    const effectiveTargetUnitIds = await this.resolveEffectiveTargetUnitIds(
+      this.prisma,
+      ownerOrganizationId,
+      resolvedTargetUnitIds,
+    );
+
+    if (effectiveTargetUnitIds.length === 0) {
+      return {
+        affectedEmployeeCount: 0,
+        affectedOrganizationCount: 0,
+        affectedOrganizationIds: [],
+      };
+    }
+
+    const affectedEmployeeCount = await this.prisma.employee.count({
+      where: {
+        organizationId: { in: effectiveTargetUnitIds },
+        status: EmployeeStatus.ACTIVE,
+      },
+    });
+
+    return {
+      affectedEmployeeCount,
+      affectedOrganizationCount: effectiveTargetUnitIds.length,
+      affectedOrganizationIds: effectiveTargetUnitIds,
+    };
   }
 
   async create(

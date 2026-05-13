@@ -81,6 +81,30 @@ export class CreateControlPolicyDto {
 
 export class UpdateControlPolicyDto extends PartialType(CreateControlPolicyDto) {}
 
+export class ControlPolicyImpactPreviewDto {
+  @ApiProperty({ description: '정책 소유 현장 ID' })
+  @IsString()
+  @IsNotEmpty()
+  organizationId: string;
+
+  @ApiPropertyOptional({ description: '적용 대상 단위(조직) ID 목록' })
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  targetOrganizationIds?: string[];
+}
+
+export class ControlPolicyImpactPreviewResponseDto {
+  @ApiProperty({ description: '실제 영향 대상 활성 직원 수' })
+  affectedEmployeeCount: number;
+
+  @ApiProperty({ description: '실제 영향 대상 팀 수' })
+  affectedOrganizationCount: number;
+
+  @ApiProperty({ description: '실제 영향 대상 팀 ID 목록', type: [String] })
+  affectedOrganizationIds: string[];
+}
+
 export class ControlPolicyResponseDto {
   @ApiProperty({ description: '정책 ID' })
   id: string;

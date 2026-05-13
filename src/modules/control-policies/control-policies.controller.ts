@@ -24,6 +24,8 @@ import { ControlPoliciesService } from './control-policies.service';
 import {
   CreateControlPolicyDto,
   UpdateControlPolicyDto,
+  ControlPolicyImpactPreviewDto,
+  ControlPolicyImpactPreviewResponseDto,
   ControlPolicyFilterDto,
   ControlPolicyResponseDto,
   ControlPolicyDetailDto,
@@ -68,6 +70,17 @@ export class ControlPoliciesController {
   @ApiResponse({ status: 200, description: '정책 통계', type: ControlPolicyStatsDto })
   async getStats(@Req() req: AuthenticatedAdminRequest): Promise<ControlPolicyStatsDto> {
     return this.controlPoliciesService.getStats(req.organizationScopeIds ?? undefined);
+  }
+
+  @Post('impact-preview')
+  @ApiOperation({ summary: '제어 정책 영향 인원 미리보기' })
+  @ApiBody({ type: ControlPolicyImpactPreviewDto })
+  @ApiResponse({ status: 200, description: '영향 인원 미리보기 결과', type: ControlPolicyImpactPreviewResponseDto })
+  async previewImpact(
+    @Req() req: AuthenticatedAdminRequest,
+    @Body() dto: ControlPolicyImpactPreviewDto,
+  ): Promise<ControlPolicyImpactPreviewResponseDto> {
+    return this.controlPoliciesService.previewImpact(dto, req.organizationScopeIds ?? undefined);
   }
 
   @Get('organization/:orgId')
