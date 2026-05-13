@@ -524,7 +524,12 @@ export class EmployeesService {
         continue;
       }
 
-      if (normalizedPassword && normalizedPassword.length < 8) {
+      if (!normalizedPassword) {
+        pushError('MISSING_PASSWORD', '초기 비밀번호는 필수입니다.');
+        continue;
+      }
+
+      if (normalizedPassword.length < 8) {
         pushError('INVALID_PASSWORD', '초기 비밀번호는 8자 이상이어야 합니다.');
         continue;
       }

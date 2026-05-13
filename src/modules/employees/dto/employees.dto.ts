@@ -321,7 +321,7 @@ export class BulkEmployeeUploadRowDto {
   @IsString()
   memo?: string;
 
-  @ApiPropertyOptional({ description: '초기 비밀번호 (옵션)' })
+  @ApiPropertyOptional({ description: '초기 비밀번호(비어 있으면 해당 행 실패)' })
   @IsOptional()
   @Transform(({ value }) => normalizeOptionalText(value))
   @IsString()
