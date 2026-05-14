@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AppLanguage, AuditAction, DeviceOS, EmployeeStatus, Prisma, TranslatableEntityType } from '@prisma/client';
+import { AdminRole, AppLanguage, AuditAction, DeviceOS, EmployeeStatus, Prisma, TranslatableEntityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ContentTranslationService } from '@/common/translation/translation.service';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
@@ -63,6 +63,10 @@ export class ControlPoliciesService {
     private readonly configService: ConfigService,
     private readonly contentTranslationService: ContentTranslationService,
   ) {}
+
+  private isSuperAdminRole(role?: string): boolean {
+    return role === AdminRole.SUPER_ADMIN || role === 'SUPER_ADMIN';
+  }
 
   private async syncControlPolicyTranslations(
     policyId: string,
@@ -126,6 +130,7 @@ export class ControlPoliciesService {
   async previewImpact(
     dto: ControlPolicyImpactPreviewDto,
     scopeOrganizationIds?: string[],
+    actorUserRole?: string,
   ): Promise<ControlPolicyImpactPreviewResponseDto> {
     const ownerOrganizationId = String(dto.organizationId || '').trim();
     this.ensureOrganizationInScope(ownerOrganizationId, scopeOrganizationIds);
@@ -136,6 +141,7 @@ export class ControlPoliciesService {
       this.prisma,
       ownerOrganizationId,
       dto.targetOrganizationIds,
+      this.isSuperAdminRole(actorUserRole),
     );
 
     const effectiveTargetUnitIds = await this.resolveEffectiveTargetUnitIds(
@@ -170,6 +176,7 @@ export class ControlPoliciesService {
     createDto: CreateControlPolicyDto,
     scopeOrganizationIds?: string[],
     actorUserId?: string,
+    actorUserRole?: string,
   ): Promise<ControlPolicyDetailDto> {
     const {
       organizationId,
@@ -199,6 +206,7 @@ export class ControlPoliciesService {
       this.prisma,
       organizationId,
       targetOrganizationIds,
+      this.isSuperAdminRole(actorUserRole),
     );
 
     const existingPolicy = await this.prisma.controlPolicy.findFirst({
@@ -216,7 +224,7 @@ export class ControlPoliciesService {
       allowedAppPresetIds,
       employeeIds,
       targetOrganizationIds: resolvedTargetUnitIds,
-    });
+    }, this.isSuperAdminRole(actorUserRole));
 
     this.ensureSingleSelectionConstraints({
       timePolicyIds,
@@ -547,6 +555,7 @@ export class ControlPoliciesService {
     updateDto: UpdateControlPolicyDto,
     scopeOrganizationIds?: string[],
     actorUserId?: string,
+    actorUserRole?: string,
   ): Promise<ControlPolicyDetailDto> {
     await this.assertPolicyInScope(id, scopeOrganizationIds);
     await this.findOne(id, scopeOrganizationIds);
@@ -630,6 +639,7 @@ export class ControlPoliciesService {
         tx,
         targetOrganizationId,
         targetOrganizationIds,
+        this.isSuperAdminRole(actorUserRole),
       );
       updateData.targetUnitIds = resolvedTargetUnitIds;
 
@@ -640,7 +650,7 @@ export class ControlPoliciesService {
         allowedAppPresetIds,
         employeeIds,
         targetOrganizationIds: resolvedTargetUnitIds,
-      });
+      }, this.isSuperAdminRole(actorUserRole));
 
       this.ensureSingleSelectionConstraints({
         timePolicyIds,
@@ -1833,6 +1843,7 @@ export class ControlPoliciesService {
     policyId: string,
     zoneIds: string[],
     scopeOrganizationIds?: string[],
+    actorUserRole?: string,
   ): Promise<ControlPolicyDetailDto> {
     await this.assertPolicyInScope(policyId, scopeOrganizationIds);
 
@@ -1862,7 +1873,7 @@ export class ControlPoliciesService {
         allowedApps: policy._count.allowedApps,
       }).length > 0;
 
-    await this.validatePolicyRelations(this.prisma, policy.organizationId, { zoneIds });
+    await this.validatePolicyRelations(this.prisma, policy.organizationId, { zoneIds }, this.isSuperAdminRole(actorUserRole));
 
     await this.prisma.$transaction(async (tx: any) => {
       await tx.controlPolicyZone.deleteMany({ where: { policyId } });
@@ -1886,6 +1897,7 @@ export class ControlPoliciesService {
     policyId: string,
     timePolicyIds: string[],
     scopeOrganizationIds?: string[],
+    actorUserRole?: string,
   ): Promise<ControlPolicyDetailDto> {
     await this.assertPolicyInScope(policyId, scopeOrganizationIds);
 
@@ -1915,7 +1927,7 @@ export class ControlPoliciesService {
         allowedApps: policy._count.allowedApps,
       }).length > 0;
 
-    await this.validatePolicyRelations(this.prisma, policy.organizationId, { timePolicyIds });
+    await this.validatePolicyRelations(this.prisma, policy.organizationId, { timePolicyIds }, this.isSuperAdminRole(actorUserRole));
     this.ensureSingleSelectionConstraints({ timePolicyIds });
 
     await this.prisma.$transaction(async (tx: any) => {
@@ -1940,6 +1952,7 @@ export class ControlPoliciesService {
     policyId: string,
     behaviorConditionIds: string[],
     scopeOrganizationIds?: string[],
+    actorUserRole?: string,
   ): Promise<ControlPolicyDetailDto> {
     await this.assertPolicyInScope(policyId, scopeOrganizationIds);
 
@@ -1969,7 +1982,7 @@ export class ControlPoliciesService {
         allowedApps: policy._count.allowedApps,
       }).length > 0;
 
-    await this.validatePolicyRelations(this.prisma, policy.organizationId, { behaviorConditionIds });
+    await this.validatePolicyRelations(this.prisma, policy.organizationId, { behaviorConditionIds }, this.isSuperAdminRole(actorUserRole));
     this.ensureSingleSelectionConstraints({ behaviorConditionIds });
 
     await this.prisma.$transaction(async (tx: any) => {
@@ -1997,6 +2010,7 @@ export class ControlPoliciesService {
     policyId: string,
     allowedAppPresetIds: string[],
     scopeOrganizationIds?: string[],
+    actorUserRole?: string,
   ): Promise<ControlPolicyDetailDto> {
     await this.assertPolicyInScope(policyId, scopeOrganizationIds);
 
@@ -2026,7 +2040,7 @@ export class ControlPoliciesService {
         allowedApps: policy._count.allowedApps,
       }).length > 0;
 
-    await this.validatePolicyRelations(this.prisma, policy.organizationId, { allowedAppPresetIds });
+    await this.validatePolicyRelations(this.prisma, policy.organizationId, { allowedAppPresetIds }, this.isSuperAdminRole(actorUserRole));
 
     await this.prisma.$transaction(async (tx: any) => {
       await tx.controlPolicyAllowedApp.deleteMany({ where: { policyId } });
@@ -2245,6 +2259,7 @@ export class ControlPoliciesService {
       employeeIds?: string[];
       targetOrganizationIds?: string[];
     },
+    allowCrossOrganizationRelations = false,
   ): Promise<void> {
     const {
       zoneIds,
@@ -2255,14 +2270,16 @@ export class ControlPoliciesService {
       targetOrganizationIds,
     } = relationIds;
     const targetUnitIds = await this.resolveEffectiveTargetUnitIds(tx, organizationId, targetOrganizationIds);
-    const relationSourceOrganizationIds = await this.resolveRelationSourceOrganizationIds(tx, organizationId);
+    const relationSourceOrganizationIds = allowCrossOrganizationRelations
+      ? null
+      : await this.resolveRelationSourceOrganizationIds(tx, organizationId);
 
     const uniqueZoneIds = this.normalizeIds(zoneIds);
     if (uniqueZoneIds.length > 0) {
       const zoneCount = await tx.zone.count({
         where: {
           id: { in: uniqueZoneIds },
-          organizationId: { in: relationSourceOrganizationIds },
+          ...(relationSourceOrganizationIds ? { organizationId: { in: relationSourceOrganizationIds } } : {}),
           deletedAt: null,
         },
       });
@@ -2276,7 +2293,7 @@ export class ControlPoliciesService {
       const timePolicyCount = await tx.timePolicy.count({
         where: {
           id: { in: uniqueTimePolicyIds },
-          organizationId: { in: relationSourceOrganizationIds },
+          ...(relationSourceOrganizationIds ? { organizationId: { in: relationSourceOrganizationIds } } : {}),
           deletedAt: null,
         },
       });
@@ -2290,7 +2307,7 @@ export class ControlPoliciesService {
       const behaviorConditionCount = await tx.behaviorCondition.count({
         where: {
           id: { in: uniqueBehaviorConditionIds },
-          organizationId: { in: relationSourceOrganizationIds },
+          ...(relationSourceOrganizationIds ? { organizationId: { in: relationSourceOrganizationIds } } : {}),
           deletedAt: null,
         },
       });
@@ -2304,7 +2321,7 @@ export class ControlPoliciesService {
       const presetCount = await tx.allowedAppPreset.count({
         where: {
           id: { in: uniquePresetIds },
-          organizationId: { in: relationSourceOrganizationIds },
+          ...(relationSourceOrganizationIds ? { organizationId: { in: relationSourceOrganizationIds } } : {}),
           deletedAt: null,
         },
       });
@@ -2377,6 +2394,7 @@ export class ControlPoliciesService {
     tx: any,
     ownerOrganizationId: string,
     requestedTargetOrganizationIds?: string[],
+    allowCrossOrganizationTargets = false,
   ): Promise<string[]> {
     const owner = await tx.organization.findUnique({
       where: { id: ownerOrganizationId },
@@ -2404,6 +2422,10 @@ export class ControlPoliciesService {
 
     if (requested.length === 0) {
       return availableUnitIds;
+    }
+
+    if (allowCrossOrganizationTargets) {
+      return requested;
     }
 
     const invalidTargetIds = requested.filter((id) => !availableUnitSet.has(id));

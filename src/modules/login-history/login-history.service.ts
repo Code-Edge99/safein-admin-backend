@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { parseDateInputAsUtc } from '../../common/utils/kst-time.util';
 import { toLoginHistoryResponseDto } from './login-history.mapper';
@@ -70,30 +70,6 @@ export class LoginHistoryService {
       limit,
       totalPages: Math.ceil(total / limit),
     };
-  }
-
-  async findOne(id: string, scopeOrganizationIds?: string[]) {
-    const log = await this.prisma.adminLoginHistory.findUnique({
-      where: { id },
-      include: {
-        account: {
-          select: { id: true, name: true, username: true, role: true, organizationId: true },
-        },
-      },
-    });
-
-    if (!log) {
-      throw new NotFoundException('로그인 이력을 찾을 수 없습니다.');
-    }
-
-    if (scopeOrganizationIds) {
-      const organizationId = log.account?.organizationId;
-      if (!organizationId || !scopeOrganizationIds.includes(organizationId)) {
-        throw new NotFoundException('로그인 이력을 찾을 수 없습니다.');
-      }
-    }
-
-    return this.toResponseDto(log);
   }
 
   private toResponseDto(log: any) {

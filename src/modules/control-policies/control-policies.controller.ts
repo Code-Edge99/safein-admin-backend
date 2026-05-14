@@ -55,7 +55,7 @@ export class ControlPoliciesController {
   @ApiOperation({ summary: '제어 정책 생성' })
   @ApiResponse({ status: 201, description: '정책 생성 성공', type: ControlPolicyDetailDto })
   async create(@Req() req: AuthenticatedAdminRequest, @Body() createDto: CreateControlPolicyDto): Promise<ControlPolicyDetailDto> {
-    return this.controlPoliciesService.create(createDto, req.organizationScopeIds ?? undefined, req.user?.id);
+    return this.controlPoliciesService.create(createDto, req.organizationScopeIds ?? undefined, req.user?.id, req.user?.role);
   }
 
   @Get()
@@ -80,7 +80,7 @@ export class ControlPoliciesController {
     @Req() req: AuthenticatedAdminRequest,
     @Body() dto: ControlPolicyImpactPreviewDto,
   ): Promise<ControlPolicyImpactPreviewResponseDto> {
-    return this.controlPoliciesService.previewImpact(dto, req.organizationScopeIds ?? undefined);
+    return this.controlPoliciesService.previewImpact(dto, req.organizationScopeIds ?? undefined, req.user?.role);
   }
 
   @Get('organization/:orgId')
@@ -110,7 +110,7 @@ export class ControlPoliciesController {
     @Param('id') id: string,
     @Body() updateDto: UpdateControlPolicyDto,
   ): Promise<ControlPolicyDetailDto> {
-    return this.controlPoliciesService.update(id, updateDto, req.organizationScopeIds ?? undefined, req.user?.id);
+    return this.controlPoliciesService.update(id, updateDto, req.organizationScopeIds ?? undefined, req.user?.id, req.user?.role);
   }
 
   @Patch(':id/toggle-active')
@@ -130,7 +130,7 @@ export class ControlPoliciesController {
     @Param('id') id: string,
     @Body() dto: AssignZonesDto,
   ): Promise<ControlPolicyDetailDto> {
-    return this.controlPoliciesService.assignZones(id, dto.zoneIds, req.organizationScopeIds ?? undefined);
+    return this.controlPoliciesService.assignZones(id, dto.zoneIds, req.organizationScopeIds ?? undefined, req.user?.role);
   }
 
   @Patch(':id/time-policies')
@@ -146,6 +146,7 @@ export class ControlPoliciesController {
       id,
       dto.timePolicyIds,
       req.organizationScopeIds ?? undefined,
+      req.user?.role,
     );
   }
 
@@ -162,6 +163,7 @@ export class ControlPoliciesController {
       id,
       dto.behaviorConditionIds,
       req.organizationScopeIds ?? undefined,
+      req.user?.role,
     );
   }
 
@@ -178,6 +180,7 @@ export class ControlPoliciesController {
       id,
       dto.allowedAppPresetIds,
       req.organizationScopeIds ?? undefined,
+      req.user?.role,
     );
   }
 

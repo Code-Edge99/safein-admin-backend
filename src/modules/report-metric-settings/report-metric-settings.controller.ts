@@ -18,7 +18,7 @@ export class ReportMetricSettingsController {
   constructor(private readonly reportMetricSettingsService: ReportMetricSettingsService) {}
 
   @Get()
-  @Roles('SUPER_ADMIN', 'SITE_ADMIN')
+  @Roles('SUPER_ADMIN')
   @ApiOperation({ summary: '리포트 산정 기준 조회' })
   @ApiResponse({ status: 200, type: ReportMetricSettingsResponseDto })
   findCurrent(): Promise<ReportMetricSettingsResponseDto> {

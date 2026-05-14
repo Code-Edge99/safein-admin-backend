@@ -17,6 +17,8 @@ import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiResponse, ApiTags
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { Response } from 'express';
+import { PermissionCodes } from '../auth/decorators/permission-codes.decorator';
+import { EffectivePermissionsGuard } from '../auth/guards/effective-permissions.guard';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard';
 import { AuthenticatedAdminRequest } from '../../common/types/authenticated-request.type';
@@ -63,7 +65,8 @@ function buildContentDisposition(fileName: string): string {
 
 @ApiTags('위험 신고')
 @Controller('incident-reports')
-@UseGuards(JwtAuthGuard, OrganizationScopeGuard)
+@UseGuards(JwtAuthGuard, OrganizationScopeGuard, EffectivePermissionsGuard)
+@PermissionCodes('INCIDENT_REPORT_READ')
 @ApiBearerAuth()
 export class IncidentReportsController {
   constructor(private readonly incidentReportsService: IncidentReportsService) {}
@@ -89,6 +92,7 @@ export class IncidentReportsController {
   }
 
   @Patch(':id/severity')
+  @PermissionCodes('INCIDENT_REPORT_WRITE')
   @ApiOperation({ summary: '위험 신고 심각도 변경' })
   @ApiResponse({ status: 200, type: IncidentReportDetailDto })
   updateSeverity(
@@ -100,6 +104,7 @@ export class IncidentReportsController {
   }
 
   @Patch(':id/status')
+  @PermissionCodes('INCIDENT_REPORT_WRITE')
   @ApiOperation({ summary: '위험 신고 상태 변경' })
   @ApiResponse({ status: 200, type: IncidentReportDetailDto })
   updateStatus(
@@ -111,6 +116,7 @@ export class IncidentReportsController {
   }
 
   @Patch(':id/assignee')
+  @PermissionCodes('INCIDENT_REPORT_WRITE')
   @ApiOperation({ summary: '위험 신고 담당자 지정/해제' })
   @ApiResponse({ status: 200, type: IncidentReportDetailDto })
   updateAssignee(
@@ -122,6 +128,7 @@ export class IncidentReportsController {
   }
 
   @Post(':id/comments')
+  @PermissionCodes('INCIDENT_REPORT_WRITE')
   @ApiOperation({ summary: '위험 신고 내부 코멘트 추가' })
   @ApiResponse({ status: 201, type: IncidentReportDetailDto })
   addComment(
@@ -133,6 +140,7 @@ export class IncidentReportsController {
   }
 
   @Post(':id/resolve')
+  @PermissionCodes('INCIDENT_REPORT_WRITE')
   @ApiOperation({ summary: '위험 신고 해결 처리' })
   @ApiResponse({ status: 201, type: IncidentReportDetailDto })
   resolve(
@@ -144,6 +152,7 @@ export class IncidentReportsController {
   }
 
   @Post(':id/attachments')
+  @PermissionCodes('INCIDENT_REPORT_WRITE')
   @ApiOperation({ summary: '위험 신고 첨부 추가' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({

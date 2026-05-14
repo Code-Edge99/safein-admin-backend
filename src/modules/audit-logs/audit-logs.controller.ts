@@ -8,13 +8,16 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RolesGuard } from '../auth/guards/roles.guard';
 import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard';
 import { AuditLogsService } from './audit-logs.service';
 import { AuthenticatedAdminRequest } from '../../common/types/authenticated-request.type';
 
 @ApiTags('감사 로그')
 @Controller('audit-logs')
-@UseGuards(JwtAuthGuard, OrganizationScopeGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, OrganizationScopeGuard)
+@Roles('SUPER_ADMIN')
 @ApiBearerAuth()
 export class AuditLogsController {
   constructor(private readonly auditLogsService: AuditLogsService) {}
