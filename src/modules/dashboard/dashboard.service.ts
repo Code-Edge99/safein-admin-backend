@@ -2034,6 +2034,7 @@ export class DashboardService {
     };
 
     const relevantOrganizationIds = Array.from(new Set(sites.flatMap((site) => getSubtreeIds(site.id))));
+    const relevantOrganizationIdSet = new Set(relevantOrganizationIds);
 
     const [dailyStatsWindow, hourlyStatsWindow, employees, rawLogs] = await Promise.all([
       this.prisma.organizationDailyStat.findMany({
@@ -2067,12 +2068,8 @@ export class DashboardService {
           timestamp: { gte: currentStartDate, lte: endDate },
           OR: [
             { organizationId: { in: relevantOrganizationIds } },
-            {
-              AND: [
-                { organizationId: null },
-                { device: { organizationId: { in: relevantOrganizationIds } } },
-              ],
-            },
+            { device: { organizationId: { in: relevantOrganizationIds } } },
+            { employee: { organizationId: { in: relevantOrganizationIds } } },
           ],
         },
         select: {
@@ -2082,6 +2079,11 @@ export class DashboardService {
           appName: true,
           zoneId: true,
           device: {
+            select: {
+              organizationId: true,
+            },
+          },
+          employee: {
             select: {
               organizationId: true,
             },
@@ -2126,7 +2128,11 @@ export class DashboardService {
 
     const rawLogsByOrg = new Map<string, typeof rawLogs>();
     for (const log of rawLogs) {
-      const effectiveOrganizationId = log.organizationId || log.device?.organizationId;
+      const effectiveOrganizationId = [
+        log.organizationId,
+        log.device?.organizationId,
+        log.employee?.organizationId,
+      ].find((candidate) => !!candidate && relevantOrganizationIdSet.has(candidate));
       if (!effectiveOrganizationId) {
         continue;
       }
