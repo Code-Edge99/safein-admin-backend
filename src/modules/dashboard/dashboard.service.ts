@@ -602,7 +602,6 @@ export class DashboardService {
       const parsedDate = new Date(date);
       targetDate = Number.isNaN(parsedDate.getTime()) ? getKstStartOfDay(new Date()) : getKstStartOfDay(parsedDate);
     } else {
-      // 오늘 데이터가 없으면 어제 데이터를 시도
       targetDate = getKstStartOfDay(new Date());
     }
 
@@ -638,12 +637,7 @@ export class DashboardService {
       });
     };
 
-    let logs = await loadDailyBlockedLogs(targetDate);
-
-    if (logs.length === 0 && !date) {
-      targetDate = new Date(targetDate.getTime() - (24 * 60 * 60 * 1000));
-      logs = await loadDailyBlockedLogs(targetDate);
-    }
+    const logs = await loadDailyBlockedLogs(targetDate);
 
     logs.forEach((log) => {
       const hour = this.getKstHourFromUtc(log.timestamp);
