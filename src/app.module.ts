@@ -23,6 +23,7 @@ import { MapsModule } from './modules/maps/maps.module';
 import { NoticesModule } from './modules/notices/notices.module';
 import { IncidentReportsModule } from './modules/incident-reports/incident-reports.module';
 import { ReportMetricSettingsModule } from './modules/report-metric-settings/report-metric-settings.module';
+import { RequestBoardModule } from './modules/request-board/request-board.module';
 import { RequestLoggingInterceptor } from './common/interceptors/request-logging.interceptor';
 import { TranslationModule } from './common/translation/translation.module';
 import { TranslationsModule } from './modules/translations/translations.module';
@@ -60,6 +61,7 @@ import { TranslationsModule } from './modules/translations/translations.module';
     NoticesModule,
     IncidentReportsModule,
     ReportMetricSettingsModule,
+    RequestBoardModule,
     TranslationsModule,
   ],
   controllers: [],
