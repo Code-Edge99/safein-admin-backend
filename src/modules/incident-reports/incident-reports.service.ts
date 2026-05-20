@@ -455,8 +455,10 @@ export class IncidentReportsService {
     accountId?: string,
   ): Promise<IncidentReportDetailDto> {
     const report = await this.getReportInScope(reportId, scopeOrganizationIds);
+    const shouldResetAssignee = dto.status === IncidentReportStatus.RECEIVED;
+    const shouldClearAssignedAdmin = shouldResetAssignee && !!report.assignedAdminId;
 
-    if (report.status === dto.status) {
+    if (report.status === dto.status && !shouldClearAssignedAdmin) {
       return this.buildDetailDto(report);
     }
 
@@ -464,6 +466,7 @@ export class IncidentReportsService {
       where: { id: report.id },
       data: {
         status: dto.status,
+        ...(shouldResetAssignee ? { assignedAdminId: null } : {}),
         ...this.buildResolutionStateForStatusChange(report.status, dto.status, report.resolvedAt),
         actions: {
           create: {
@@ -497,12 +500,14 @@ export class IncidentReportsService {
       action: AuditAction.UPDATE,
       report: updated,
       changesBefore: {
+        assignedAdminId: report.assignedAdminId,
         status: report.status,
         resolutionType: report.resolutionType,
         resolutionSummary: report.resolutionSummary,
         resolvedAt: report.resolvedAt,
       },
       changesAfter: {
+        assignedAdminId: updated.assignedAdminId,
         status: dto.status,
         resolutionType: dto.status === IncidentReportStatus.RESOLVED ? updated.resolutionType : null,
         resolutionSummary: dto.status === IncidentReportStatus.RESOLVED ? updated.resolutionSummary : null,
