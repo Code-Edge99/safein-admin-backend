@@ -112,17 +112,51 @@ export class ControlPoliciesService {
     where.organizationId = { in: scopeOrganizationIds };
   }
 
-  private async assertPolicyInScope(policyId: string, scopeOrganizationIds?: string[]): Promise<void> {
-    if (!scopeOrganizationIds) {
+  private appendDraftVisibilityWhere(where: any, actorUserId?: string): void {
+    const visibilityCondition = actorUserId
+      ? {
+          OR: [
+            { isDraft: false },
+            { isDraft: true, createdById: actorUserId },
+          ],
+        }
+      : { isDraft: false };
+
+    if (Array.isArray(where.AND)) {
+      where.AND.push(visibilityCondition);
       return;
     }
 
-    const policy = await this.prisma.controlPolicy.findUnique({
-      where: { id: policyId },
-      select: { organizationId: true, targetUnitIds: true, deletedAt: true },
+    where.AND = [visibilityCondition];
+  }
+
+  private toNullableJsonValue(value: unknown): Prisma.InputJsonValue | typeof Prisma.DbNull {
+    if (value === undefined || value === null) {
+      return Prisma.DbNull;
+    }
+
+    return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+  }
+
+  private async assertPolicyInScope(
+    policyId: string,
+    scopeOrganizationIds?: string[],
+    actorUserId?: string,
+  ): Promise<void> {
+    const where: any = {
+      id: policyId,
+      deletedAt: null,
+    };
+
+    this.applyOrganizationScope(where, scopeOrganizationIds);
+    this.appendDraftVisibilityWhere(where, actorUserId);
+
+    const policy = await this.prisma.controlPolicy.findFirst({
+      where,
+      select: { id: true },
     });
 
-    if (!policy || policy.deletedAt || !scopeOrganizationIds.includes(policy.organizationId)) {
+    if (!policy) {
       throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
     }
   }
@@ -186,8 +220,11 @@ export class ControlPoliciesService {
       allowedAppPresetIds,
       employeeIds,
       targetOrganizationIds,
+      isDraft: isDraftInput,
+      draftPayload,
       ...rest
     } = createDto;
+    const isDraft = isDraftInput === true;
     const resolvedEmployeeIds = await resolveEmployeePrimaryIds(this.prisma, employeeIds);
 
     this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
@@ -210,7 +247,7 @@ export class ControlPoliciesService {
     );
 
     const existingPolicy = await this.prisma.controlPolicy.findFirst({
-      where: { organizationId, deletedAt: null },
+      where: { organizationId, deletedAt: null, isDraft: false },
       select: { id: true },
     });
     if (existingPolicy) {
@@ -231,20 +268,26 @@ export class ControlPoliciesService {
       behaviorConditionIds,
     });
 
-    this.ensureRequiredConditionInputsOnCreate({ zoneIds, timePolicyIds });
+    if (!isDraft) {
+      this.ensureRequiredConditionInputsOnCreate({ zoneIds, timePolicyIds });
+    }
 
-    const requestedIsActive = rest.isActive ?? true;
-    const missingRequiredConditionsOnCreate = this.resolveMissingRequiredConditionsFromCounts({
-      zones: this.normalizeIds(zoneIds).length,
-      timePolicies: this.normalizeIds(timePolicyIds).length,
-      behaviors: this.normalizeIds(behaviorConditionIds).length,
-      allowedApps: this.normalizeIds(allowedAppPresetIds).length,
-    });
+    const requestedIsActive = isDraft ? false : (rest.isActive ?? true);
+    const missingRequiredConditionsOnCreate = isDraft
+      ? []
+      : this.resolveMissingRequiredConditionsFromCounts({
+          zones: this.normalizeIds(zoneIds).length,
+          timePolicies: this.normalizeIds(timePolicyIds).length,
+          behaviors: this.normalizeIds(behaviorConditionIds).length,
+          allowedApps: this.normalizeIds(allowedAppPresetIds).length,
+        });
 
     // Create policy with all relations
     const policy = await this.prisma.controlPolicy.create({
       data: {
         ...rest,
+        isDraft,
+        draftPayload: isDraft ? this.toNullableJsonValue(draftPayload) : Prisma.DbNull,
         isActive: missingRequiredConditionsOnCreate.length === 0 ? requestedIsActive : false,
         organizationId,
         targetUnitIds: resolvedTargetUnitIds,
@@ -278,7 +321,7 @@ export class ControlPoliciesService {
       } as any,
     });
 
-    const detail = await this.findOneDetail(policy.id, scopeOrganizationIds);
+    const detail = await this.findOneDetail(policy.id, scopeOrganizationIds, actorUserId);
 
     await this.syncControlPolicyTranslations(
       policy.id,
@@ -289,11 +332,13 @@ export class ControlPoliciesService {
       policy.updatedAt,
     );
 
-    await this.notifyPolicyChangedForOrganization({
-      policyId: policy.id,
-      organizationId,
-      trigger: 'create',
-    });
+    if (!isDraft) {
+      await this.notifyPolicyChangedForOrganization({
+        policyId: policy.id,
+        organizationId,
+        trigger: 'create',
+      });
+    }
 
     return detail;
   }
@@ -301,6 +346,7 @@ export class ControlPoliciesService {
   async findAll(
     filter: ControlPolicyFilterDto,
     scopeOrganizationIds?: string[],
+    actorUserId?: string,
   ): Promise<ControlPolicyListResponseDto> {
     const { search, organizationId, isActive, page = 1, limit = 20 } = filter;
     const skip = (page - 1) * limit;
@@ -316,6 +362,7 @@ export class ControlPoliciesService {
     }
 
     this.applyOrganizationScope(where, scopeOrganizationIds);
+    this.appendDraftVisibilityWhere(where, actorUserId);
 
     if (isActive !== undefined) {
       where.isActive = isActive;
@@ -389,17 +436,17 @@ export class ControlPoliciesService {
     };
   }
 
-  async findOne(id: string, scopeOrganizationIds?: string[]): Promise<ControlPolicyResponseDto> {
+  async findOne(id: string, scopeOrganizationIds?: string[], actorUserId?: string): Promise<ControlPolicyResponseDto> {
+    const where: any = {
+      id,
+      deletedAt: null,
+    };
+
+    this.applyOrganizationScope(where, scopeOrganizationIds);
+    this.appendDraftVisibilityWhere(where, actorUserId);
+
     const policy = await this.prisma.controlPolicy.findFirst({
-      where: {
-        id,
-        deletedAt: null,
-        ...(scopeOrganizationIds
-          ? {
-              organizationId: { in: scopeOrganizationIds },
-            }
-          : {}),
-      },
+      where,
       include: {
         organization: { select: { id: true, name: true } },
         zones: {
@@ -462,11 +509,18 @@ export class ControlPoliciesService {
   async findByOrganization(
     organizationId: string,
     scopeOrganizationIds?: string[],
+    actorUserId?: string,
   ): Promise<ControlPolicyResponseDto[]> {
     this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
 
+    const where: any = {
+      organizationId,
+      deletedAt: null,
+    };
+    this.appendDraftVisibilityWhere(where, actorUserId);
+
     const policies = await this.prisma.controlPolicy.findMany({
-      where: { organizationId, deletedAt: null },
+      where,
       orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }],
       include: {
         organization: { select: { id: true, name: true } },
@@ -484,17 +538,17 @@ export class ControlPoliciesService {
     return policies.map(p => this.toResponseDto(p));
   }
 
-  async findOneDetail(id: string, scopeOrganizationIds?: string[]): Promise<ControlPolicyDetailDto> {
+  async findOneDetail(id: string, scopeOrganizationIds?: string[], actorUserId?: string): Promise<ControlPolicyDetailDto> {
+    const where: any = {
+      id,
+      deletedAt: null,
+    };
+
+    this.applyOrganizationScope(where, scopeOrganizationIds);
+    this.appendDraftVisibilityWhere(where, actorUserId);
+
     const policy = await this.prisma.controlPolicy.findFirst({
-      where: {
-        id,
-        deletedAt: null,
-        ...(scopeOrganizationIds
-          ? {
-              organizationId: { in: scopeOrganizationIds },
-            }
-          : {}),
-      },
+      where,
       include: {
         organization: { select: { id: true, name: true } },
         zones: {
@@ -557,8 +611,8 @@ export class ControlPoliciesService {
     actorUserId?: string,
     actorUserRole?: string,
   ): Promise<ControlPolicyDetailDto> {
-    await this.assertPolicyInScope(id, scopeOrganizationIds);
-    await this.findOne(id, scopeOrganizationIds);
+    await this.assertPolicyInScope(id, scopeOrganizationIds, actorUserId);
+    await this.findOne(id, scopeOrganizationIds, actorUserId);
 
     const {
       organizationId,
@@ -568,6 +622,8 @@ export class ControlPoliciesService {
       allowedAppPresetIds,
       employeeIds,
       targetOrganizationIds,
+      isDraft: nextIsDraftInput,
+      draftPayload,
       ...rest
     } = updateDto;
 
@@ -580,6 +636,7 @@ export class ControlPoliciesService {
         where: { id },
         select: {
           organizationId: true,
+          isDraft: true,
           deletedAt: true,
           targetUnitIds: true,
           _count: {
@@ -603,6 +660,7 @@ export class ControlPoliciesService {
           behaviors: currentPolicy._count.behaviors,
           allowedApps: currentPolicy._count.allowedApps,
         }).length > 0;
+      const nextIsDraft = nextIsDraftInput ?? currentPolicy.isDraft;
 
       const targetOrganizationId = organizationId ?? currentPolicy.organizationId;
             if (scopeOrganizationIds && !scopeOrganizationIds.includes(targetOrganizationId)) {
@@ -618,21 +676,22 @@ export class ControlPoliciesService {
         if (!org) throw new BadRequestException('현장을 찾을 수 없습니다.');
         await assertPolicyOwnerOrganization(tx, organizationId);
 
-        if (organizationChanged) {
-          const existingPolicyOnTarget = await tx.controlPolicy.findFirst({
-            where: {
-              organizationId,
-              deletedAt: null,
-              id: { not: id },
-            },
-            select: { id: true },
-          });
-          if (existingPolicyOnTarget) {
-            throw new BadRequestException('이동 대상 현장에는 이미 통제 정책이 있습니다. 회사/그룹/팀당 1개 정책만 허용됩니다.');
-          }
-        }
-
         updateData.organizationId = organizationId;
+      }
+
+      if (!nextIsDraft) {
+        const existingPolicyOnTarget = await tx.controlPolicy.findFirst({
+          where: {
+            organizationId: targetOrganizationId,
+            deletedAt: null,
+            isDraft: false,
+            id: { not: id },
+          },
+          select: { id: true },
+        });
+        if (existingPolicyOnTarget) {
+          throw new BadRequestException('이동 대상 현장에는 이미 통제 정책이 있습니다. 회사/그룹/팀당 1개 정책만 허용됩니다.');
+        }
       }
 
       const resolvedTargetUnitIds = await this.resolvePersistedTargetUnitIds(
@@ -656,6 +715,12 @@ export class ControlPoliciesService {
         timePolicyIds,
         behaviorConditionIds,
       });
+
+      updateData.isDraft = nextIsDraft;
+      updateData.draftPayload = nextIsDraft ? this.toNullableJsonValue(draftPayload) : Prisma.DbNull;
+      if (nextIsDraft) {
+        updateData.isActive = false;
+      }
 
       await tx.controlPolicy.update({
         where: { id },
@@ -766,6 +831,7 @@ export class ControlPoliciesService {
         id: true,
         organizationId: true,
         isActive: true,
+        isDraft: true,
         name: true,
         description: true,
         updatedAt: true,
@@ -782,11 +848,13 @@ export class ControlPoliciesService {
         updatedPolicy.updatedAt,
       );
 
-      await this.notifyPolicyChangedForOrganization({
-        policyId: updatedPolicy.id,
-        organizationId: updatedPolicy.organizationId,
-        trigger: updatedPolicy.isActive ? 'update' : 'deactivate',
-      });
+      if (!updatedPolicy.isDraft) {
+        await this.notifyPolicyChangedForOrganization({
+          policyId: updatedPolicy.id,
+          organizationId: updatedPolicy.organizationId,
+          trigger: updatedPolicy.isActive ? 'update' : 'deactivate',
+        });
+      }
 
       if (actorUserId) {
         void this.prisma.auditLog.create({
@@ -806,15 +874,15 @@ export class ControlPoliciesService {
       }
     }
 
-    return this.findOneDetail(id, scopeOrganizationIds);
+    return this.findOneDetail(id, scopeOrganizationIds, actorUserId);
   }
 
-  async remove(id: string, scopeOrganizationIds?: string[]): Promise<void> {
-    await this.assertPolicyInScope(id, scopeOrganizationIds);
+  async remove(id: string, scopeOrganizationIds?: string[], actorUserId?: string): Promise<void> {
+    await this.assertPolicyInScope(id, scopeOrganizationIds, actorUserId);
 
     const policy = await this.prisma.controlPolicy.findUnique({
       where: { id },
-      select: { id: true, organizationId: true, deletedAt: true },
+      select: { id: true, organizationId: true, isDraft: true, deletedAt: true },
     });
 
     if (!policy || policy.deletedAt) {
@@ -836,16 +904,19 @@ export class ControlPoliciesService {
       });
     });
 
-    await this.notifyPolicyChangedForOrganization({
-      policyId: policy.id,
-      organizationId: policy.organizationId,
-      trigger: 'deactivate',
-    });
+    if (!policy.isDraft) {
+      await this.notifyPolicyChangedForOrganization({
+        policyId: policy.id,
+        organizationId: policy.organizationId,
+        trigger: 'deactivate',
+      });
+    }
   }
 
   async bulkRemove(
     policyIds: string[],
     scopeOrganizationIds?: string[],
+    actorUserId?: string,
   ): Promise<{ requested: number; deleted: number; skipped: number }> {
     const uniquePolicyIds = Array.from(new Set(policyIds.filter(Boolean)));
     const requested = uniquePolicyIds.length;
@@ -854,13 +925,16 @@ export class ControlPoliciesService {
       return { requested: 0, deleted: 0, skipped: 0 };
     }
 
+    const where: any = {
+      id: { in: uniquePolicyIds },
+      deletedAt: null,
+    };
+    this.applyOrganizationScope(where, scopeOrganizationIds);
+    this.appendDraftVisibilityWhere(where, actorUserId);
+
     const targetPolicies = await this.prisma.controlPolicy.findMany({
-      where: {
-        id: { in: uniquePolicyIds },
-        deletedAt: null,
-        ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
-      },
-      select: { id: true, organizationId: true },
+      where,
+      select: { id: true, organizationId: true, isDraft: true },
     });
 
     const targetPolicyIds = targetPolicies.map((policy) => policy.id);
@@ -884,7 +958,10 @@ export class ControlPoliciesService {
       });
     });
 
-    await this.notifyPoliciesByContext(targetPolicies, 'deactivate');
+    await this.notifyPoliciesByContext(
+      targetPolicies.filter((policy) => !policy.isDraft),
+      'deactivate',
+    );
 
     return {
       requested,
@@ -908,6 +985,7 @@ export class ControlPoliciesService {
     const targetPolicies = await this.prisma.controlPolicy.findMany({
       where: {
         id: { in: uniquePolicyIds },
+        isDraft: false,
         deletedAt: null,
         ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
       },
@@ -965,13 +1043,14 @@ export class ControlPoliciesService {
     };
   }
 
-  async toggleActive(id: string, scopeOrganizationIds?: string[]): Promise<ControlPolicyResponseDto> {
-    await this.assertPolicyInScope(id, scopeOrganizationIds);
+  async toggleActive(id: string, scopeOrganizationIds?: string[], actorUserId?: string): Promise<ControlPolicyResponseDto> {
+    await this.assertPolicyInScope(id, scopeOrganizationIds, actorUserId);
 
     const policy = await this.prisma.controlPolicy.findUnique({
       where: { id },
       select: {
         id: true,
+        isDraft: true,
         isActive: true,
         deletedAt: true,
         _count: {
@@ -986,6 +1065,10 @@ export class ControlPoliciesService {
     });
     if (!policy || policy.deletedAt) {
       throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
+    }
+
+    if (policy.isDraft) {
+      throw new BadRequestException('임시저장 정책은 활성 상태를 직접 변경할 수 없습니다.');
     }
 
     if (!policy.isActive) {
@@ -2100,13 +2183,15 @@ export class ControlPoliciesService {
         where: scopeOrganizationIds
           ? {
               organizationId: { in: scopeOrganizationIds },
+              isDraft: false,
               deletedAt: null,
             }
-          : { deletedAt: null },
+          : { deletedAt: null, isDraft: false },
       }),
       this.prisma.controlPolicy.count({
         where: {
           isActive: true,
+          isDraft: false,
           deletedAt: null,
           ...(scopeOrganizationIds
             ? {
@@ -2120,9 +2205,10 @@ export class ControlPoliciesService {
         where: scopeOrganizationIds
           ? {
               organizationId: { in: scopeOrganizationIds },
+              isDraft: false,
               deletedAt: null,
             }
-          : { deletedAt: null },
+          : { deletedAt: null, isDraft: false },
         _count: { organizationId: true },
       }),
     ]);

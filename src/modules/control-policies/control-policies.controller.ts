@@ -62,7 +62,7 @@ export class ControlPoliciesController {
   @ApiOperation({ summary: '제어 정책 목록 조회' })
   @ApiResponse({ status: 200, description: '정책 목록', type: ControlPolicyListResponseDto })
   async findAll(@Req() req: AuthenticatedAdminRequest, @Query() filter: ControlPolicyFilterDto): Promise<ControlPolicyListResponseDto> {
-    return this.controlPoliciesService.findAll(filter, req.organizationScopeIds ?? undefined);
+    return this.controlPoliciesService.findAll(filter, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Get('stats')
@@ -88,7 +88,7 @@ export class ControlPoliciesController {
   @ApiParam({ name: 'orgId', description: '현장 ID' })
   @ApiResponse({ status: 200, description: '정책 목록', type: [ControlPolicyResponseDto] })
   async findByOrganization(@Req() req: AuthenticatedAdminRequest, @Param('orgId') orgId: string): Promise<ControlPolicyResponseDto[]> {
-    return this.controlPoliciesService.findByOrganization(orgId, req.organizationScopeIds ?? undefined);
+    return this.controlPoliciesService.findByOrganization(orgId, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Get(':id')
@@ -97,7 +97,7 @@ export class ControlPoliciesController {
   @ApiResponse({ status: 200, description: '정책 상세 정보', type: ControlPolicyDetailDto })
   @ApiResponse({ status: 404, description: '정책을 찾을 수 없음' })
   async findOne(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<ControlPolicyDetailDto> {
-    return this.controlPoliciesService.findOneDetail(id, req.organizationScopeIds ?? undefined);
+    return this.controlPoliciesService.findOneDetail(id, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Patch(':id')
@@ -118,7 +118,7 @@ export class ControlPoliciesController {
   @ApiParam({ name: 'id', description: '정책 ID' })
   @ApiResponse({ status: 200, description: '상태 변경 성공', type: ControlPolicyResponseDto })
   async toggleActive(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<ControlPolicyResponseDto> {
-    return this.controlPoliciesService.toggleActive(id, req.organizationScopeIds ?? undefined);
+    return this.controlPoliciesService.toggleActive(id, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Patch(':id/zones')
@@ -207,7 +207,7 @@ export class ControlPoliciesController {
   @ApiResponse({ status: 204, description: '정책 삭제 성공' })
   @ApiResponse({ status: 404, description: '정책을 찾을 수 없음' })
   async remove(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<void> {
-    return this.controlPoliciesService.remove(id, req.organizationScopeIds ?? undefined);
+    return this.controlPoliciesService.remove(id, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Post('bulk/delete')
@@ -217,7 +217,7 @@ export class ControlPoliciesController {
     @Req() req: AuthenticatedAdminRequest,
     @Body() dto: BulkControlPolicyActionDto,
   ): Promise<{ requested: number; deleted: number; skipped: number }> {
-    return this.controlPoliciesService.bulkRemove(dto.policyIds, req.organizationScopeIds ?? undefined);
+    return this.controlPoliciesService.bulkRemove(dto.policyIds, req.organizationScopeIds ?? undefined, req.user?.id);
   }
 
   @Post('bulk/status')

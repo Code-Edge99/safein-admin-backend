@@ -18,7 +18,7 @@ import { toAccountResponseDto } from './accounts.mapper';
 import {
   CreateAccountDto,
   UpdateAccountDto,
-  ChangePasswordDto,
+  AccountChangePasswordDto,
   ResetPasswordDto,
   AccountResponseDto,
   AccountFilterDto,
@@ -472,7 +472,7 @@ export class AccountsService {
     return this.toResponseDto(account);
   }
 
-  async changePassword(id: string, dto: ChangePasswordDto): Promise<void> {
+  async changePassword(id: string, dto: AccountChangePasswordDto): Promise<void> {
     const account = await this.prisma.account.findUnique({
       where: { id },
     });

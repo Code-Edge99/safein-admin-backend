@@ -52,27 +52,27 @@ export class ReportMetricSettingsDto {
   @Max(100)
   siteRiskComplianceWarningBelow: number;
 
-  @ApiProperty({ description: '현장 상태 - 위험 판정 직원 1인당 위반 건수 이상 기준', example: 1.5 })
+  @ApiProperty({ description: '현장 상태 - 위험 판정 직원 1인당 차단 건수 이상 기준', example: 1.5 })
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(100)
   siteRiskViolationsPerEmployeeDangerAbove: number;
 
-  @ApiProperty({ description: '현장 상태 - 주의 판정 직원 1인당 위반 건수 이상 기준', example: 0.7 })
+  @ApiProperty({ description: '현장 상태 - 주의 판정 직원 1인당 차단 건수 이상 기준', example: 0.7 })
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(100)
   siteRiskViolationsPerEmployeeWarningAbove: number;
 
-  @ApiProperty({ description: '현장 상태 - 위험 판정 총 차단 건수 이상 기준', example: 30 })
+  @ApiProperty({ description: '호환용 필드 - 현장 상태 계산에는 기본 반영하지 않는 총 차단 위험 기준', example: 30 })
   @Type(() => Number)
   @IsInt()
   @Min(0)
   siteRiskTotalViolationsDangerAbove: number;
 
-  @ApiProperty({ description: '현장 상태 - 주의 판정 총 차단 건수 이상 기준', example: 12 })
+  @ApiProperty({ description: '호환용 필드 - 현장 상태 계산에는 기본 반영하지 않는 총 차단 주의 기준', example: 12 })
   @Type(() => Number)
   @IsInt()
   @Min(0)
@@ -85,32 +85,32 @@ export class ReportMetricSettingsDto {
   @Max(10)
   siteRiskComplianceWeight: number;
 
-  @ApiProperty({ description: '현장 상태 점수 - 직원 1인당 위반 항목 가중치', example: 1 })
+  @ApiProperty({ description: '현장 상태 점수 - 직원 1인당 차단 항목 가중치', example: 1 })
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(10)
   siteRiskViolationsPerEmployeeWeight: number;
 
-  @ApiProperty({ description: '현장 상태 점수 - 총 차단 항목 가중치', example: 1 })
+  @ApiProperty({ description: '호환용 필드 - 현장 상태 계산에는 기본 반영하지 않는 총 차단 항목 가중치', example: 0 })
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(10)
   siteRiskTotalViolationsWeight: number;
 
-  @ApiProperty({ description: '현장 상태 점수 - 위험 판정 최소 점수', example: 100 })
+  @ApiProperty({ description: '현장 상태 점수 - 위험 판정 최소 점수', example: 60 })
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 1 })
   @Min(0)
-  @Max(1000)
+  @Max(100)
   siteRiskDangerScoreMin: number;
 
-  @ApiProperty({ description: '현장 상태 점수 - 주의 판정 최소 점수', example: 60 })
+  @ApiProperty({ description: '현장 상태 점수 - 주의 판정 최소 점수', example: 20 })
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 1 })
   @Min(0)
-  @Max(1000)
+  @Max(100)
   siteRiskWarningScoreMin: number;
 }
 

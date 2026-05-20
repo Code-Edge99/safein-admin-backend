@@ -77,6 +77,19 @@ export class CreateControlPolicyDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  @ApiPropertyOptional({ description: '임시저장 여부', default: false })
+  @IsBoolean()
+  @IsOptional()
+  isDraft?: boolean;
+
+  @ApiPropertyOptional({
+    description: '임시저장 폼 스냅샷',
+    type: 'object',
+    additionalProperties: true,
+  })
+  @IsOptional()
+  draftPayload?: Record<string, unknown>;
 }
 
 export class UpdateControlPolicyDto extends PartialType(CreateControlPolicyDto) {}
@@ -121,11 +134,14 @@ export class ControlPolicyResponseDto {
   @ApiProperty({ description: '활성 상태' })
   isActive: boolean;
 
+  @ApiProperty({ description: '임시저장 여부' })
+  isDraft: boolean;
+
   @ApiProperty({
     description: '정책 상태',
-    enum: ['ACTIVE', 'INACTIVE', 'REVIEW_REQUIRED'],
+    enum: ['ACTIVE', 'INACTIVE', 'REVIEW_REQUIRED', 'DRAFT'],
   })
-  policyStatus: 'ACTIVE' | 'INACTIVE' | 'REVIEW_REQUIRED';
+  policyStatus: 'ACTIVE' | 'INACTIVE' | 'REVIEW_REQUIRED' | 'DRAFT';
 
   @ApiProperty({ description: '정책 적용 여부 (필수 조건 충족 + 활성 상태)' })
   policyApplied: boolean;
@@ -189,6 +205,13 @@ export class ControlPolicyResponseDto {
     }[];
   }[];
 
+  @ApiPropertyOptional({
+    description: '임시저장 폼 스냅샷',
+    type: 'object',
+    additionalProperties: true,
+  })
+  draftPayload?: Record<string, unknown>;
+
   @ApiProperty({ description: '생성일시' })
   createdAt: Date;
 
@@ -197,6 +220,13 @@ export class ControlPolicyResponseDto {
 }
 
 export class ControlPolicyDetailDto extends ControlPolicyResponseDto {
+  @ApiPropertyOptional({
+    description: '임시저장 폼 스냅샷',
+    type: 'object',
+    additionalProperties: true,
+  })
+  draftPayload?: Record<string, unknown>;
+
   @ApiProperty({ description: '적용 구역 목록' })
   zones: { id: string; name: string; type: string; organizationId?: string }[];
 

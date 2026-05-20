@@ -24,9 +24,9 @@ const DEFAULT_REPORT_METRIC_SETTINGS: ReportMetricSettingsValues = {
   siteRiskTotalViolationsWarningAbove: 12,
   siteRiskComplianceWeight: 1,
   siteRiskViolationsPerEmployeeWeight: 1,
-  siteRiskTotalViolationsWeight: 1,
-  siteRiskDangerScoreMin: 100,
-  siteRiskWarningScoreMin: 60,
+  siteRiskTotalViolationsWeight: 0,
+  siteRiskDangerScoreMin: 60,
+  siteRiskWarningScoreMin: 20,
 };
 
 type SystemSettingSchemaInfo = {
@@ -276,11 +276,11 @@ export class ReportMetricSettingsService {
       siteRiskComplianceWarningBelow: this.readNumber(raw.siteRiskComplianceWarningBelow, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskComplianceWarningBelow, 1),
       siteRiskViolationsPerEmployeeDangerAbove: this.readNumber(raw.siteRiskViolationsPerEmployeeDangerAbove, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskViolationsPerEmployeeDangerAbove, 2),
       siteRiskViolationsPerEmployeeWarningAbove: this.readNumber(raw.siteRiskViolationsPerEmployeeWarningAbove, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskViolationsPerEmployeeWarningAbove, 2),
-      siteRiskTotalViolationsDangerAbove: this.readInteger(raw.siteRiskTotalViolationsDangerAbove, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskTotalViolationsDangerAbove),
-      siteRiskTotalViolationsWarningAbove: this.readInteger(raw.siteRiskTotalViolationsWarningAbove, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskTotalViolationsWarningAbove),
+      siteRiskTotalViolationsDangerAbove: DEFAULT_REPORT_METRIC_SETTINGS.siteRiskTotalViolationsDangerAbove,
+      siteRiskTotalViolationsWarningAbove: DEFAULT_REPORT_METRIC_SETTINGS.siteRiskTotalViolationsWarningAbove,
       siteRiskComplianceWeight: this.readNumber(raw.siteRiskComplianceWeight, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskComplianceWeight, 2),
       siteRiskViolationsPerEmployeeWeight: this.readNumber(raw.siteRiskViolationsPerEmployeeWeight, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskViolationsPerEmployeeWeight, 2),
-      siteRiskTotalViolationsWeight: this.readNumber(raw.siteRiskTotalViolationsWeight, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskTotalViolationsWeight, 2),
+      siteRiskTotalViolationsWeight: DEFAULT_REPORT_METRIC_SETTINGS.siteRiskTotalViolationsWeight,
       siteRiskDangerScoreMin: this.readNumber(raw.siteRiskDangerScoreMin, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskDangerScoreMin, 1),
       siteRiskWarningScoreMin: this.readNumber(raw.siteRiskWarningScoreMin, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskWarningScoreMin, 1),
     };
@@ -314,10 +314,6 @@ export class ReportMetricSettingsService {
       throw new BadRequestException('직원 1인당 위반 기준은 위험 이상 값이 주의 이상 값보다 커야 합니다.');
     }
 
-    if (data.siteRiskTotalViolationsDangerAbove <= data.siteRiskTotalViolationsWarningAbove) {
-      throw new BadRequestException('총 차단 건수 기준은 위험 이상 값이 주의 이상 값보다 커야 합니다.');
-    }
-
     if (data.siteRiskDangerScoreMin <= data.siteRiskWarningScoreMin) {
       throw new BadRequestException('현장 상태 점수 기준은 위험 점수가 주의 점수보다 커야 합니다.');
     }
@@ -325,7 +321,6 @@ export class ReportMetricSettingsService {
     if (
       data.siteRiskComplianceWeight <= 0
       && data.siteRiskViolationsPerEmployeeWeight <= 0
-      && data.siteRiskTotalViolationsWeight <= 0
     ) {
       throw new BadRequestException('현장 상태 점수는 최소 한 항목 이상 가중치가 0보다 커야 합니다.');
     }

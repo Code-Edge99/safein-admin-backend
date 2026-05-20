@@ -5,7 +5,7 @@ type RequiredConditionCode = 'ZONE' | 'TIME_POLICY';
 function resolveRequiredConditionState(policy: any): {
   missingRequiredConditions: RequiredConditionCode[];
   missingRequiredConditionMessages: string[];
-  policyStatus: 'ACTIVE' | 'INACTIVE' | 'REVIEW_REQUIRED';
+  policyStatus: 'ACTIVE' | 'INACTIVE' | 'REVIEW_REQUIRED' | 'DRAFT';
   policyApplied: boolean;
 } {
   const zoneCount = policy._count?.zones ?? policy.zones?.length ?? 0;
@@ -23,18 +23,20 @@ function resolveRequiredConditionState(policy: any): {
     missingRequiredConditionMessages.push('시간 조건이 누락되었습니다.');
   }
 
-  const policyStatus: 'ACTIVE' | 'INACTIVE' | 'REVIEW_REQUIRED' =
-    missingRequiredConditions.length > 0
-      ? 'REVIEW_REQUIRED'
-      : policy.isActive
-        ? 'ACTIVE'
-        : 'INACTIVE';
+  const policyStatus: 'ACTIVE' | 'INACTIVE' | 'REVIEW_REQUIRED' | 'DRAFT' =
+    policy.isDraft
+      ? 'DRAFT'
+      : missingRequiredConditions.length > 0
+        ? 'REVIEW_REQUIRED'
+        : policy.isActive
+          ? 'ACTIVE'
+          : 'INACTIVE';
 
   return {
     missingRequiredConditions,
     missingRequiredConditionMessages,
     policyStatus,
-    policyApplied: policy.isActive && missingRequiredConditions.length === 0,
+    policyApplied: !policy.isDraft && policy.isActive && missingRequiredConditions.length === 0,
   };
 }
 
@@ -73,6 +75,7 @@ export function toControlPolicyResponseDto(policy: any): ControlPolicyResponseDt
     description: policy.description,
     priority: policy.priority,
     isActive: policy.isActive,
+    isDraft: policy.isDraft ?? false,
     policyStatus: requiredConditionState.policyStatus,
     policyApplied: requiredConditionState.policyApplied,
     missingRequiredConditions: requiredConditionState.missingRequiredConditions,
@@ -89,6 +92,7 @@ export function toControlPolicyResponseDto(policy: any): ControlPolicyResponseDt
     targetEmployeeCount: policy._count?.targetEmployees ?? 0,
     targetOrganizationCount: targetOrganizationIds.length,
     targetOrganizationIds,
+    draftPayload: policy.draftPayload ?? undefined,
     createdAt: policy.createdAt,
     updatedAt: policy.updatedAt,
   };
@@ -104,6 +108,7 @@ export function toControlPolicyDetailDto(policy: any): ControlPolicyDetailDto {
     description: policy.description,
     priority: policy.priority,
     isActive: policy.isActive,
+    isDraft: policy.isDraft ?? false,
     policyStatus: requiredConditionState.policyStatus,
     policyApplied: requiredConditionState.policyApplied,
     missingRequiredConditions: requiredConditionState.missingRequiredConditions,
@@ -121,6 +126,7 @@ export function toControlPolicyDetailDto(policy: any): ControlPolicyDetailDto {
     behaviorConditions: policy.behaviors?.map((b: any) => b.behaviorCondition) ?? [],
     allowedAppPresets: mapAllowedAppPresets(policy.allowedApps),
     targetEmployees: policy.targetEmployees?.map((e: any) => e.employee) ?? [],
+    draftPayload: policy.draftPayload ?? undefined,
     createdAt: policy.createdAt,
     updatedAt: policy.updatedAt,
   };

@@ -26,7 +26,7 @@ import { AuthenticatedAdminRequest } from '../../common/types/authenticated-requ
 import {
   CreateAccountDto,
   UpdateAccountDto,
-  ChangePasswordDto,
+  AccountChangePasswordDto,
   ResetPasswordDto,
   AccountResponseDto,
   AccountFilterDto,
@@ -114,7 +114,7 @@ export class AccountsController {
   @ApiResponse({ status: 204 })
   changePassword(
     @Param('id') id: string,
-    @Body() dto: ChangePasswordDto,
+    @Body() dto: AccountChangePasswordDto,
   ): Promise<void> {
     return this.accountsService.changePassword(id, dto);
   }

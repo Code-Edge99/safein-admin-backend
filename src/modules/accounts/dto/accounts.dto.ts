@@ -91,7 +91,7 @@ export class UpdateAccountDto extends PartialType(
   status?: AccountStatusEnum;
 }
 
-export class ChangePasswordDto {
+export class AccountChangePasswordDto {
   @ApiProperty({ description: '현재 비밀번호' })
   @IsString()
   @IsNotEmpty()

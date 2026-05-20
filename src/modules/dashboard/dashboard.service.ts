@@ -272,11 +272,8 @@ export class DashboardService {
       | 'siteRiskComplianceWarningBelow'
       | 'siteRiskViolationsPerEmployeeDangerAbove'
       | 'siteRiskViolationsPerEmployeeWarningAbove'
-      | 'siteRiskTotalViolationsDangerAbove'
-      | 'siteRiskTotalViolationsWarningAbove'
       | 'siteRiskComplianceWeight'
       | 'siteRiskViolationsPerEmployeeWeight'
-      | 'siteRiskTotalViolationsWeight'
       | 'siteRiskDangerScoreMin'
       | 'siteRiskWarningScoreMin'
     >;
@@ -294,21 +291,14 @@ export class DashboardService {
       settings.siteRiskViolationsPerEmployeeWarningAbove,
       settings.siteRiskViolationsPerEmployeeDangerAbove,
     );
-    const totalViolationScore = this.calculateRiskScoreForAboveThreshold(
-      totalViolations,
-      settings.siteRiskTotalViolationsWarningAbove,
-      settings.siteRiskTotalViolationsDangerAbove,
-    );
 
     const totalWeight =
       settings.siteRiskComplianceWeight
-      + settings.siteRiskViolationsPerEmployeeWeight
-      + settings.siteRiskTotalViolationsWeight;
+      + settings.siteRiskViolationsPerEmployeeWeight;
 
     const weightedSum =
       (complianceScore * settings.siteRiskComplianceWeight)
-      + (violationsPerEmployeeScore * settings.siteRiskViolationsPerEmployeeWeight)
-      + (totalViolationScore * settings.siteRiskTotalViolationsWeight);
+      + (violationsPerEmployeeScore * settings.siteRiskViolationsPerEmployeeWeight);
 
     const riskScore = this.roundTo(Math.max(0, Math.min(100, totalWeight > 0 ? (weightedSum / totalWeight) : 0)), 1);
 
@@ -1287,6 +1277,11 @@ export class DashboardService {
         organizationId: emp.organizationId,
         organizationName: emp.organizationName,
         totalBlocks: emp.totalBlocks,
+        allowedAppBlocks: emp.allowedAppBlocks,
+        appControlBlocks: emp.allowedAppBlocks,
+        appViolations: emp.allowedAppBlocks,
+        behaviorBlocks: emp.behaviorBlocks,
+        behaviorViolations: emp.behaviorBlocks,
         last7DaysBlocks: recentTotal,
         trend,
         blockedAppsCount: blockedAppSummary?.blockedAppsCount || 0,
