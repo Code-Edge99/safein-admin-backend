@@ -6,14 +6,14 @@ import {
 } from './dto/request-board.dto';
 import { RequestBoardService } from './request-board.service';
 
-@ApiTags('개발 요청사항 보드')
+@ApiTags('공용 요청사항 보드')
 @Controller('dev/request-board')
 export class RequestBoardController {
   constructor(private readonly requestBoardService: RequestBoardService) {}
 
   @Get(':boardId')
   @ApiParam({ name: 'boardId', description: '요청사항 보드 ID', example: 'main-request-board' })
-  @ApiOperation({ summary: '개발용 공용 요청사항 보드 조회' })
+  @ApiOperation({ summary: '공용 요청사항 보드 조회' })
   @ApiResponse({ status: 200, type: RequestBoardResponseDto })
   findCurrent(@Param('boardId') boardId: string): Promise<RequestBoardResponseDto> {
     return this.requestBoardService.findCurrent(boardId);
@@ -21,7 +21,7 @@ export class RequestBoardController {
 
   @Put(':boardId')
   @ApiParam({ name: 'boardId', description: '요청사항 보드 ID', example: 'main-request-board' })
-  @ApiOperation({ summary: '개발용 공용 요청사항 보드 저장' })
+  @ApiOperation({ summary: '공용 요청사항 보드 저장' })
   @ApiResponse({ status: 200, type: RequestBoardResponseDto })
   update(
     @Param('boardId') boardId: string,

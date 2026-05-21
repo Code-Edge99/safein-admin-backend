@@ -1,11 +1,8 @@
 import {
   BadRequestException,
   Injectable,
-  NotFoundException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
-import { resolveRuntimeStage } from '../../common/config/stage.config';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   RequestBoardDevRowDto,
@@ -17,20 +14,11 @@ import {
 type RequestBoardValues = Omit<RequestBoardResponseDto, 'updatedAt'>;
 
 const REQUEST_BOARD_SETTING_PREFIX = 'dev_request_board:';
-const REQUEST_BOARD_SETTING_DESCRIPTION = '개발용 공용 요청사항 보드';
+const REQUEST_BOARD_SETTING_DESCRIPTION = '공용 요청사항 보드';
 
 @Injectable()
 export class RequestBoardService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly configService: ConfigService,
-  ) {}
-
-  private ensureDevStage(): void {
-    if (resolveRuntimeStage(this.configService) !== 'dev') {
-      throw new NotFoundException('개발 요청사항 보드는 dev 환경에서만 사용할 수 있습니다.');
-    }
-  }
+  constructor(private readonly prisma: PrismaService) {}
 
   private sanitizeBoardId(boardId: string): string {
     const normalized = String(boardId ?? '').trim();
@@ -157,8 +145,6 @@ export class RequestBoardService {
   }
 
   async findCurrent(boardId: string): Promise<RequestBoardResponseDto> {
-    this.ensureDevStage();
-
     const normalizedBoardId = this.sanitizeBoardId(boardId);
     const setting = await this.prisma.systemSetting.findUnique({
       where: { key: this.buildSettingKey(normalizedBoardId) },
@@ -183,8 +169,6 @@ export class RequestBoardService {
   }
 
   async update(boardId: string, data: RequestBoardUpdateDto): Promise<RequestBoardResponseDto> {
-    this.ensureDevStage();
-
     const normalizedBoardId = this.sanitizeBoardId(boardId);
     const value = this.normalizeBoard(data);
     const setting = await this.prisma.systemSetting.upsert({
