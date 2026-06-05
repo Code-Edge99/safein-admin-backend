@@ -437,49 +437,38 @@ export class ControlPoliciesService {
   }
 
   async findOne(id: string, scopeOrganizationIds?: string[], actorUserId?: string): Promise<ControlPolicyResponseDto> {
-    const where: any = {
-      id,
-      deletedAt: null,
-    };
-
-    this.applyOrganizationScope(where, scopeOrganizationIds);
-    this.appendDraftVisibilityWhere(where, actorUserId);
-
-    const policy = await this.prisma.controlPolicy.findFirst({
-      where,
-      include: {
-        organization: { select: { id: true, name: true } },
-        zones: {
-          include: {
-            zone: { select: { id: true, name: true, type: true, organizationId: true } },
-          },
+    const include = {
+      organization: { select: { id: true, name: true } },
+      zones: {
+        include: {
+          zone: { select: { id: true, name: true, type: true, organizationId: true } },
         },
-        timePolicies: {
-          include: {
-            timePolicy: { select: { id: true, name: true, organizationId: true } },
-          },
+      },
+      timePolicies: {
+        include: {
+          timePolicy: { select: { id: true, name: true, organizationId: true } },
         },
-        behaviors: {
-          include: {
-            behaviorCondition: { select: { id: true, name: true, organizationId: true } },
-          },
+      },
+      behaviors: {
+        include: {
+          behaviorCondition: { select: { id: true, name: true, organizationId: true } },
         },
-        allowedApps: {
-          include: {
-            preset: {
-              select: {
-                id: true,
-                name: true,
-                organizationId: true,
-                items: {
-                  include: {
-                    allowedApp: {
-                      select: {
-                        id: true,
-                        name: true,
-                        packageName: true,
-                        iconUrl: true,
-                      },
+      },
+      allowedApps: {
+        include: {
+          preset: {
+            select: {
+              id: true,
+              name: true,
+              organizationId: true,
+              items: {
+                include: {
+                  allowedApp: {
+                    select: {
+                      id: true,
+                      name: true,
+                      packageName: true,
+                      iconUrl: true,
                     },
                   },
                 },
@@ -487,21 +476,19 @@ export class ControlPoliciesService {
             },
           },
         },
-        _count: {
-          select: {
-            zones: true,
-            timePolicies: true,
-            behaviors: true,
-            allowedApps: true,
-            targetEmployees: true,
-          },
+      },
+      _count: {
+        select: {
+          zones: true,
+          timePolicies: true,
+          behaviors: true,
+          allowedApps: true,
+          targetEmployees: true,
         },
-      } as any,
-    });
+      },
+    } as any;
 
-    if (!policy) {
-      throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
-    }
+    const policy = await this.findReadablePolicyById(id, include, scopeOrganizationIds, actorUserId);
 
     return this.toResponseDto(policy);
   }
@@ -520,8 +507,6 @@ export class ControlPoliciesService {
     this.appendDraftVisibilityWhere(where, actorUserId);
 
     const policies = await this.prisma.controlPolicy.findMany({
-      where,
-      orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }],
       include: {
         organization: { select: { id: true, name: true } },
         _count: {
@@ -534,54 +519,45 @@ export class ControlPoliciesService {
           },
         },
       } as any,
+      where,
+      orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }],
     });
     return policies.map(p => this.toResponseDto(p));
   }
 
   async findOneDetail(id: string, scopeOrganizationIds?: string[], actorUserId?: string): Promise<ControlPolicyDetailDto> {
-    const where: any = {
-      id,
-      deletedAt: null,
-    };
-
-    this.applyOrganizationScope(where, scopeOrganizationIds);
-    this.appendDraftVisibilityWhere(where, actorUserId);
-
-    const policy = await this.prisma.controlPolicy.findFirst({
-      where,
-      include: {
-        organization: { select: { id: true, name: true } },
-        zones: {
-          include: {
-            zone: { select: { id: true, name: true, type: true, organizationId: true } },
-          },
+    const include = {
+      organization: { select: { id: true, name: true } },
+      zones: {
+        include: {
+          zone: { select: { id: true, name: true, type: true, organizationId: true } },
         },
-        timePolicies: {
-          include: {
-            timePolicy: { select: { id: true, name: true, organizationId: true } },
-          },
+      },
+      timePolicies: {
+        include: {
+          timePolicy: { select: { id: true, name: true, organizationId: true } },
         },
-        behaviors: {
-          include: {
-            behaviorCondition: { select: { id: true, name: true, organizationId: true } },
-          },
+      },
+      behaviors: {
+        include: {
+          behaviorCondition: { select: { id: true, name: true, organizationId: true } },
         },
-        allowedApps: {
-          include: {
-            preset: {
-              select: {
-                id: true,
-                name: true,
-                organizationId: true,
-                items: {
-                  include: {
-                    allowedApp: {
-                      select: {
-                        id: true,
-                        name: true,
-                        packageName: true,
-                        iconUrl: true,
-                      },
+      },
+      allowedApps: {
+        include: {
+          preset: {
+            select: {
+              id: true,
+              name: true,
+              organizationId: true,
+              items: {
+                include: {
+                  allowedApp: {
+                    select: {
+                      id: true,
+                      name: true,
+                      packageName: true,
+                      iconUrl: true,
                     },
                   },
                 },
@@ -589,19 +565,130 @@ export class ControlPoliciesService {
             },
           },
         },
-        targetEmployees: {
-          include: {
-            employee: { select: { id: true, name: true } },
-          },
+      },
+      targetEmployees: {
+        include: {
+          employee: { select: { id: true, name: true } },
         },
-      } as any,
+      },
+    } as any;
+
+    const policy = await this.findReadablePolicyById(id, include, scopeOrganizationIds, actorUserId);
+
+    return this.toDetailDto(policy);
+  }
+
+  private async findReadablePolicyById(
+    id: string,
+    include: any,
+    scopeOrganizationIds?: string[],
+    actorUserId?: string,
+  ): Promise<any> {
+    const scopedWhere: any = {
+      id,
+      deletedAt: null,
+    };
+
+    this.applyOrganizationScope(scopedWhere, scopeOrganizationIds);
+    this.appendDraftVisibilityWhere(scopedWhere, actorUserId);
+
+    const scopedPolicy = await this.prisma.controlPolicy.findFirst({
+      where: scopedWhere,
+      include,
+    });
+
+    if (scopedPolicy) {
+      return scopedPolicy;
+    }
+
+    const fallbackWhere: any = {
+      id,
+      deletedAt: null,
+    };
+    this.appendDraftVisibilityWhere(fallbackWhere, actorUserId);
+
+    const policy = await this.prisma.controlPolicy.findFirst({
+      where: fallbackWhere,
+      include: {
+        ...include,
+      },
     });
 
     if (!policy) {
       throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
     }
 
-    return this.toDetailDto(policy);
+    const canRead = await this.canReadPolicyByAffectedScope(policy, scopeOrganizationIds);
+    if (!canRead) {
+      throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
+    }
+
+    return policy;
+  }
+
+  private async canReadPolicyByAffectedScope(policy: any, scopeOrganizationIds?: string[]): Promise<boolean> {
+    const normalizedScopeIds = this.normalizeIds(scopeOrganizationIds);
+    if (normalizedScopeIds.length === 0) {
+      return true;
+    }
+
+    if (normalizedScopeIds.includes(policy.organizationId)) {
+      return true;
+    }
+
+    const organizations = await this.prisma.organization.findMany({
+      where: { deletedAt: null },
+      select: { id: true, parentId: true, teamCode: true },
+    });
+
+    const organizationById = new Map(
+      organizations.map((organization) => [organization.id, organization] as const),
+    );
+
+    const owner = organizationById.get(policy.organizationId);
+    if (!owner) {
+      return false;
+    }
+
+    const normalizedTargetUnitIds = this.normalizeIds(policy.targetUnitIds);
+    const affectedUnitIds = normalizedTargetUnitIds.length > 0
+      ? normalizedTargetUnitIds
+      : resolveOrganizationClassification(owner) === 'UNIT'
+        ? [owner.id]
+        : await this.getDescendantUnitOrganizationIds(this.prisma, owner.id);
+
+    if (affectedUnitIds.length === 0) {
+      return false;
+    }
+
+    const affectedUnitIdSet = new Set(affectedUnitIds);
+
+    const isUnitUnderScope = (unitOrganizationId: string, scopeOrganizationId: string): boolean => {
+      let currentOrganizationId: string | null = unitOrganizationId;
+
+      while (currentOrganizationId) {
+        if (currentOrganizationId === scopeOrganizationId) {
+          return true;
+        }
+
+        currentOrganizationId = organizationById.get(currentOrganizationId)?.parentId ?? null;
+      }
+
+      return false;
+    };
+
+    return normalizedScopeIds.some((scopeOrganizationId) => {
+      const scopedOrganization = organizationById.get(scopeOrganizationId);
+      if (!scopedOrganization) {
+        return false;
+      }
+
+      if (resolveOrganizationClassification(scopedOrganization) === 'UNIT') {
+        return affectedUnitIdSet.has(scopeOrganizationId);
+      }
+
+      return affectedUnitIds.some((unitOrganizationId) => isUnitUnderScope(unitOrganizationId, scopeOrganizationId));
+    });
   }
 
   async update(
@@ -626,6 +713,10 @@ export class ControlPoliciesService {
       draftPayload,
       ...rest
     } = updateDto;
+
+    const dispatchScopeRef: {
+      previous?: { organizationId: string; targetUnitIds: string[] };
+    } = {};
 
     // Start transaction for updating relations
     await this.prisma.$transaction(async (tx: any) => {
@@ -652,6 +743,10 @@ export class ControlPoliciesService {
       if (!currentPolicy || currentPolicy.deletedAt) {
         throw new NotFoundException('제어 정책을 찾을 수 없습니다.');
       }
+      dispatchScopeRef.previous = {
+        organizationId: currentPolicy.organizationId,
+        targetUnitIds: Array.isArray(currentPolicy.targetUnitIds) ? currentPolicy.targetUnitIds : [],
+      };
 
       const hadRequiredConditionMissingBefore =
         this.resolveMissingRequiredConditionsFromCounts({
@@ -830,6 +925,7 @@ export class ControlPoliciesService {
       select: {
         id: true,
         organizationId: true,
+        targetUnitIds: true,
         isActive: true,
         isDraft: true,
         name: true,
@@ -849,29 +945,54 @@ export class ControlPoliciesService {
       );
 
       if (!updatedPolicy.isDraft) {
-        await this.notifyPolicyChangedForOrganization({
-          policyId: updatedPolicy.id,
-          organizationId: updatedPolicy.organizationId,
-          trigger: updatedPolicy.isActive ? 'update' : 'deactivate',
-        });
+        const nextTargetOrganizationIds = await this.resolvePolicyDispatchTargetOrganizationIds(
+          updatedPolicy.organizationId,
+          updatedPolicy.targetUnitIds,
+        );
+        const previousTargetOrganizationIds = dispatchScopeRef.previous
+          ? await this.resolvePolicyDispatchTargetOrganizationIds(
+              dispatchScopeRef.previous.organizationId,
+              dispatchScopeRef.previous.targetUnitIds,
+            )
+          : [];
+
+        if (updatedPolicy.isActive) {
+          await this.notifyPolicyChangedForOrganization({
+            policyId: updatedPolicy.id,
+            organizationId: updatedPolicy.organizationId,
+            trigger: 'update',
+            targetOrganizationIds: nextTargetOrganizationIds,
+            policyApplied: true,
+          });
+
+          const nextTargetOrganizationIdSet = new Set(nextTargetOrganizationIds);
+          const removedTargetOrganizationIds = previousTargetOrganizationIds.filter(
+            (organizationId) => !nextTargetOrganizationIdSet.has(organizationId),
+          );
+
+          await this.notifyPolicyChangedForOrganization({
+            policyId: updatedPolicy.id,
+            organizationId: updatedPolicy.organizationId,
+            trigger: 'update',
+            targetOrganizationIds: removedTargetOrganizationIds,
+            policyApplied: false,
+          });
+        } else {
+          const allTargetOrganizationIds = Array.from(new Set([
+            ...previousTargetOrganizationIds,
+            ...nextTargetOrganizationIds,
+          ]));
+
+          await this.notifyPolicyChangedForOrganization({
+            policyId: updatedPolicy.id,
+            organizationId: updatedPolicy.organizationId,
+            trigger: 'deactivate',
+            targetOrganizationIds: allTargetOrganizationIds,
+            policyApplied: false,
+          });
+        }
       }
 
-      if (actorUserId) {
-        void this.prisma.auditLog.create({
-          data: {
-            accountId: actorUserId,
-            organizationId: updatedPolicy.organizationId,
-            action: AuditAction.UPDATE,
-            resourceType: 'ControlPolicy',
-            resourceId: updatedPolicy.id,
-            resourceName: '제어 정책 수정',
-            changesAfter: {
-              policyId: updatedPolicy.id,
-              updatedById: actorUserId,
-            },
-          },
-        }).catch(() => undefined);
-      }
     }
 
     return this.findOneDetail(id, scopeOrganizationIds, actorUserId);
@@ -1518,6 +1639,8 @@ export class ControlPoliciesService {
     policyId: string;
     organizationId: string;
     trigger: 'create' | 'activate' | 'update' | 'deactivate';
+    targetOrganizationIds?: string[];
+    policyApplied?: boolean;
   }): Promise<void> {
     try {
       const appBackendBaseUrl = this.getAppBackendBaseUrl();
@@ -1535,12 +1658,20 @@ export class ControlPoliciesService {
         select: { targetUnitIds: true },
       });
 
-      const targetOrganizationIds = await this.resolvePolicyDispatchTargetOrganizationIds(
-        params.organizationId,
-        policy?.targetUnitIds,
-      );
+      const explicitTargetOrganizationIds = params.targetOrganizationIds === undefined
+        ? undefined
+        : this.normalizeIds(params.targetOrganizationIds);
+      if (explicitTargetOrganizationIds && explicitTargetOrganizationIds.length === 0) {
+        return;
+      }
 
-      if (targetOrganizationIds.length === 0) {
+      const resolvedTargetOrganizationIds = explicitTargetOrganizationIds
+        ?? await this.resolvePolicyDispatchTargetOrganizationIds(
+          params.organizationId,
+          policy?.targetUnitIds,
+        );
+
+      if (resolvedTargetOrganizationIds.length === 0) {
         this.logger.warn(
           `[policy_changed] target organization empty; skip dispatch policyId=${params.policyId}, org=${params.organizationId}`,
         );
@@ -1549,7 +1680,7 @@ export class ControlPoliciesService {
 
       const totalTargetEmployees = await this.prisma.employee.count({
         where: {
-          organizationId: { in: targetOrganizationIds },
+          organizationId: { in: resolvedTargetOrganizationIds },
           status: EmployeeStatus.ACTIVE,
         },
       });
@@ -1567,7 +1698,7 @@ export class ControlPoliciesService {
           d."pushToken"
         FROM devices d
         JOIN employees e ON e.id = d."employeeId"
-        WHERE d."organizationId" IN (${Prisma.join(targetOrganizationIds)})
+        WHERE e."organizationId" IN (${Prisma.join(resolvedTargetOrganizationIds)})
           AND e.status = CAST(${EmployeeStatus.ACTIVE} AS "EmployeeStatus")
           AND d."pushToken" IS NOT NULL
           AND (d."pushTokenStatus" IS NULL OR d."pushTokenStatus" <> 'ERROR')
@@ -1622,6 +1753,7 @@ export class ControlPoliciesService {
               os: target.os,
               policyId: params.policyId,
               trigger: params.trigger,
+              policyApplied: params.policyApplied,
             });
 
             return {
@@ -1681,9 +1813,10 @@ export class ControlPoliciesService {
       const summary = {
         dispatchId,
         trigger: params.trigger,
+        policyApplied: params.policyApplied ?? params.trigger !== 'deactivate',
         policyId: params.policyId,
         organizationId: params.organizationId,
-        targetOrganizationIds,
+        targetOrganizationIds: resolvedTargetOrganizationIds,
         endpointUrl,
         endpointHint,
         dispatchConcurrency,
@@ -1737,9 +1870,10 @@ export class ControlPoliciesService {
       os: DeviceOS;
       policyId: string;
       trigger: 'create' | 'activate' | 'update' | 'deactivate';
+      policyApplied?: boolean;
     },
   ): Promise<void> {
-    const policyApplied = params.trigger === 'deactivate' ? 'false' : 'true';
+    const policyApplied = params.policyApplied ?? params.trigger !== 'deactivate';
     const isIos = params.os === DeviceOS.iOS;
 
     const timeoutMs = this.resolvePolicyPushTimeoutMs();
@@ -1763,7 +1897,7 @@ export class ControlPoliciesService {
               policyVersion: params.policyId,
               extraData: {
                 reason: params.trigger,
-                policyApplied,
+                policyApplied: policyApplied ? 'true' : 'false',
                 deviceOs: isIos ? 'ios' : 'android',
                 iosNeedsBlockedAppsDecision: isIos ? 'true' : 'false',
               },

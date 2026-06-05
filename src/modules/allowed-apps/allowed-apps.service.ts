@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
-import { AppLanguage, AuditAction, Prisma, TranslatableEntityType } from '@prisma/client';
+import { AppLanguage, Prisma, TranslatableEntityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ContentTranslationService } from '@/common/translation/translation.service';
 import { ControlPoliciesService } from '../control-policies/control-policies.service';
@@ -291,22 +291,6 @@ export class AllowedAppsService {
 
     await this.notifyPoliciesByAllowedApp(id);
 
-    if (actorUserId) {
-      void this.prisma.auditLog.create({
-        data: {
-          accountId: actorUserId,
-          action: AuditAction.UPDATE,
-          resourceType: 'AllowedApp',
-          resourceId: app.id,
-          resourceName: app.name,
-          changesAfter: {
-            allowedAppId: app.id,
-            updatedById: actorUserId,
-          },
-        },
-      }).catch(() => undefined);
-    }
-
     const installedCountMap = await this.getInstalledCountByApps([id]);
     return this.toResponseDto(app, installedCountMap.get(id) || 0);
   }
@@ -494,23 +478,6 @@ export class AllowedAppsService {
     });
 
     await this.notifyPoliciesByAllowedApp(id);
-
-    if (actorUserId) {
-      void this.prisma.auditLog.create({
-        data: {
-          accountId: actorUserId,
-          action: AuditAction.UPDATE,
-          resourceType: 'AllowedApp',
-          resourceId: updated.id,
-          resourceName: updated.name,
-          changesAfter: {
-            allowedAppId: updated.id,
-            isGlobal: updated.isGlobal,
-            updatedById: actorUserId,
-          },
-        },
-      }).catch(() => undefined);
-    }
 
     const installedCountMap = await this.getInstalledCountByApps([id]);
     return this.toResponseDto(updated, installedCountMap.get(id) || 0);

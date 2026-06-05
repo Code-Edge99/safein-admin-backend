@@ -9,6 +9,13 @@ export type PolicyOwnerOrganizationNode = {
   id: string;
   parentId: string | null;
   teamCode: string | null;
+  appliedControlPolicyId?: string | null;
+};
+
+export type PolicySelectionContext = {
+  ownerOrganizationIds: string[];
+  appliedPolicyId: string | null;
+  appliedByOrganizationId: string | null;
 };
 
 export type PolicyScopeCandidate = {
@@ -42,13 +49,30 @@ export function resolvePolicyOwnerFallbackIds(
   organizationId: string,
   organizationsById: Map<string, PolicyOwnerOrganizationNode>,
 ): string[] {
+  return resolvePolicySelectionContext(organizationId, organizationsById).ownerOrganizationIds;
+}
+
+export function resolvePolicySelectionContext(
+  organizationId: string,
+  organizationsById: Map<string, PolicyOwnerOrganizationNode>,
+): PolicySelectionContext {
   const result: string[] = [];
+  let appliedPolicyId: string | null = null;
+  let appliedByOrganizationId: string | null = null;
   let current = organizationsById.get(organizationId);
 
   while (current) {
     const classification = resolveOrganizationClassification(current);
     if (classification === 'COMPANY' || classification === 'GROUP' || classification === 'UNIT') {
       result.push(current.id);
+
+      if (!appliedPolicyId) {
+        const normalizedAppliedPolicyId = String(current.appliedControlPolicyId || '').trim();
+        if (normalizedAppliedPolicyId.length > 0) {
+          appliedPolicyId = normalizedAppliedPolicyId;
+          appliedByOrganizationId = current.id;
+        }
+      }
     }
 
     const parentId = current.parentId ?? '';
@@ -59,7 +83,11 @@ export function resolvePolicyOwnerFallbackIds(
     current = organizationsById.get(parentId);
   }
 
-  return Array.from(new Set(result));
+  return {
+    ownerOrganizationIds: Array.from(new Set(result)),
+    appliedPolicyId,
+    appliedByOrganizationId,
+  };
 }
 
 export function doesPolicyTargetOrganization(

@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
-import { AppLanguage, AuditAction, TranslatableEntityType } from '@prisma/client';
+import { AppLanguage, TranslatableEntityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { preferKstTimestamp } from '../../common/utils/kst-time.util';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
@@ -297,23 +297,6 @@ export class ZonesService {
 
     if (detachmentResult.deactivatedPolicyIds.length > 0) {
       await this.controlPoliciesService.notifyPoliciesChanged(detachmentResult.deactivatedPolicyIds, 'deactivate');
-    }
-
-    if (actorUserId) {
-      void this.prisma.auditLog.create({
-        data: {
-          accountId: actorUserId,
-          organizationId: zone.organizationId,
-          action: AuditAction.UPDATE,
-          resourceType: 'Zone',
-          resourceId: zone.id,
-          resourceName: zone.name,
-          changesAfter: {
-            zoneId: zone.id,
-            updatedById: actorUserId,
-          },
-        },
-      }).catch(() => undefined);
     }
 
     return this.toResponseDto(zone);
