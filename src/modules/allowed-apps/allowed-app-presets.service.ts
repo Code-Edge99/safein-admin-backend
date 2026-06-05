@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
-import { AppLanguage, AuditAction, TranslatableEntityType } from '@prisma/client';
+import { AppLanguage, TranslatableEntityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
 import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope, assertConditionOwnerOrganization, resolvePolicySourceOrganizationIds } from '../../common/utils/organization-scope.util';
@@ -378,23 +378,6 @@ export class AllowedAppPresetsService {
       await this.controlPoliciesService.notifyPoliciesChanged(detachmentResult.deactivatedPolicyIds, 'deactivate');
     }
 
-    if (actorUserId) {
-      void this.prisma.auditLog.create({
-        data: {
-          accountId: actorUserId,
-          organizationId: preset.organization?.id ?? null,
-          action: AuditAction.UPDATE,
-          resourceType: 'AllowedAppPreset',
-          resourceId: preset.id,
-          resourceName: preset.name,
-          changesAfter: {
-            presetId: preset.id,
-            updatedById: actorUserId,
-          },
-        },
-      }).catch(() => undefined);
-    }
-
     return this.toDetailDto(preset);
   }
 
@@ -474,24 +457,6 @@ export class AllowedAppPresetsService {
 
     await this.notifyPoliciesByPreset(id);
 
-    if (actorUserId) {
-      void this.prisma.auditLog.create({
-        data: {
-          accountId: actorUserId,
-          organizationId: preset.organization?.id ?? null,
-          action: AuditAction.UPDATE,
-          resourceType: 'AllowedAppPreset',
-          resourceId: id,
-          resourceName: preset.name,
-          changesAfter: {
-            presetId: id,
-            addedAppIds: newAppIds,
-            updatedById: actorUserId,
-          },
-        },
-      }).catch(() => undefined);
-    }
-
     return this.findOne(id);
   }
 
@@ -513,24 +478,6 @@ export class AllowedAppPresetsService {
     });
 
     await this.notifyPoliciesByPreset(id);
-
-    if (actorUserId) {
-      void this.prisma.auditLog.create({
-        data: {
-          accountId: actorUserId,
-          organizationId: preset.organization?.id ?? null,
-          action: AuditAction.UPDATE,
-          resourceType: 'AllowedAppPreset',
-          resourceId: id,
-          resourceName: preset.name,
-          changesAfter: {
-            presetId: id,
-            removedAppIds: appIds,
-            updatedById: actorUserId,
-          },
-        },
-      }).catch(() => undefined);
-    }
 
     return this.findOne(id, scopeOrganizationIds);
   }

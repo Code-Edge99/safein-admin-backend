@@ -22,6 +22,7 @@ export function toOrganizationResponseDto(org: any): OrganizationResponseDto {
     managerPhone: org.managerPhone,
     emergencyContact: org.emergencyContact,
     teamCode: org.teamCode,
+    appliedControlPolicyId: org.appliedControlPolicyId ?? null,
     isActive: org.isActive,
     createdById: org.createdById,
     updatedById: org.updatedById,

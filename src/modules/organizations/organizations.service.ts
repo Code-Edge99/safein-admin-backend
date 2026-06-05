@@ -11,6 +11,7 @@ import {
   resolveAdminActorType,
   resolveOrganizationClassification,
 } from '../../common/utils/organization-scope.util';
+import { resolvePolicyOwnerFallbackIds } from '../../common/utils/policy-owner-fallback.util';
 import { normalizePhoneNumber } from '../../common/utils/phone.util';
 import { toOrganizationResponseDto } from './organizations.mapper';
 import {
@@ -163,6 +164,72 @@ export class OrganizationsService {
     scopeOrganizationIds?: string[],
   ): void {
     assertOrganizationInScopeOrThrow(organization.id, scopeOrganizationIds, '현장을 찾을 수 없습니다.');
+  }
+
+  private normalizeOptionalId(value: unknown): string | null | undefined {
+    if (value === undefined) {
+      return undefined;
+    }
+
+    if (value === null) {
+      return null;
+    }
+
+    const normalized = String(value).trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  private async validateAppliedControlPolicyId(
+    tx: any,
+    organizationId: string,
+    nextParentId: string | undefined,
+    appliedControlPolicyId: string | null,
+  ): Promise<string | null> {
+    if (!appliedControlPolicyId) {
+      return null;
+    }
+
+    const organizations = await tx.organization.findMany({
+      where: { deletedAt: null },
+      select: { id: true, parentId: true, teamCode: true },
+    });
+
+    const organizationMap = new Map<string, { id: string; parentId: string | null; teamCode: string | null }>(
+      organizations.map((organization: { id: string; parentId: string | null; teamCode: string | null }) => [organization.id, organization] as const),
+    );
+
+    const currentOrganization = organizationMap.get(organizationId);
+    if (!currentOrganization) {
+      throw new NotFoundException('현장을 찾을 수 없습니다.');
+    }
+
+    organizationMap.set(organizationId, {
+      ...currentOrganization,
+      parentId: nextParentId === undefined ? currentOrganization.parentId : nextParentId,
+    });
+
+    const allowedOwnerIds = resolvePolicyOwnerFallbackIds(organizationId, organizationMap);
+    const policy = await tx.controlPolicy.findFirst({
+      where: {
+        id: appliedControlPolicyId,
+        deletedAt: null,
+        isDraft: false,
+      },
+      select: {
+        id: true,
+        organizationId: true,
+      },
+    });
+
+    if (!policy) {
+      throw new BadRequestException('적용 정책을 찾을 수 없습니다.');
+    }
+
+    if (!allowedOwnerIds.includes(policy.organizationId)) {
+      throw new BadRequestException('현재 현장에서 선택할 수 없는 정책입니다. 자기 현장 또는 상위 회사/그룹 정책만 선택할 수 있습니다.');
+    }
+
+    return policy.id;
   }
 
   async create(
@@ -443,7 +510,7 @@ export class OrganizationsService {
     const normalizedManagerPhone = normalizePhoneNumber(dto.managerPhone);
     const currentOrganization = await this.prisma.organization.findFirst({
       where: { id, deletedAt: null },
-      select: { id: true, parentId: true, teamCode: true },
+      select: { id: true, parentId: true, teamCode: true, appliedControlPolicyId: true },
     });
 
     if (!currentOrganization) {
@@ -527,6 +594,16 @@ export class OrganizationsService {
     }
 
     const organization = await this.prisma.$transaction(async (tx) => {
+      const normalizedAppliedControlPolicyIdInput = this.normalizeOptionalId(dto.appliedControlPolicyId);
+      const resolvedAppliedControlPolicyId = await this.validateAppliedControlPolicyId(
+        tx,
+        id,
+        nextParentId,
+        normalizedAppliedControlPolicyIdInput === undefined
+          ? (currentOrganization.appliedControlPolicyId ?? null)
+          : normalizedAppliedControlPolicyIdInput,
+      );
+
       const updated = await tx.organization.update({
         where: { id },
         data: {
@@ -539,6 +616,7 @@ export class OrganizationsService {
           emergencyContact: dto.emergencyContact,
           updatedById: actorUserId,
           parentId: nextParentId,
+          appliedControlPolicyId: resolvedAppliedControlPolicyId,
           isActive: dto.isActive,
         } as any,
         include: {

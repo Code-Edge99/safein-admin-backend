@@ -66,18 +66,6 @@ export class ReportMetricSettingsDto {
   @Max(100)
   siteRiskViolationsPerEmployeeWarningAbove: number;
 
-  @ApiProperty({ description: '호환용 필드 - 현장 상태 계산에는 기본 반영하지 않는 총 차단 위험 기준', example: 30 })
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  siteRiskTotalViolationsDangerAbove: number;
-
-  @ApiProperty({ description: '호환용 필드 - 현장 상태 계산에는 기본 반영하지 않는 총 차단 주의 기준', example: 12 })
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  siteRiskTotalViolationsWarningAbove: number;
-
   @ApiProperty({ description: '현장 상태 점수 - 안정 점수 항목 가중치', example: 1 })
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
@@ -91,13 +79,6 @@ export class ReportMetricSettingsDto {
   @Min(0)
   @Max(10)
   siteRiskViolationsPerEmployeeWeight: number;
-
-  @ApiProperty({ description: '호환용 필드 - 현장 상태 계산에는 기본 반영하지 않는 총 차단 항목 가중치', example: 0 })
-  @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 2 })
-  @Min(0)
-  @Max(10)
-  siteRiskTotalViolationsWeight: number;
 
   @ApiProperty({ description: '현장 상태 점수 - 위험 판정 최소 점수', example: 60 })
   @Type(() => Number)

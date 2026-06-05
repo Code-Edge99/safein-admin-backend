@@ -72,7 +72,12 @@ export class CreateOrganizationDto {
   isActive?: boolean;
 }
 
-export class UpdateOrganizationDto extends PartialType(CreateOrganizationDto) {}
+export class UpdateOrganizationDto extends PartialType(CreateOrganizationDto) {
+  @ApiPropertyOptional({ description: '명시적으로 적용할 통제 정책 ID. null이면 상위 규칙 fallback 사용' })
+  @IsOptional()
+  @IsString()
+  appliedControlPolicyId?: string | null;
+}
 
 export class OrganizationResponseDto {
   @ApiProperty({ description: '현장 ID' })
@@ -110,6 +115,9 @@ export class OrganizationResponseDto {
 
   @ApiPropertyOptional({ description: '단위 현장 팀코드 (5자리 대문자/숫자)' })
   teamCode?: string | null;
+
+  @ApiPropertyOptional({ description: '명시적으로 적용할 통제 정책 ID' })
+  appliedControlPolicyId?: string | null;
 
   @ApiProperty({ description: '활성 상태' })
   isActive: boolean;

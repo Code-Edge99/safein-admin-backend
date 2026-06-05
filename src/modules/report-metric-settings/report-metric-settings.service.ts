@@ -20,11 +20,8 @@ const DEFAULT_REPORT_METRIC_SETTINGS: ReportMetricSettingsValues = {
   siteRiskComplianceWarningBelow: 90,
   siteRiskViolationsPerEmployeeDangerAbove: 1.5,
   siteRiskViolationsPerEmployeeWarningAbove: 0.7,
-  siteRiskTotalViolationsDangerAbove: 30,
-  siteRiskTotalViolationsWarningAbove: 12,
   siteRiskComplianceWeight: 1,
   siteRiskViolationsPerEmployeeWeight: 1,
-  siteRiskTotalViolationsWeight: 0,
   siteRiskDangerScoreMin: 60,
   siteRiskWarningScoreMin: 20,
 };
@@ -163,11 +160,43 @@ export class ReportMetricSettingsService {
   async findCurrent(): Promise<ReportMetricSettingsResponseDto> {
     const setting = await this.findStoredSetting();
     const values = this.normalizeValues(setting?.value);
+    const meta = this.extractMeta(setting?.value);
 
     return {
       ...values,
       updatedAt: this.toDate(setting?.updatedAt),
-      updatedByName: null,
+      updatedByName: meta?.updatedByName ?? null,
+    };
+  }
+
+  private async resolveActorName(actorId?: string): Promise<string | null> {
+    if (!actorId) {
+      return null;
+    }
+
+    const account = await this.prisma.account.findUnique({
+      where: { id: actorId },
+      select: { name: true, username: true },
+    });
+
+    return account?.name || account?.username || null;
+  }
+
+  private extractMeta(value: unknown): { updatedById: string | null; updatedByName: string | null } | null {
+    const parsed = this.parseStoredValue(value);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+
+    const meta = (parsed as Record<string, unknown>).__meta;
+    if (!meta || typeof meta !== 'object' || Array.isArray(meta)) {
+      return null;
+    }
+
+    const normalizedMeta = meta as Record<string, unknown>;
+    return {
+      updatedById: typeof normalizedMeta.updatedById === 'string' ? normalizedMeta.updatedById : null,
+      updatedByName: typeof normalizedMeta.updatedByName === 'string' ? normalizedMeta.updatedByName : null,
     };
   }
 
@@ -178,11 +207,17 @@ export class ReportMetricSettingsService {
     this.ensureLogicalThresholds(data);
 
     const values = this.normalizeValues(data);
-    void actor;
+    const updatedByName = await this.resolveActorName(actor?.id);
 
     const schema = await this.getSystemSettingSchema();
     const description = '대시보드 및 리포트 산정 기준 설정';
-    const serializedValue = JSON.stringify(values);
+    const serializedValue = JSON.stringify({
+      ...values,
+      __meta: {
+        updatedById: actor?.id ?? null,
+        updatedByName,
+      },
+    });
     const returningClause = schema.updatedAtColumn
       ? `${this.quoteIdentifier(schema.updatedAtColumn)} AS "updatedAt"`
       : 'NULL::timestamp AS "updatedAt"';
@@ -258,7 +293,7 @@ export class ReportMetricSettingsService {
     return {
       ...values,
       updatedAt: this.toDate(setting?.updatedAt),
-      updatedByName: null,
+      updatedByName,
     };
   }
 
@@ -276,11 +311,8 @@ export class ReportMetricSettingsService {
       siteRiskComplianceWarningBelow: this.readNumber(raw.siteRiskComplianceWarningBelow, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskComplianceWarningBelow, 1),
       siteRiskViolationsPerEmployeeDangerAbove: this.readNumber(raw.siteRiskViolationsPerEmployeeDangerAbove, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskViolationsPerEmployeeDangerAbove, 2),
       siteRiskViolationsPerEmployeeWarningAbove: this.readNumber(raw.siteRiskViolationsPerEmployeeWarningAbove, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskViolationsPerEmployeeWarningAbove, 2),
-      siteRiskTotalViolationsDangerAbove: DEFAULT_REPORT_METRIC_SETTINGS.siteRiskTotalViolationsDangerAbove,
-      siteRiskTotalViolationsWarningAbove: DEFAULT_REPORT_METRIC_SETTINGS.siteRiskTotalViolationsWarningAbove,
       siteRiskComplianceWeight: this.readNumber(raw.siteRiskComplianceWeight, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskComplianceWeight, 2),
       siteRiskViolationsPerEmployeeWeight: this.readNumber(raw.siteRiskViolationsPerEmployeeWeight, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskViolationsPerEmployeeWeight, 2),
-      siteRiskTotalViolationsWeight: DEFAULT_REPORT_METRIC_SETTINGS.siteRiskTotalViolationsWeight,
       siteRiskDangerScoreMin: this.readNumber(raw.siteRiskDangerScoreMin, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskDangerScoreMin, 1),
       siteRiskWarningScoreMin: this.readNumber(raw.siteRiskWarningScoreMin, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskWarningScoreMin, 1),
     };
@@ -290,11 +322,6 @@ export class ReportMetricSettingsService {
     const normalized = typeof value === 'number' && Number.isFinite(value) ? value : fallback;
     const factor = 10 ** decimals;
     return Math.round(normalized * factor) / factor;
-  }
-
-  private readInteger(value: unknown, fallback: number): number {
-    const normalized = typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-    return Math.max(0, Math.round(normalized));
   }
 
   private ensureLogicalThresholds(data: ReportMetricSettingsDto): void {

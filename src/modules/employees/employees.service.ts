@@ -7,7 +7,7 @@ import {
   ForbiddenException,
   Logger,
 } from '@nestjs/common';
-import { Prisma, EmployeeStatus, DeviceOperationStatus, DeviceOS, PushTokenStatus, AuditAction } from '@prisma/client';
+import { Prisma, EmployeeStatus, DeviceOperationStatus, DeviceOS, PushTokenStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
@@ -914,23 +914,6 @@ export class EmployeesService {
       ).catch((error) => {
         this.logger.warn(`아이디 재할당 삭제 처리 후 policy_changed 전송 실패: ${String(error)}`);
       });
-    }
-
-    if (actorUserId) {
-      void this.prisma.auditLog.create({
-        data: {
-          accountId: actorUserId,
-          organizationId: employee.organizationId,
-          action: AuditAction.UPDATE,
-          resourceType: 'Employee',
-          resourceId: employee.id,
-          resourceName: employee.name,
-          changesAfter: {
-            employeeId: employee.id,
-            updatedById: actorUserId,
-          },
-        },
-      }).catch(() => undefined);
     }
 
     return this.toResponseDto(employee);
