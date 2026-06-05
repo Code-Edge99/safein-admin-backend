@@ -9,6 +9,7 @@ import {
 export type ReportMetricSettingsValues = Omit<ReportMetricSettingsResponseDto, 'updatedAt' | 'updatedByName'>;
 
 const REPORT_METRIC_SETTING_KEY = 'report_metric_thresholds';
+const MAX_INTEGER_DIGITS = 5;
 
 const DEFAULT_REPORT_METRIC_SETTINGS: ReportMetricSettingsValues = {
   complianceAppBlockWeight: 1,
@@ -304,17 +305,17 @@ export class ReportMetricSettingsService {
     return {
       complianceAppBlockWeight: this.readNumber(raw.complianceAppBlockWeight, DEFAULT_REPORT_METRIC_SETTINGS.complianceAppBlockWeight, 2),
       complianceBehaviorBlockWeight: this.readNumber(raw.complianceBehaviorBlockWeight, DEFAULT_REPORT_METRIC_SETTINGS.complianceBehaviorBlockWeight, 2),
-      complianceBadgeExcellentMin: this.readNumber(raw.complianceBadgeExcellentMin, DEFAULT_REPORT_METRIC_SETTINGS.complianceBadgeExcellentMin, 1),
-      complianceBadgeGoodMin: this.readNumber(raw.complianceBadgeGoodMin, DEFAULT_REPORT_METRIC_SETTINGS.complianceBadgeGoodMin, 1),
-      complianceBadgeFairMin: this.readNumber(raw.complianceBadgeFairMin, DEFAULT_REPORT_METRIC_SETTINGS.complianceBadgeFairMin, 1),
-      siteRiskComplianceDangerBelow: this.readNumber(raw.siteRiskComplianceDangerBelow, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskComplianceDangerBelow, 1),
-      siteRiskComplianceWarningBelow: this.readNumber(raw.siteRiskComplianceWarningBelow, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskComplianceWarningBelow, 1),
+      complianceBadgeExcellentMin: this.readNumber(raw.complianceBadgeExcellentMin, DEFAULT_REPORT_METRIC_SETTINGS.complianceBadgeExcellentMin, 2),
+      complianceBadgeGoodMin: this.readNumber(raw.complianceBadgeGoodMin, DEFAULT_REPORT_METRIC_SETTINGS.complianceBadgeGoodMin, 2),
+      complianceBadgeFairMin: this.readNumber(raw.complianceBadgeFairMin, DEFAULT_REPORT_METRIC_SETTINGS.complianceBadgeFairMin, 2),
+      siteRiskComplianceDangerBelow: this.readNumber(raw.siteRiskComplianceDangerBelow, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskComplianceDangerBelow, 2),
+      siteRiskComplianceWarningBelow: this.readNumber(raw.siteRiskComplianceWarningBelow, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskComplianceWarningBelow, 2),
       siteRiskViolationsPerEmployeeDangerAbove: this.readNumber(raw.siteRiskViolationsPerEmployeeDangerAbove, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskViolationsPerEmployeeDangerAbove, 2),
       siteRiskViolationsPerEmployeeWarningAbove: this.readNumber(raw.siteRiskViolationsPerEmployeeWarningAbove, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskViolationsPerEmployeeWarningAbove, 2),
       siteRiskComplianceWeight: this.readNumber(raw.siteRiskComplianceWeight, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskComplianceWeight, 2),
       siteRiskViolationsPerEmployeeWeight: this.readNumber(raw.siteRiskViolationsPerEmployeeWeight, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskViolationsPerEmployeeWeight, 2),
-      siteRiskDangerScoreMin: this.readNumber(raw.siteRiskDangerScoreMin, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskDangerScoreMin, 1),
-      siteRiskWarningScoreMin: this.readNumber(raw.siteRiskWarningScoreMin, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskWarningScoreMin, 1),
+      siteRiskDangerScoreMin: this.readNumber(raw.siteRiskDangerScoreMin, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskDangerScoreMin, 2),
+      siteRiskWarningScoreMin: this.readNumber(raw.siteRiskWarningScoreMin, DEFAULT_REPORT_METRIC_SETTINGS.siteRiskWarningScoreMin, 2),
     };
   }
 
@@ -325,6 +326,8 @@ export class ReportMetricSettingsService {
   }
 
   private ensureLogicalThresholds(data: ReportMetricSettingsDto): void {
+    this.ensureNumberPrecision(data);
+
     if (data.complianceAppBlockWeight <= 0 && data.complianceBehaviorBlockWeight <= 0) {
       throw new BadRequestException('안정 점수 계산식 가중치는 앱 또는 행동 중 하나 이상 0보다 커야 합니다.');
     }
@@ -351,5 +354,20 @@ export class ReportMetricSettingsService {
     ) {
       throw new BadRequestException('현장 상태 점수는 최소 한 항목 이상 가중치가 0보다 커야 합니다.');
     }
+  }
+
+  private ensureNumberPrecision(data: ReportMetricSettingsDto): void {
+    const entries = Object.entries(data) as Array<[keyof ReportMetricSettingsDto, unknown]>;
+
+    entries.forEach(([key, value]) => {
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        return;
+      }
+
+      const [integerPart = '0', decimalPart = ''] = String(Math.abs(value)).split('.');
+      if (integerPart.length > MAX_INTEGER_DIGITS || decimalPart.length > 2) {
+        throw new BadRequestException(`${String(key)}는 정수부 5자리, 소수점 2자리까지만 입력할 수 있습니다.`);
+      }
+    });
   }
 }
