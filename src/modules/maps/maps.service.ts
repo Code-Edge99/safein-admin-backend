@@ -21,7 +21,7 @@ export class MapsService {
 
     if (!keyId || !key) {
       throw new ServiceUnavailableException(
-        'NCP Maps API credentials are missing (NCP_MAPS_API_KEY_ID / NCP_MAPS_API_KEY).',
+        '지도 API 설정이 누락되었습니다. 관리자에게 문의해주세요.',
       );
     }
 
@@ -43,7 +43,7 @@ export class MapsService {
     });
 
     if (!response.ok) {
-      throw new BadGatewayException(`NCP geocode request failed with status ${response.status}`);
+      throw new BadGatewayException(`주소 검색 서버 요청에 실패했습니다. (status=${response.status})`);
     }
 
     const payload = (await response.json()) as NcpGeocodeResponse;

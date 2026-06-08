@@ -455,6 +455,15 @@ export class IncidentReportsService {
     accountId?: string,
   ): Promise<IncidentReportDetailDto> {
     const report = await this.getReportInScope(reportId, scopeOrganizationIds);
+
+    if (dto.status === IncidentReportStatus.ASSIGNED) {
+      throw new BadRequestException('담당자 배정 상태는 담당자 지정을 통해서만 변경할 수 있습니다.');
+    }
+
+    if (dto.status === IncidentReportStatus.IN_PROGRESS && !report.assignedAdminId) {
+      throw new BadRequestException('담당자가 지정되지 않은 신고는 처리중으로 변경할 수 없습니다. 먼저 담당자를 배정하세요.');
+    }
+
     const shouldResetAssignee = dto.status === IncidentReportStatus.RECEIVED;
     const shouldClearAssignedAdmin = shouldResetAssignee && !!report.assignedAdminId;
 
