@@ -41,10 +41,30 @@ type TranslationApiMultiLangResponse = {
   }>>;
 };
 
+type TranslationApiMultiLangBatchResponse = {
+  items?: Array<{
+    key?: string;
+    input_text?: string;
+    results?: Partial<Record<AppLanguage, {
+      translated_text?: string;
+    }>>;
+  }>;
+};
+
 type TranslationApiMultiLangHtmlResponse = {
   results?: Partial<Record<AppLanguage, {
     translated_html?: string;
   }>>;
+};
+
+type TranslationApiMultiLangHtmlBatchResponse = {
+  items?: Array<{
+    key?: string;
+    input_html?: string;
+    results?: Partial<Record<AppLanguage, {
+      translated_html?: string;
+    }>>;
+  }>;
 };
 
 class TranslationApiError extends Error {
@@ -616,24 +636,25 @@ export class ContentTranslationService implements OnModuleInit, OnModuleDestroy 
     }
 
     if (htmlFields.length > 0) {
-      const htmlResults = await Promise.all(
-        htmlFields.map(async (field) => ({
-          fieldKey: field.fieldKey,
-          derivedTextFieldKey: this.getDerivedTextFieldKey(field.fieldKey, fieldKeys),
-          translated: (await this.translateHtmlToLanguages(field.content, sourceLanguage, [targetLanguage], requireTranslation))[targetLanguage],
-          original: field.content,
-        })),
+      const htmlResultsByField = await this.translateHtmlFieldsToLanguages(
+        htmlFields,
+        sourceLanguage,
+        [targetLanguage],
+        requireTranslation,
       );
 
-      for (const result of htmlResults) {
-        if (!result.translated?.trim() && requireTranslation) {
+      for (const field of htmlFields) {
+        const result = htmlResultsByField.get(field.fieldKey);
+        const translatedHtml = result?.translated[targetLanguage]?.trim();
+        if (!translatedHtml && requireTranslation) {
           throw new BadGatewayException('번역 API HTML 결과가 비어 있습니다.');
         }
 
-        const translatedHtml = result.translated || result.original;
-        translated[result.fieldKey] = translatedHtml;
-        if (result.derivedTextFieldKey) {
-          translated[result.derivedTextFieldKey] = this.extractTextFromHtml(translatedHtml);
+        const resolvedHtml = translatedHtml || field.content;
+        translated[field.fieldKey] = resolvedHtml;
+        const derivedTextFieldKey = this.getDerivedTextFieldKey(field.fieldKey, fieldKeys);
+        if (derivedTextFieldKey) {
+          translated[derivedTextFieldKey] = this.extractTextFromHtml(resolvedHtml);
         }
       }
     }
@@ -663,50 +684,50 @@ export class ContentTranslationService implements OnModuleInit, OnModuleDestroy 
     const plainFields = fields.filter((field) => field.isHtml !== true && !derivedTextFieldKeys.has(field.fieldKey));
 
     if (plainFields.length > 0) {
-      const textResults = await Promise.all(
-        plainFields.map(async (field) => ({
-          fieldKey: field.fieldKey,
-          translated: await this.translateTextToLanguages(field.content, sourceLanguage, uniqueTargets, requireTranslation),
-          original: field.content,
-        })),
+      const textResultsByField = await this.translateTextFieldsToLanguages(
+        plainFields,
+        sourceLanguage,
+        uniqueTargets,
+        requireTranslation,
       );
 
-      for (const fieldResult of textResults) {
+      for (const field of plainFields) {
+        const fieldResult = textResultsByField.get(field.fieldKey);
         for (const language of uniqueTargets) {
           const current = translatedByLanguage.get(language) ?? {};
-          const translatedText = fieldResult.translated[language]?.trim();
+          const translatedText = fieldResult?.translated[language]?.trim();
           if (!translatedText && requireTranslation) {
             throw new BadGatewayException('번역 API 결과가 비어 있습니다.');
           }
 
-          current[fieldResult.fieldKey] = translatedText || fieldResult.original;
+          current[field.fieldKey] = translatedText || field.content;
           translatedByLanguage.set(language, current);
         }
       }
     }
 
     if (htmlFields.length > 0) {
-      const htmlResults = await Promise.all(
-        htmlFields.map(async (field) => ({
-          fieldKey: field.fieldKey,
-          derivedTextFieldKey: this.getDerivedTextFieldKey(field.fieldKey, fieldKeys),
-          translated: await this.translateHtmlToLanguages(field.content, sourceLanguage, uniqueTargets, requireTranslation),
-          original: field.content,
-        })),
+      const htmlResultsByField = await this.translateHtmlFieldsToLanguages(
+        htmlFields,
+        sourceLanguage,
+        uniqueTargets,
+        requireTranslation,
       );
 
-      for (const fieldResult of htmlResults) {
+      for (const field of htmlFields) {
+        const fieldResult = htmlResultsByField.get(field.fieldKey);
+        const derivedTextFieldKey = this.getDerivedTextFieldKey(field.fieldKey, fieldKeys);
         for (const language of uniqueTargets) {
           const current = translatedByLanguage.get(language) ?? {};
-          const translatedText = fieldResult.translated[language]?.trim();
+          const translatedText = fieldResult?.translated[language]?.trim();
           if (!translatedText && requireTranslation) {
             throw new BadGatewayException('번역 API HTML 결과가 비어 있습니다.');
           }
 
-          const translatedHtml = translatedText || fieldResult.original;
-          current[fieldResult.fieldKey] = translatedHtml;
-          if (fieldResult.derivedTextFieldKey) {
-            current[fieldResult.derivedTextFieldKey] = this.extractTextFromHtml(translatedHtml);
+          const translatedHtml = translatedText || field.content;
+          current[field.fieldKey] = translatedHtml;
+          if (derivedTextFieldKey) {
+            current[derivedTextFieldKey] = this.extractTextFromHtml(translatedHtml);
           }
           translatedByLanguage.set(language, current);
         }
@@ -741,6 +762,52 @@ export class ContentTranslationService implements OnModuleInit, OnModuleDestroy 
     return translated;
   }
 
+  private async translateTextFieldsToLanguages(
+    fields: TranslationFieldInput[],
+    sourceLanguage: AppLanguage,
+    targetLanguages: AppLanguage[],
+    requireTranslation: boolean,
+  ): Promise<Map<string, { translated: Partial<Record<AppLanguage, string>> }>> {
+    if (fields.length === 0) {
+      return new Map();
+    }
+
+    const response = await this.requestTranslationApi<TranslationApiMultiLangBatchResponse>('/translate/multilang/batch', {
+      source_language: sourceLanguage,
+      target_languages: targetLanguages,
+      items: fields.map((field) => ({
+        key: field.fieldKey,
+        text: field.content,
+      })),
+    });
+
+    if ((response.items?.length ?? 0) !== fields.length) {
+      throw new BadGatewayException('번역 API 응답 개수가 요청과 일치하지 않습니다.');
+    }
+
+    const translatedByField = new Map<string, { translated: Partial<Record<AppLanguage, string>> }>();
+    for (const field of fields) {
+      const item = response.items?.find((entry) => entry.key === field.fieldKey);
+      if (!item) {
+        throw new BadGatewayException(`번역 API 응답에서 필드가 누락되었습니다(field=${field.fieldKey}).`);
+      }
+
+      const translated: Partial<Record<AppLanguage, string>> = {};
+      for (const language of targetLanguages) {
+        const value = item.results?.[language]?.translated_text?.trim();
+        if (!value && requireTranslation) {
+          throw new BadGatewayException('번역 API 결과가 비어 있습니다.');
+        }
+
+        translated[language] = value || field.content;
+      }
+
+      translatedByField.set(field.fieldKey, { translated });
+    }
+
+    return translatedByField;
+  }
+
   private async translateHtmlToLanguages(
     html: string,
     sourceLanguage: AppLanguage,
@@ -764,6 +831,55 @@ export class ContentTranslationService implements OnModuleInit, OnModuleDestroy 
     }
 
     return translated;
+  }
+
+  private async translateHtmlFieldsToLanguages(
+    fields: TranslationFieldInput[],
+    sourceLanguage: AppLanguage,
+    targetLanguages: AppLanguage[],
+    requireTranslation: boolean,
+  ): Promise<Map<string, { translated: Partial<Record<AppLanguage, string>> }>> {
+    if (fields.length === 0) {
+      return new Map();
+    }
+
+    const response = await this.requestTranslationApi<TranslationApiMultiLangHtmlBatchResponse>(
+      '/translate/multilang/html/batch',
+      {
+        source_language: sourceLanguage,
+        target_languages: targetLanguages,
+        items: fields.map((field) => ({
+          key: field.fieldKey,
+          html: field.content,
+        })),
+      },
+    );
+
+    if ((response.items?.length ?? 0) !== fields.length) {
+      throw new BadGatewayException('번역 API HTML 응답 개수가 요청과 일치하지 않습니다.');
+    }
+
+    const translatedByField = new Map<string, { translated: Partial<Record<AppLanguage, string>> }>();
+    for (const field of fields) {
+      const item = response.items?.find((entry) => entry.key === field.fieldKey);
+      if (!item) {
+        throw new BadGatewayException(`번역 API HTML 응답에서 필드가 누락되었습니다(field=${field.fieldKey}).`);
+      }
+
+      const translated: Partial<Record<AppLanguage, string>> = {};
+      for (const language of targetLanguages) {
+        const value = item.results?.[language]?.translated_html?.trim();
+        if (!value && requireTranslation) {
+          throw new BadGatewayException('번역 API HTML 결과가 비어 있습니다.');
+        }
+
+        translated[language] = value || field.content;
+      }
+
+      translatedByField.set(field.fieldKey, { translated });
+    }
+
+    return translatedByField;
   }
 
   private async requestTranslationApi<T>(path: string, payload: Record<string, unknown>): Promise<T> {
