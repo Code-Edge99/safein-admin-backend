@@ -1025,6 +1025,11 @@ export class ControlPoliciesService {
       });
     });
 
+    await this.contentTranslationService.deleteEntityTranslationBundle(
+      TranslatableEntityType.CONTROL_POLICY,
+      id,
+    );
+
     if (!policy.isDraft) {
       await this.notifyPolicyChangedForOrganization({
         policyId: policy.id,
@@ -1078,6 +1083,11 @@ export class ControlPoliciesService {
         },
       });
     });
+
+    await this.contentTranslationService.deleteEntityTranslationBundles(
+      TranslatableEntityType.CONTROL_POLICY,
+      targetPolicyIds,
+    );
 
     await this.notifyPoliciesByContext(
       targetPolicies.filter((policy) => !policy.isDraft),

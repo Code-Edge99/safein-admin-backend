@@ -444,6 +444,11 @@ export class AllowedAppsService {
     await this.prisma.allowedApp.delete({
       where: { id },
     });
+
+    await this.contentTranslationService.deleteEntityTranslationBundle(
+      TranslatableEntityType.ALLOWED_APP,
+      id,
+    );
   }
 
   async getCategories(): Promise<string[]> {

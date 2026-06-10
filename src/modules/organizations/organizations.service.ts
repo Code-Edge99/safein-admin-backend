@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { AuditAction, DeviceStatus, EmployeeStatus, Prisma } from '@prisma/client';
+import { AppLanguage, AuditAction, DeviceStatus, EmployeeStatus, Prisma, TranslatableEntityType } from '@prisma/client';
 import { randomInt } from 'crypto';
 import { deactivatePoliciesWithoutConditions } from '../../common/utils/control-policy-cleanup.util';
 import {
@@ -25,6 +25,7 @@ import {
   TransferResourcesResultDto,
 } from './dto';
 import { ControlPoliciesService } from '../control-policies/control-policies.service';
+import { ContentTranslationService } from '@/common/translation/translation.service';
 
 @Injectable()
 export class OrganizationsService {
@@ -33,7 +34,90 @@ export class OrganizationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly controlPoliciesService: ControlPoliciesService,
+    private readonly contentTranslationService: ContentTranslationService,
   ) {}
+
+  private async syncOrganizationTranslations(
+    organization: { id: string; name: string; description?: string | null; updatedAt: Date },
+  ): Promise<void> {
+    await this.contentTranslationService.storeEntityTranslations(
+      TranslatableEntityType.ORGANIZATION,
+      organization.id,
+      AppLanguage.ko,
+      {
+        name: organization.name,
+        description: organization.description ?? '',
+      },
+      organization.updatedAt,
+    );
+
+    this.contentTranslationService.queueTranslationsFromKorean({
+      entityType: TranslatableEntityType.ORGANIZATION,
+      entityId: organization.id,
+      sourceUpdatedAt: organization.updatedAt,
+      fields: [
+        { fieldKey: 'name', content: organization.name },
+        { fieldKey: 'description', content: organization.description ?? '' },
+      ],
+    });
+  }
+
+  private async collectTranslationCleanupTargetsForOrganization(organizationId: string): Promise<{
+    zoneIds: string[];
+    timePolicyIds: string[];
+    timePolicyExcludePeriodIds: string[];
+    behaviorConditionIds: string[];
+    allowedAppPresetIds: string[];
+    controlPolicyIds: string[];
+  }> {
+    const [
+      zones,
+      timePolicies,
+      timePolicyExcludePeriods,
+      behaviorConditions,
+      allowedAppPresets,
+      controlPolicies,
+    ] = await Promise.all([
+      this.prisma.zone.findMany({
+        where: { organizationId, deletedAt: null },
+        select: { id: true },
+      }),
+      this.prisma.timePolicy.findMany({
+        where: { organizationId, deletedAt: null },
+        select: { id: true },
+      }),
+      this.prisma.timePolicyExcludePeriod.findMany({
+        where: {
+          timePolicy: {
+            organizationId,
+            deletedAt: null,
+          },
+        },
+        select: { id: true },
+      }),
+      this.prisma.behaviorCondition.findMany({
+        where: { organizationId, deletedAt: null },
+        select: { id: true },
+      }),
+      this.prisma.allowedAppPreset.findMany({
+        where: { organizationId, deletedAt: null },
+        select: { id: true },
+      }),
+      this.prisma.controlPolicy.findMany({
+        where: { organizationId, deletedAt: null },
+        select: { id: true },
+      }),
+    ]);
+
+    return {
+      zoneIds: zones.map((item) => item.id),
+      timePolicyIds: timePolicies.map((item) => item.id),
+      timePolicyExcludePeriodIds: timePolicyExcludePeriods.map((item) => item.id),
+      behaviorConditionIds: behaviorConditions.map((item) => item.id),
+      allowedAppPresetIds: allowedAppPresets.map((item) => item.id),
+      controlPolicyIds: controlPolicies.map((item) => item.id),
+    };
+  }
 
   private generateTeamCodeCandidate(): string {
     let value = '';
@@ -326,6 +410,8 @@ export class OrganizationsService {
 
       throw new BadRequestException('팀코드 생성에 실패했습니다. 잠시 후 다시 시도해주세요.');
     });
+
+    await this.syncOrganizationTranslations(organization);
 
     return this.toResponseDto(organization);
   }
@@ -692,6 +778,8 @@ export class OrganizationsService {
       }).catch(() => undefined);
     }
 
+    await this.syncOrganizationTranslations(organization);
+
     return this.toResponseDto(organization);
   }
 
@@ -782,6 +870,7 @@ export class OrganizationsService {
       });
     }
 
+    const translationCleanupTargets = await this.collectTranslationCleanupTargetsForOrganization(id);
     const impactedPolicyIdSet = new Set<string>();
 
     await this.prisma.$transaction(async (tx) => {
@@ -910,6 +999,37 @@ export class OrganizationsService {
 
       await deactivatePoliciesWithoutConditions(tx, Array.from(impactedPolicyIdSet));
     });
+
+    await Promise.all([
+      this.contentTranslationService.deleteEntityTranslationBundle(
+        TranslatableEntityType.ORGANIZATION,
+        id,
+      ),
+      this.contentTranslationService.deleteEntityTranslationBundles(
+        TranslatableEntityType.ZONE,
+        translationCleanupTargets.zoneIds,
+      ),
+      this.contentTranslationService.deleteEntityTranslationBundles(
+        TranslatableEntityType.TIME_POLICY,
+        translationCleanupTargets.timePolicyIds,
+      ),
+      this.contentTranslationService.deleteEntityTranslationBundles(
+        TranslatableEntityType.TIME_POLICY_EXCLUDE_PERIOD,
+        translationCleanupTargets.timePolicyExcludePeriodIds,
+      ),
+      this.contentTranslationService.deleteEntityTranslationBundles(
+        TranslatableEntityType.BEHAVIOR_CONDITION,
+        translationCleanupTargets.behaviorConditionIds,
+      ),
+      this.contentTranslationService.deleteEntityTranslationBundles(
+        TranslatableEntityType.ALLOWED_APP_PRESET,
+        translationCleanupTargets.allowedAppPresetIds,
+      ),
+      this.contentTranslationService.deleteEntityTranslationBundles(
+        TranslatableEntityType.CONTROL_POLICY,
+        translationCleanupTargets.controlPolicyIds,
+      ),
+    ]);
 
     await this.controlPoliciesService.notifyPoliciesChanged(Array.from(impactedPolicyIdSet), 'deactivate');
   }

@@ -302,8 +302,16 @@ export class TimePoliciesService {
     }
 
     // excludePeriods가 있으면 기존 것 모두 삭제 후 새로 생성
+    let replacedExcludePeriodIds: string[] = [];
+
     if (excludePeriods !== undefined) {
       const normalizedExcludePeriods = this.normalizeExcludePeriods(excludePeriods);
+      const existingExcludePeriods = await this.prisma.timePolicyExcludePeriod.findMany({
+        where: { timePolicyId: id },
+        select: { id: true },
+      });
+      replacedExcludePeriodIds = existingExcludePeriods.map((period) => period.id);
+
       await this.prisma.timePolicyExcludePeriod.deleteMany({
         where: { timePolicyId: id },
       });
@@ -339,6 +347,10 @@ export class TimePoliciesService {
     }, policy.updatedAt);
     if (excludePeriods !== undefined) {
       await this.syncExcludePeriodTranslations(policy.excludePeriods, policy.updatedAt);
+      await this.contentTranslationService.deleteEntityTranslationBundles(
+        TranslatableEntityType.TIME_POLICY_EXCLUDE_PERIOD,
+        replacedExcludePeriodIds,
+      );
     }
 
     const detachmentResult = organizationChanged
@@ -370,6 +382,9 @@ export class TimePoliciesService {
     const policy = await this.prisma.timePolicy.findFirst({
       where: { id, deletedAt: null },
       include: {
+        excludePeriods: {
+          select: { id: true },
+        },
         _count: {
           select: {
             policyTimePolicies: true,
@@ -405,6 +420,17 @@ export class TimePoliciesService {
         impacted.map((item: any) => item.policyId),
       );
     });
+
+    await Promise.all([
+      this.contentTranslationService.deleteEntityTranslationBundle(
+        TranslatableEntityType.TIME_POLICY,
+        id,
+      ),
+      this.contentTranslationService.deleteEntityTranslationBundles(
+        TranslatableEntityType.TIME_POLICY_EXCLUDE_PERIOD,
+        policy.excludePeriods.map((period) => period.id),
+      ),
+    ]);
 
     await this.controlPoliciesService.notifyPoliciesChanged(impactedPolicyIds, 'update');
   }
