@@ -269,6 +269,45 @@ export class ContentTranslationService implements OnModuleInit, OnModuleDestroy 
     });
   }
 
+  async deleteEntityTranslationBundle(
+    entityType: TranslatableEntityType,
+    entityId: string,
+  ): Promise<void> {
+    await this.deleteEntityTranslationBundles(entityType, [entityId]);
+  }
+
+  async deleteEntityTranslationBundles(
+    entityType: TranslatableEntityType,
+    entityIds: string[],
+  ): Promise<void> {
+    const normalizedEntityIds = Array.from(
+      new Set(
+        entityIds
+          .map((entityId) => String(entityId ?? '').trim())
+          .filter((entityId) => entityId.length > 0),
+      ),
+    );
+
+    if (normalizedEntityIds.length === 0) {
+      return;
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.contentTranslation.deleteMany({
+        where: {
+          entityType,
+          entityId: { in: normalizedEntityIds },
+        },
+      }),
+      this.prisma.translationJob.deleteMany({
+        where: {
+          entityType,
+          entityId: { in: normalizedEntityIds },
+        },
+      }),
+    ]);
+  }
+
   queueTranslationsFromKorean(params: QueueEntityTranslationsParams): void {
     const fields = this.normalizeFields(params.fields);
     if (fields.length === 0) {

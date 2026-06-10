@@ -423,6 +423,11 @@ export class AllowedAppPresetsService {
       );
     });
 
+    await this.contentTranslationService.deleteEntityTranslationBundle(
+      TranslatableEntityType.ALLOWED_APP_PRESET,
+      id,
+    );
+
     await this.controlPoliciesService.notifyPoliciesChanged(impactedPolicyIds, 'update');
   }
 

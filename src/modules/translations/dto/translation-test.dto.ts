@@ -5,7 +5,9 @@ import { IsBoolean, IsEnum, IsIn, IsNotEmpty, IsOptional, IsString } from 'class
 import { normalizeAppLanguage, SUPPORTED_APP_LANGUAGE_VALUES } from '@/common/translation/app-language.util';
 
 export enum TranslationRebuildArea {
+  COMMON_CODE_ITEM = 'COMMON_CODE_ITEM',
   NOTICE = 'NOTICE',
+  ORGANIZATION = 'ORGANIZATION',
   CONTROL_POLICY = 'CONTROL_POLICY',
   INCIDENT_REPORT = 'INCIDENT_REPORT',
   ZONE = 'ZONE',

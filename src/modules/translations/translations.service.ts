@@ -23,6 +23,10 @@ type TranslationTarget = {
   fields: TranslationField[];
 };
 
+function buildCommonCodeItemTranslationEntityId(groupKey: string, code: string): string {
+  return `${groupKey}:${code}`;
+}
+
 @Injectable()
 export class TranslationsService {
   constructor(
@@ -115,8 +119,12 @@ export class TranslationsService {
 
   private async loadTargets(area: TranslationRebuildArea, entityId?: string): Promise<TranslationTarget[]> {
     switch (area) {
+      case TranslationRebuildArea.COMMON_CODE_ITEM:
+        return this.loadCommonCodeItemTargets(entityId);
       case TranslationRebuildArea.NOTICE:
         return this.loadNoticeTargets(entityId);
+      case TranslationRebuildArea.ORGANIZATION:
+        return this.loadOrganizationTargets(entityId);
       case TranslationRebuildArea.CONTROL_POLICY:
         return this.loadControlPolicyTargets(entityId);
       case TranslationRebuildArea.INCIDENT_REPORT:
@@ -134,6 +142,39 @@ export class TranslationsService {
       default:
         return [];
     }
+  }
+
+  private async loadCommonCodeItemTargets(entityId?: string): Promise<TranslationTarget[]> {
+    const items = await this.prisma.codeItem.findMany({
+      where: {
+        isActive: true,
+        group: { isActive: true },
+      },
+      select: {
+        code: true,
+        label: true,
+        updatedAt: true,
+        group: {
+          select: {
+            key: true,
+          },
+        },
+      },
+      orderBy: [
+        { group: { sortOrder: 'asc' } },
+        { sortOrder: 'asc' },
+        { code: 'asc' },
+      ],
+    });
+
+    return items
+      .map((item) => ({
+        entityType: TranslatableEntityType.COMMON_CODE_ITEM,
+        entityId: buildCommonCodeItemTranslationEntityId(item.group.key, item.code),
+        sourceUpdatedAt: item.updatedAt,
+        fields: [{ fieldKey: 'label', content: item.label }],
+      }))
+      .filter((target) => !entityId || target.entityId === entityId);
   }
 
   private async loadNoticeTargets(entityId?: string): Promise<TranslationTarget[]> {
@@ -156,6 +197,31 @@ export class TranslationsService {
         { fieldKey: 'title', content: notice.title },
         { fieldKey: 'contentHtml', content: notice.contentHtml, isHtml: true },
         { fieldKey: 'contentText', content: notice.contentText },
+      ],
+    }));
+  }
+
+  private async loadOrganizationTargets(entityId?: string): Promise<TranslationTarget[]> {
+    const organizations = await this.prisma.organization.findMany({
+      where: {
+        deletedAt: null,
+        ...(entityId ? { id: entityId } : {}),
+      },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        updatedAt: true,
+      },
+    });
+
+    return organizations.map((organization) => ({
+      entityType: TranslatableEntityType.ORGANIZATION,
+      entityId: organization.id,
+      sourceUpdatedAt: organization.updatedAt,
+      fields: [
+        { fieldKey: 'name', content: organization.name },
+        { fieldKey: 'description', content: organization.description },
       ],
     }));
   }

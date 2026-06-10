@@ -342,6 +342,11 @@ export class BehaviorConditionsService {
       );
     });
 
+    await this.contentTranslationService.deleteEntityTranslationBundle(
+      TranslatableEntityType.BEHAVIOR_CONDITION,
+      id,
+    );
+
     await this.controlPoliciesService.notifyPoliciesChanged(impactedPolicyIds, 'update');
   }
 

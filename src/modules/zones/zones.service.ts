@@ -335,6 +335,11 @@ export class ZonesService {
       );
     });
 
+    await this.contentTranslationService.deleteEntityTranslationBundle(
+      TranslatableEntityType.ZONE,
+      id,
+    );
+
     await this.controlPoliciesService.notifyPoliciesChanged(impactedPolicyIds, 'update');
   }
 

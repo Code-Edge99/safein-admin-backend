@@ -1227,6 +1227,10 @@ export class NoticesService {
     }
 
     await this.prisma.notice.delete({ where: { id: existing.id } });
+    await this.contentTranslationService.deleteEntityTranslationBundle(
+      TranslatableEntityType.NOTICE,
+      existing.id,
+    );
     await this.removePhysicalFiles(existing.attachments);
   }
 
