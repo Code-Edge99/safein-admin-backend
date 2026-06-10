@@ -119,6 +119,33 @@ export class OrganizationsService {
     };
   }
 
+  private async collectDescendantOrganizationIds(rootOrganizationId: string): Promise<string[]> {
+    const visited = new Set<string>([rootOrganizationId]);
+    let frontier = [rootOrganizationId];
+
+    while (frontier.length > 0) {
+      const children = await this.prisma.organization.findMany({
+        where: {
+          parentId: { in: frontier },
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+
+      const nextFrontier: string[] = [];
+      for (const child of children) {
+        if (!visited.has(child.id)) {
+          visited.add(child.id);
+          nextFrontier.push(child.id);
+        }
+      }
+
+      frontier = nextFrontier;
+    }
+
+    return Array.from(visited);
+  }
+
   private generateTeamCodeCandidate(): string {
     let value = '';
     for (let index = 0; index < 5; index += 1) {
@@ -679,6 +706,7 @@ export class OrganizationsService {
       }
     }
 
+    let updatedAppliedControlPolicyId = currentOrganization.appliedControlPolicyId ?? null;
     const organization = await this.prisma.$transaction(async (tx) => {
       const normalizedAppliedControlPolicyIdInput = this.normalizeOptionalId(dto.appliedControlPolicyId);
       const resolvedAppliedControlPolicyId = await this.validateAppliedControlPolicyId(
@@ -689,6 +717,7 @@ export class OrganizationsService {
           ? (currentOrganization.appliedControlPolicyId ?? null)
           : normalizedAppliedControlPolicyIdInput,
       );
+      updatedAppliedControlPolicyId = resolvedAppliedControlPolicyId;
 
       const updated = await tx.organization.update({
         where: { id },
@@ -779,6 +808,20 @@ export class OrganizationsService {
     }
 
     await this.syncOrganizationTranslations(organization);
+
+    const previousAppliedControlPolicyId = currentOrganization.appliedControlPolicyId ?? null;
+    const appliedPolicyChanged = previousAppliedControlPolicyId !== updatedAppliedControlPolicyId;
+    const dispatchPolicyId = updatedAppliedControlPolicyId ?? previousAppliedControlPolicyId;
+
+    if (appliedPolicyChanged && dispatchPolicyId) {
+      const targetOrganizationIds = await this.collectDescendantOrganizationIds(organization.id);
+      await this.controlPoliciesService.notifyPolicySelectionChangedForOrganization({
+        policyId: dispatchPolicyId,
+        organizationId: organization.id,
+        targetOrganizationIds,
+        policyApplied: Boolean(updatedAppliedControlPolicyId),
+      });
+    }
 
     return this.toResponseDto(organization);
   }
