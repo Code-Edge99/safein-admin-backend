@@ -1283,6 +1283,21 @@ export class ControlPoliciesService {
     }
   }
 
+  async notifyPolicySelectionChangedForOrganization(params: {
+    policyId: string;
+    organizationId: string;
+    targetOrganizationIds: string[];
+    policyApplied?: boolean;
+  }): Promise<void> {
+    await this.notifyPolicyChangedForOrganization({
+      policyId: params.policyId,
+      organizationId: params.organizationId,
+      targetOrganizationIds: params.targetOrganizationIds,
+      trigger: 'update',
+      policyApplied: params.policyApplied,
+    });
+  }
+
   async detachInvalidRelationsForMovedResource(
     resourceType: PolicyRelationResourceType,
     resourceId: string,

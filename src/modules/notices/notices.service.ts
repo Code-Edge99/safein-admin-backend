@@ -2,14 +2,18 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { AdminRole, AppLanguage, NoticeAttachment, Prisma, TranslatableEntityType } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
+import { AdminRole, AppLanguage, DeviceOS, EmployeeStatus, NoticeAttachment, Prisma, PushTokenStatus, TranslatableEntityType } from '@prisma/client';
 import { access, unlink } from 'fs/promises';
 import { PaginatedResponse } from '../../common/dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { resolveOrganizationClassification } from '../../common/utils/organization-scope.util';
 import { ContentTranslationService } from '@/common/translation/translation.service';
+import { resolveAppLanguage } from '@/common/translation/app-language.util';
+import { readStageConfig } from '../../common/config/stage.config';
 import {
   CleanupNoticeUploadsResponseDto,
   CreateNoticeDto,
@@ -62,11 +66,21 @@ type NoticeActorAccessContext = {
   canEditScopedNotices: boolean;
 };
 
+type NoticePushTarget = {
+  deviceId: string;
+  token: string;
+  os: DeviceOS;
+  language: AppLanguage;
+};
+
 @Injectable()
 export class NoticesService {
+  private readonly logger = new Logger(NoticesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly contentTranslationService: ContentTranslationService,
+    private readonly configService: ConfigService,
   ) {
     ensureNoticeUploadDirs();
   }
@@ -98,6 +112,313 @@ export class NoticesService {
         { fieldKey: 'contentText', content: values.contentText },
       ],
     });
+  }
+
+  private resolveNoticeLabel(language: AppLanguage): string {
+    switch (language) {
+      case AppLanguage.en:
+        return 'Notice';
+      case AppLanguage.ja:
+        return 'お知らせ';
+      case AppLanguage.zh_CN:
+      case AppLanguage.zh_TW:
+        return '公告';
+      case AppLanguage.vi:
+        return 'Thong bao';
+      case AppLanguage.th:
+        return 'ประกาศ';
+      case AppLanguage.id:
+        return 'Pemberitahuan';
+      case AppLanguage.tl:
+        return 'Paunawa';
+      case AppLanguage.ms:
+        return 'Notis';
+      case AppLanguage.es:
+      case AppLanguage.pt:
+        return 'Aviso';
+      case AppLanguage.fr:
+        return 'Avis';
+      case AppLanguage.de:
+        return 'Hinweis';
+      case AppLanguage.hi:
+        return 'सूचना';
+      case AppLanguage.ko:
+      default:
+        return '공지사항';
+    }
+  }
+
+  private resolveDeviceLanguage(refreshToken?: string | null): AppLanguage {
+    if (!refreshToken) {
+      return AppLanguage.ko;
+    }
+
+    try {
+      const payloadSegment = refreshToken.split('.')[1];
+      if (!payloadSegment) {
+        return AppLanguage.ko;
+      }
+
+      const normalized = payloadSegment.replace(/-/g, '+').replace(/_/g, '/');
+      const padding = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4));
+      const payload = JSON.parse(Buffer.from(`${normalized}${padding}`, 'base64').toString('utf8')) as { language?: string };
+      return resolveAppLanguage(payload.language);
+    } catch {
+      return AppLanguage.ko;
+    }
+  }
+
+  private async resolveLocalizedNoticeTitles(
+    noticeId: string,
+    title: string,
+    languages: AppLanguage[],
+  ): Promise<Map<AppLanguage, string>> {
+    const localized = new Map<AppLanguage, string>([[AppLanguage.ko, title]]);
+    const targetLanguages = Array.from(new Set(languages.filter((language) => language !== AppLanguage.ko)));
+
+    await Promise.all(targetLanguages.map(async (language) => {
+      try {
+        const translated = await this.contentTranslationService.translateFields(
+          [{ fieldKey: 'title', content: title }],
+          language,
+          AppLanguage.ko,
+        );
+        localized.set(language, translated.title?.trim() || title);
+      } catch (error) {
+        this.logger.warn(`공지사항 제목 번역 fallback(language=${language}, noticeId=${noticeId}): ${String(error)}`);
+        localized.set(language, title);
+      }
+    }));
+
+    return localized;
+  }
+
+  private resolveNoticePushConcurrency(): number {
+    const raw = this.configService.get<string>('NOTICE_PUSH_CONCURRENCY')?.trim();
+    const parsed = Number(raw);
+
+    if (Number.isFinite(parsed) && parsed >= 1) {
+      return Math.floor(parsed);
+    }
+
+    return 20;
+  }
+
+  private resolveNoticePushTimeoutMs(): number {
+    const raw = this.configService.get<string>('NOTICE_PUSH_TIMEOUT_MS')?.trim();
+    const parsed = Number(raw);
+
+    if (Number.isFinite(parsed) && parsed >= 500) {
+      return Math.floor(parsed);
+    }
+
+    return 8000;
+  }
+
+  private getAppBackendBaseUrl(): string {
+    const baseUrl = readStageConfig(this.configService, 'APP_BACKEND_BASE_URL', {
+      dev: 'http://localhost:3100/api/app',
+      prod: 'https://safein.code-edge.com/api/app',
+    });
+    return baseUrl.trim().replace(/\/$/, '');
+  }
+
+  private formatFetchError(error: unknown, endpointUrl: string, dispatchId: string): string {
+    if (error instanceof Error) {
+      return `${error.name || 'Error'}: ${error.message || String(error)} (endpoint=${endpointUrl}, dispatchId=${dispatchId})`;
+    }
+
+    return `${String(error)} (endpoint=${endpointUrl}, dispatchId=${dispatchId})`;
+  }
+
+  private async sendNoticeCreatedPush(
+    endpointUrl: string,
+    params: {
+      dispatchId: string;
+      noticeId: string;
+      organizationId: string;
+      token: string;
+      os: DeviceOS;
+      notificationTitle: string;
+      language: AppLanguage;
+    },
+  ): Promise<void> {
+    const timeoutMs = this.resolveNoticePushTimeoutMs();
+    const abortController = new AbortController();
+    const timer = setTimeout(() => abortController.abort(), timeoutMs);
+    const isIos = params.os === DeviceOS.iOS;
+
+    try {
+      const response = await fetch(endpointUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-smombie-dispatch-id': params.dispatchId,
+          'x-smombie-source': 'admin-backend:notice_created',
+        },
+        signal: abortController.signal,
+        body: JSON.stringify({
+          message: {
+            token: params.token,
+            data: {
+              type: 'notice_created',
+              event: 'notice_created',
+              extraData: {
+                noticeId: params.noticeId,
+                organizationId: params.organizationId,
+                language: params.language,
+              },
+            },
+            notification: {
+              title: params.notificationTitle,
+            },
+            android: {
+              priority: 'HIGH',
+            },
+            ...(isIos
+              ? {
+                  apns: {
+                    headers: {
+                      'apns-priority': '10',
+                      'apns-collapse-id': `notice_${params.noticeId}`,
+                    },
+                    payload: {
+                      aps: {
+                        sound: 'default',
+                      },
+                    },
+                  },
+                }
+              : {}),
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const responseText = await response.text();
+        throw new Error(`status=${response.status}, body=${responseText || 'empty'}`);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`network-timeout>${timeoutMs}ms, endpoint=${endpointUrl}, dispatchId=${params.dispatchId}`);
+      }
+
+      throw new Error(this.formatFetchError(error, endpointUrl, params.dispatchId));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async dispatchNoticeCreatedPush(params: {
+    noticeId: string;
+    organizationId: string;
+    title: string;
+  }): Promise<void> {
+    const targetOrganizationIds = await this.collectDescendantOrganizationIds(params.organizationId);
+    if (targetOrganizationIds.length === 0) {
+      return;
+    }
+
+    const devices = await this.prisma.device.findMany({
+      where: {
+        organizationId: { in: targetOrganizationIds },
+        employeeId: { not: null },
+        pushToken: { not: null },
+        pushTokenStatus: { not: PushTokenStatus.ERROR },
+        employee: {
+          is: {
+            status: EmployeeStatus.ACTIVE,
+          },
+        },
+      },
+      select: {
+        id: true,
+        os: true,
+        pushToken: true,
+        token: {
+          select: {
+            refreshToken: true,
+          },
+        },
+      },
+    });
+
+    const targets: NoticePushTarget[] = devices.flatMap((device) => {
+      const token = device.pushToken?.trim();
+      if (!token) {
+        return [];
+      }
+
+      return [{
+        deviceId: device.id,
+        token,
+        os: device.os,
+        language: this.resolveDeviceLanguage(device.token?.refreshToken),
+      }];
+    });
+
+    if (targets.length === 0) {
+      return;
+    }
+
+    const localizedTitles = await this.resolveLocalizedNoticeTitles(
+      params.noticeId,
+      params.title,
+      targets.map((target) => target.language),
+    );
+
+    const endpointUrl = `${this.getAppBackendBaseUrl()}/internal/push/fcm/send`;
+    const dispatchId = `notice-${params.noticeId}-${Date.now()}`;
+    const dispatchConcurrency = this.resolveNoticePushConcurrency();
+    let successCount = 0;
+    const failedDeviceIds: string[] = [];
+    const failureReasons: string[] = [];
+
+    for (let index = 0; index < targets.length; index += dispatchConcurrency) {
+      const chunk = targets.slice(index, index + dispatchConcurrency);
+      const results = await Promise.allSettled(chunk.map((target) => {
+        const localizedTitle = localizedTitles.get(target.language) ?? params.title;
+        const notificationTitle = `[${this.resolveNoticeLabel(target.language)}] - ${localizedTitle}`;
+
+        return this.sendNoticeCreatedPush(endpointUrl, {
+          dispatchId,
+          noticeId: params.noticeId,
+          organizationId: params.organizationId,
+          token: target.token,
+          os: target.os,
+          notificationTitle,
+          language: target.language,
+        });
+      }));
+
+      results.forEach((result, chunkIndex) => {
+        if (result.status === 'fulfilled') {
+          successCount += 1;
+          return;
+        }
+
+        const failedTarget = chunk[chunkIndex];
+        failedDeviceIds.push(failedTarget.deviceId);
+        if (failureReasons.length < 20) {
+          failureReasons.push(`${failedTarget.deviceId}:${String(result.reason)}`);
+        }
+      });
+    }
+
+    this.logger.log(
+      `[notice_created] dispatchId=${dispatchId}, noticeId=${params.noticeId}, targetOrganizations=${targetOrganizationIds.length}, targetDevices=${targets.length}, success=${successCount}, failed=${failedDeviceIds.length}`,
+    );
+
+    if (failedDeviceIds.length > 0) {
+      this.logger.warn(
+        `[notice_created] failed device ids dispatchId=${dispatchId}: ${failedDeviceIds.slice(0, 20).join(', ')}`
+        + `${failedDeviceIds.length > 20 ? ' ...' : ''}`,
+      );
+
+      if (failureReasons.length > 0) {
+        this.logger.warn(`[notice_created] failed reasons dispatchId=${dispatchId}: ${failureReasons.join(' | ')}`);
+      }
+    }
   }
 
   private async resolveEffectiveReadableOrganizationIds(
@@ -1062,6 +1383,14 @@ export class NoticesService {
     });
 
     await this.syncNoticeTranslations(created.id, { title, contentHtml, contentText }, created.updatedAt);
+
+    void this.dispatchNoticeCreatedPush({
+      noticeId: created.id,
+      organizationId: created.organizationId,
+      title,
+    }).catch((error) => {
+      this.logger.warn(`공지사항 생성 후 FCM 전송 실패(noticeId=${created.id}): ${String(error)}`);
+    });
 
     return this.toResponseDto(
       created,
