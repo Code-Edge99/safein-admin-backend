@@ -665,6 +665,21 @@ export class OrganizationsService {
         throw new NotFoundException('상위 현장을 찾을 수 없습니다.');
       }
 
+      // 등급(분류) 보존: 이동 후 분류가 바뀌면(예: 그룹을 루트 밑으로 옮겨 회사로 승격) 소속 계정의
+      // 권한 등급이 조용히 바뀌므로 차단한다. 같은 등급으로의 이동만 허용한다.
+      if (nextParentId !== currentOrganization.parentId) {
+        const currentClassification = resolveOrganizationClassification(currentOrganization);
+        const projectedClassification = resolveOrganizationClassification({
+          id: currentOrganization.id,
+          parentId: nextParentId,
+          teamCode: currentOrganization.teamCode,
+        });
+
+        if (projectedClassification !== currentClassification) {
+          throw new BadRequestException('현장은 같은 등급으로만 이동할 수 있습니다. 회사/그룹/단위 분류가 바뀌는 이동은 허용되지 않습니다.');
+        }
+      }
+
       if (resolveOrganizationClassification(targetParent) === 'ADMIN' && actorRole !== 'SUPER_ADMIN') {
         throw new ForbiddenException('회사 현장은 슈퍼관리자만 생성할 수 있습니다.');
       }
@@ -874,6 +889,15 @@ export class OrganizationsService {
 
     if (blockingEmployeeCount > 0) {
       throw new BadRequestException('직원이 소속된 현장은 삭제할 수 없습니다.');
+    }
+
+    // 관리자 계정이 소속된 현장을 삭제하면 해당 계정이 고아(목록에서 사라지고 재배정 불가)가 되므로 차단한다.
+    const blockingAccountCount = await this.prisma.account.count({
+      where: { organizationId: id },
+    });
+
+    if (blockingAccountCount > 0) {
+      throw new BadRequestException('관리자 계정이 소속된 현장은 삭제할 수 없습니다. 먼저 계정을 이동하거나 삭제해주세요.');
     }
 
     const archivedEmployees = await this.prisma.employee.findMany({

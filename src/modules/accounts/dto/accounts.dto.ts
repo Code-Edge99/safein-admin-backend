@@ -75,6 +75,12 @@ export class CreateAccountDto {
   @IsString()
   @IsOptional()
   organizationId?: string;
+
+  @ApiPropertyOptional({ description: '커스텀 역할 ID(그룹 담당자 전용, 해제 시 null)', nullable: true })
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsString()
+  companyRoleId?: string | null;
 }
 
 export class UpdateAccountDto extends PartialType(
@@ -137,6 +143,12 @@ export class AccountResponseDto {
     id: string;
     name: string;
   };
+
+  @ApiPropertyOptional({ description: '배정된 커스텀 역할(그룹 담당자 전용)' })
+  companyRole?: {
+    id: string;
+    name: string;
+  } | null;
 
   @ApiProperty({ description: '상태', enum: AccountStatusEnum })
   status: AccountStatusEnum;

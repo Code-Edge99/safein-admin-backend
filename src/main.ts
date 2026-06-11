@@ -17,8 +17,6 @@ import {
 } from './common/utils/persistent-audit.logger';
 import { createSlackLogNotifierFromConfig } from './common/utils/slack-log.notifier';
 
-const MASTER_ADMIN_USERNAME = 'admin';
-
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
@@ -90,29 +88,30 @@ async function bootstrap() {
     }),
   );
 
-  // Swagger
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Safein Admin API')
-    .setDescription(
-      `Safein Admin Backend API Documentation\n\n` +
-      `개발용 마스터 계정: ${MASTER_ADMIN_USERNAME} / admin123`,
-    )
-    .setVersion('1.0')
-    .addBearerAuth({
-      type: 'http',
-      scheme: 'bearer',
-      bearerFormat: 'JWT',
-      description: '로그인 API로 발급된 액세스 토큰을 입력하세요.',
-    })
-    .build();
-  const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('api/docs', app, swaggerDocument);
+  // Swagger (운영 환경에서는 노출하지 않음)
+  if (runtimeStage !== 'prod') {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('Safein Admin API')
+      .setDescription('Safein Admin Backend API Documentation')
+      .setVersion('1.0')
+      .addBearerAuth({
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        description: '로그인 API로 발급된 액세스 토큰을 입력하세요.',
+      })
+      .build();
+    const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('api/docs', app, swaggerDocument);
+  }
 
   const port = configService.get('PORT', 3000);
   await app.listen(port);
 
   persistentLogger.log(`Application is running on: http://localhost:${port}/api`, 'Bootstrap');
-  persistentLogger.log(`Swagger docs: http://localhost:${port}/api/docs`, 'Bootstrap');
+  if (runtimeStage !== 'prod') {
+    persistentLogger.log(`Swagger docs: http://localhost:${port}/api/docs`, 'Bootstrap');
+  }
 }
 
 bootstrap();

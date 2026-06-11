@@ -83,6 +83,134 @@ export class EffectivePermissionsResponseDto {
 
   @ApiPropertyOptional()
   companyOrganizationName?: string;
+
+  @ApiPropertyOptional({ description: '현재 적용 중인 커스텀 역할 ID(그룹 담당자 한정)' })
+  companyRoleId?: string;
+
+  @ApiPropertyOptional({ description: '현재 적용 중인 커스텀 역할명(그룹 담당자 한정)' })
+  companyRoleName?: string;
+}
+
+// ============ 커스텀 역할(Company Role) DTOs ============
+
+export class RoleAssignablePermissionDto {
+  @ApiProperty()
+  code: string;
+
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty()
+  category: string;
+
+  @ApiPropertyOptional()
+  description?: string;
+
+  @ApiProperty({ description: '그룹 담당자 기본 권한(천장)에 포함되어 역할에 부여 가능한지 여부' })
+  assignable: boolean;
+}
+
+export class CompanyRoleDto {
+  @ApiProperty()
+  id: string;
+
+  @ApiProperty()
+  name: string;
+
+  @ApiPropertyOptional()
+  description?: string;
+
+  @ApiProperty()
+  isActive: boolean;
+
+  @ApiProperty({ type: [String], description: '역할에 부여된 권한 코드(저장값)' })
+  permissionCodes: string[];
+
+  @ApiProperty({ description: '현재 그룹 기본 권한과 교집합된 실효 권한 수' })
+  effectivePermissionCount: number;
+
+  @ApiProperty({ description: '상위 권한에서 차단되어 동작하지 않는 권한 수' })
+  blockedPermissionCount: number;
+
+  @ApiProperty({ description: '이 역할을 배정받은 그룹 담당자 계정 수' })
+  assignedAccountCount: number;
+
+  @ApiPropertyOptional()
+  updatedAt?: Date;
+
+  @ApiPropertyOptional()
+  modifiedBy?: string;
+}
+
+export class CompanyRoleListResponseDto {
+  @ApiPropertyOptional()
+  scopeOrganizationId?: string;
+
+  @ApiPropertyOptional()
+  scopeOrganizationName?: string;
+
+  @ApiProperty()
+  canEdit: boolean;
+
+  @ApiProperty({ type: [RoleAssignablePermissionDto], description: '역할에 부여 가능한 권한 카탈로그(천장 표시 포함)' })
+  assignablePermissions: RoleAssignablePermissionDto[];
+
+  @ApiProperty({ type: [CompanyRoleDto] })
+  roles: CompanyRoleDto[];
+}
+
+export class CreateCompanyRoleDto {
+  @ApiProperty({ description: '역할 이름' })
+  @IsString()
+  name: string;
+
+  @ApiPropertyOptional({ description: '역할 설명' })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiProperty({ type: [String], description: '부여할 권한 코드 목록' })
+  @IsArray()
+  @IsString({ each: true })
+  permissionCodes: string[];
+
+  @ApiPropertyOptional({ description: '활성 여부', default: true })
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @ApiPropertyOptional({ description: '대상 회사 조직 ID(슈퍼관리자 전용)' })
+  @IsOptional()
+  @IsString()
+  organizationId?: string;
+}
+
+export class UpdateCompanyRoleDto {
+  @ApiPropertyOptional({ description: '역할 이름' })
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @ApiPropertyOptional({ description: '역할 설명' })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiPropertyOptional({ type: [String], description: '부여할 권한 코드 목록' })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  permissionCodes?: string[];
+
+  @ApiPropertyOptional({ description: '활성 여부' })
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @ApiPropertyOptional({ description: '대상 회사 조직 ID(슈퍼관리자 전용)' })
+  @IsOptional()
+  @IsString()
+  organizationId?: string;
 }
 
 export class UpdateCompanyPermissionDto {

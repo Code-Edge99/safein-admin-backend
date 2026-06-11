@@ -46,6 +46,11 @@ const ACCOUNT_ORGANIZATION_SELECT = {
   teamCode: true,
 } as const;
 
+const ACCOUNT_DETAIL_INCLUDE = {
+  organization: { select: ACCOUNT_ORGANIZATION_SELECT },
+  companyRole: { select: { id: true, name: true } },
+} as const;
+
 @Injectable()
 export class AccountsService {
   constructor(private prisma: PrismaService) {}
@@ -231,9 +236,77 @@ export class AccountsService {
       throw new ForbiddenException('회사 관리자는 회사 관리자 또는 그룹 담당자 계정만 관리할 수 있습니다.');
     }
 
+    // 동급 관리 차단: 그룹 담당자는 같은 등급(그룹 담당자) 계정을 관리할 수 없다.
+    // (회사 관리자/슈퍼관리자는 마스터 권한으로 위에서 이미 예외 처리됨)
+    if (actorAccessScope.tier === 'GROUP_MANAGER' && targetClassification === 'GROUP') {
+      throw new ForbiddenException('그룹 담당자는 같은 등급(그룹 담당자) 계정을 관리할 수 없습니다.');
+    }
+
     if (targetClassification !== 'GROUP') {
       throw new ForbiddenException('회사/그룹 관리자는 그룹 담당자 계정만 관리할 수 있습니다.');
     }
+  }
+
+  private async isGroupOrganization(organizationId: string): Promise<boolean> {
+    const organization = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { id: true, parentId: true, teamCode: true },
+    });
+
+    return !!organization && resolveOrganizationClassification(organization) === 'GROUP';
+  }
+
+  private async resolveAncestorCompanyId(organizationId: string): Promise<string | null> {
+    const visited = new Set<string>();
+    let currentId: string | null = organizationId;
+
+    while (currentId && !visited.has(currentId)) {
+      visited.add(currentId);
+      const current: { id: string; parentId: string | null; teamCode: string | null } | null =
+        await this.prisma.organization.findUnique({
+          where: { id: currentId },
+          select: { id: true, parentId: true, teamCode: true },
+        });
+
+      if (!current) {
+        return null;
+      }
+
+      if (resolveOrganizationClassification(current) === 'COMPANY') {
+        return current.id;
+      }
+
+      currentId = current.parentId;
+    }
+
+    return null;
+  }
+
+  // 그룹 담당자 계정에 커스텀 역할을 배정할 수 있는지 검증하고 역할 ID를 반환한다.
+  // 역할은 그룹의 상위 회사에 속한 것만 배정 가능하다.
+  private async validateCompanyRoleAssignment(
+    resolvedOrganizationId: string | null,
+    requestedRoleId: string,
+  ): Promise<string> {
+    if (!resolvedOrganizationId || !(await this.isGroupOrganization(resolvedOrganizationId))) {
+      throw new BadRequestException('커스텀 역할은 그룹 담당자 계정에만 배정할 수 있습니다.');
+    }
+
+    const companyId = await this.resolveAncestorCompanyId(resolvedOrganizationId);
+    if (!companyId) {
+      throw new BadRequestException('그룹의 회사 범위를 확인할 수 없습니다.');
+    }
+
+    const role = await this.prisma.companyRole.findUnique({
+      where: { id: requestedRoleId },
+      select: { id: true, organizationId: true },
+    });
+
+    if (!role || role.organizationId !== companyId) {
+      throw new BadRequestException('선택한 역할을 현재 그룹에 배정할 수 없습니다.');
+    }
+
+    return role.id;
   }
 
   async create(dto: CreateAccountDto, actor: AccountActorContext): Promise<AccountResponseDto> {
@@ -241,7 +314,18 @@ export class AccountsService {
     const normalizedEmail = this.normalizeOptionalEmail(dto.email);
     const role = dto.role as unknown as AdminRole;
     const actorAccessScope = await this.resolveActorAccessScope(actor);
+
+    // 동급 관리 차단: 그룹 담당자는 같은 등급(그룹 담당자) 계정을 생성할 수 없다.
+    if (actorAccessScope.tier === 'GROUP_MANAGER') {
+      throw new ForbiddenException('그룹 담당자는 관리자 계정을 생성할 수 없습니다.');
+    }
+
     const resolvedOrganizationId = await this.resolveOrganizationIdForRole(role, dto.organizationId, actorAccessScope);
+
+    // 커스텀 역할은 그룹 담당자 계정에만 배정한다.
+    const companyRoleId = dto.companyRoleId
+      ? await this.validateCompanyRoleAssignment(resolvedOrganizationId, dto.companyRoleId)
+      : null;
 
     // 사용자명 중복 체크
     const existing = await this.prisma.account.findUnique({
@@ -264,10 +348,9 @@ export class AccountsService {
         phone: normalizedPhone || undefined,
         role,
         organizationId: resolvedOrganizationId,
+        companyRoleId,
       },
-      include: {
-        organization: { select: ACCOUNT_ORGANIZATION_SELECT },
-      },
+      include: ACCOUNT_DETAIL_INCLUDE,
     });
 
     return this.toResponseDto(account);
@@ -368,9 +451,7 @@ export class AccountsService {
     const actorAccessScope = await this.resolveActorAccessScope(actor);
     const account = await this.prisma.account.findUnique({
       where: { id },
-      include: {
-        organization: { select: ACCOUNT_ORGANIZATION_SELECT },
-      },
+      include: ACCOUNT_DETAIL_INCLUDE,
     });
 
     if (!account) {
@@ -393,9 +474,7 @@ export class AccountsService {
     const actorAccessScope = await this.resolveActorAccessScope(actor);
     const account = await this.prisma.account.findUnique({
       where: { username },
-      include: {
-        organization: { select: ACCOUNT_ORGANIZATION_SELECT },
-      },
+      include: ACCOUNT_DETAIL_INCLUDE,
     });
 
     if (!account) {
@@ -442,6 +521,21 @@ export class AccountsService {
       : dto.organizationId;
     const resolvedOrganizationId = await this.resolveOrganizationIdForRole(nextRole, nextOrganizationId, actorAccessScope);
 
+    // 커스텀 역할 처리: 그룹 담당자 계정만 보유 가능. 그룹이 아니면 항상 해제한다.
+    // undefined = 변경 없음, null = 해제, string = 검증 후 배정.
+    let companyRoleId: string | null | undefined = undefined;
+    const isGroupAccount = resolvedOrganizationId
+      ? await this.isGroupOrganization(resolvedOrganizationId)
+      : false;
+
+    if (!isGroupAccount) {
+      companyRoleId = null;
+    } else if (dto.companyRoleId !== undefined) {
+      companyRoleId = dto.companyRoleId
+        ? await this.validateCompanyRoleAssignment(resolvedOrganizationId, dto.companyRoleId)
+        : null;
+    }
+
     if (dto.username && dto.username !== currentAccount.username) {
       const existingUsername = await this.prisma.account.findUnique({
         where: { username: dto.username },
@@ -463,10 +557,9 @@ export class AccountsService {
         role: nextRole,
         organizationId: resolvedOrganizationId,
         status: dto.status as any,
+        companyRoleId,
       },
-      include: {
-        organization: { select: ACCOUNT_ORGANIZATION_SELECT },
-      },
+      include: ACCOUNT_DETAIL_INCLUDE,
     });
 
     return this.toResponseDto(account);
@@ -535,9 +628,7 @@ export class AccountsService {
     const updated = await this.prisma.account.update({
       where: { id },
       data: { status: newStatus },
-      include: {
-        organization: { select: ACCOUNT_ORGANIZATION_SELECT },
-      },
+      include: ACCOUNT_DETAIL_INCLUDE,
     });
 
     return this.toResponseDto(updated);
