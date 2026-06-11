@@ -15,6 +15,12 @@ export function toAccountResponseDto(account: any): AccountResponseDto {
         name: account.organization.name,
       }
       : undefined,
+    companyRole: account.companyRole
+      ? {
+        id: account.companyRole.id,
+        name: account.companyRole.name,
+      }
+      : null,
     status: account.status as AccountStatusEnum,
     lastLogin: account.lastLogin,
     createdAt: account.createdAt,

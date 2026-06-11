@@ -1,7 +1,9 @@
 import {
   Controller,
   Get,
+  Post,
   Put,
+  Delete,
   Body,
   Param,
   Query,
@@ -18,11 +20,15 @@ import { AuthenticatedAdminRequest } from '../../common/types/authenticated-requ
 import {
   BulkUpdateCompanyPermissionsDto,
   BulkUpdateCompanyPermissionsResultDto,
+  CompanyRoleDto,
+  CompanyRoleListResponseDto,
+  CreateCompanyRoleDto,
   EffectivePermissionsResponseDto,
   PermissionMatrixResponseDto,
   PermissionTargetRoleEnum,
   UpdateCompanyPermissionDto,
   UpdateCompanyPermissionResultDto,
+  UpdateCompanyRoleDto,
 } from './dto/permissions.dto';
 
 @ApiTags('권한 관리')
@@ -47,6 +53,51 @@ export class PermissionsController {
   @ApiResponse({ status: 200, type: EffectivePermissionsResponseDto })
   findMine(@Req() req: AuthenticatedAdminRequest): Promise<EffectivePermissionsResponseDto> {
     return this.permissionsService.findMine(this.getActorContext(req));
+  }
+
+  @Get('roles')
+  @Roles('SUPER_ADMIN', 'SITE_ADMIN')
+  @ApiOperation({ summary: '커스텀 역할 목록 + 부여 가능 권한 카탈로그 조회' })
+  @ApiResponse({ status: 200, type: CompanyRoleListResponseDto })
+  listRoles(
+    @Req() req: AuthenticatedAdminRequest,
+    @Query('organizationId') organizationId?: string,
+  ): Promise<CompanyRoleListResponseDto> {
+    return this.permissionsService.listRoles(this.getActorContext(req), organizationId);
+  }
+
+  @Post('roles')
+  @Roles('SUPER_ADMIN', 'SITE_ADMIN')
+  @ApiOperation({ summary: '커스텀 역할 생성(회사 관리자/슈퍼관리자)' })
+  @ApiResponse({ status: 201, type: CompanyRoleDto })
+  createRole(
+    @Req() req: AuthenticatedAdminRequest,
+    @Body() data: CreateCompanyRoleDto,
+  ): Promise<CompanyRoleDto> {
+    return this.permissionsService.createRole(this.getActorContext(req), data);
+  }
+
+  @Put('roles/:id')
+  @Roles('SUPER_ADMIN', 'SITE_ADMIN')
+  @ApiOperation({ summary: '커스텀 역할 수정' })
+  @ApiResponse({ status: 200, type: CompanyRoleDto })
+  updateRole(
+    @Req() req: AuthenticatedAdminRequest,
+    @Param('id') id: string,
+    @Body() data: UpdateCompanyRoleDto,
+  ): Promise<CompanyRoleDto> {
+    return this.permissionsService.updateRole(this.getActorContext(req), id, data);
+  }
+
+  @Delete('roles/:id')
+  @Roles('SUPER_ADMIN', 'SITE_ADMIN')
+  @ApiOperation({ summary: '커스텀 역할 삭제' })
+  @ApiResponse({ status: 200 })
+  deleteRole(
+    @Req() req: AuthenticatedAdminRequest,
+    @Param('id') id: string,
+  ): Promise<{ success: boolean }> {
+    return this.permissionsService.deleteRole(this.getActorContext(req), id);
   }
 
   @Get()

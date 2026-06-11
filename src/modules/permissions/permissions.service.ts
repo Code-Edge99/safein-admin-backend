@@ -1,9 +1,11 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import {
   AdminRole,
   PermissionTargetRole as PrismaPermissionTargetRole,
@@ -13,12 +15,16 @@ import { resolveOrganizationClassification } from '../../common/utils/organizati
 import {
   BulkUpdateCompanyPermissionItemDto,
   BulkUpdateCompanyPermissionsResultDto,
+  CompanyRoleDto,
+  CompanyRoleListResponseDto,
+  CreateCompanyRoleDto,
   EffectivePermissionsResponseDto,
   PermissionActorTypeEnum,
   PermissionMatrixResponseDto,
   PermissionTargetRoleEnum,
   UpdateCompanyPermissionDto,
   UpdateCompanyPermissionResultDto,
+  UpdateCompanyRoleDto,
 } from './dto/permissions.dto';
 
 type PermissionActorContext = {
@@ -374,6 +380,52 @@ export class PermissionsService {
     return enabledPermissionIds;
   }
 
+  // 특정 회사의 그룹 담당자 "기본 권한"(천장) 코드 집합을 계산한다.
+  // 커스텀 역할의 부여 가능 범위이자, 역할 적용 시 교집합의 기준이 된다.
+  private async resolveGroupManagerBaseCodeSet(companyOrganizationId: string): Promise<Set<string>> {
+    const syncedPermissionMap = await this.syncPermissionCatalog();
+    const syncedPermissions = Array.from(syncedPermissionMap.values());
+    const permissionIds = syncedPermissions.map((permission) => permission.id);
+    const companyManagerPermissionIds = await this.getEffectiveCompanyManagerPermissionIdSet(permissionIds, companyOrganizationId);
+    const overridesByPermissionId = await this.getCompanyOverrides(
+      permissionIds,
+      companyOrganizationId,
+      PrismaPermissionTargetRole.GROUP_MANAGER,
+    );
+
+    const codes = new Set<string>();
+    for (const permission of PERMISSION_CATALOG) {
+      if (NON_DELEGABLE_GROUP_MANAGER_CODES.has(permission.code)) {
+        continue;
+      }
+
+      const syncedPermission = syncedPermissionMap.get(permission.code);
+      const resolvedPermissionId = syncedPermission?.id ?? permission.id;
+      const override = overridesByPermissionId.get(resolvedPermissionId);
+      if (companyManagerPermissionIds.has(resolvedPermissionId) && (override?.isEnabled ?? true)) {
+        codes.add(permission.code);
+      }
+    }
+
+    return codes;
+  }
+
+  // 역할 편집 화면에 노출할 권한 카탈로그. assignable=true 항목만 역할에 부여 가능(천장).
+  private async buildRoleAssignableCatalog(companyOrganizationId: string) {
+    const baseCodes = await this.resolveGroupManagerBaseCodeSet(companyOrganizationId);
+    return this.sortRows(
+      PERMISSION_CATALOG
+        .filter((permission) => !NON_DELEGABLE_GROUP_MANAGER_CODES.has(permission.code))
+        .map((permission) => ({
+          code: permission.code,
+          name: permission.name,
+          category: permission.category,
+          description: permission.description,
+          assignable: baseCodes.has(permission.code),
+        })),
+    );
+  }
+
   private buildEmptyMatrix(
     targetRole: PermissionTargetRoleEnum,
     canEdit: boolean,
@@ -715,33 +767,50 @@ export class PermissionsService {
       };
     }
 
-    const companyManagerPermissionIds = actorScope.companyOrganizationId
-      ? await this.getEffectiveCompanyManagerPermissionIdSet(permissionIds, actorScope.companyOrganizationId)
+    const baseCodeSet = actorScope.companyOrganizationId
+      ? await this.resolveGroupManagerBaseCodeSet(actorScope.companyOrganizationId)
       : new Set<string>();
-    const overridesByPermissionId = actorScope.companyOrganizationId
-      ? await this.getCompanyOverrides(
-        permissionIds,
-        actorScope.companyOrganizationId,
-        PrismaPermissionTargetRole.GROUP_MANAGER,
-      )
-      : new Map();
 
-    const codes = PERMISSION_CATALOG.filter((permission) => {
-      if (NON_DELEGABLE_GROUP_MANAGER_CODES.has(permission.code)) {
-        return false;
+    // 카탈로그 순서를 유지하면서 그룹 담당자 기본 권한을 추린다.
+    let codes = PERMISSION_CATALOG
+      .filter((permission) => baseCodeSet.has(permission.code))
+      .map((permission) => permission.code);
+
+    // 커스텀 역할이 배정된 경우: 실효 권한 = 기본 권한 ∩ 역할 권한.
+    // 역할에 권한이 있어도 그룹 기본 권한(천장)을 초과하지 못한다.
+    let appliedRoleId: string | undefined;
+    let appliedRoleName: string | undefined;
+    if (actor.id) {
+      const account = await this.prisma.account.findUnique({
+        where: { id: actor.id },
+        select: {
+          companyRole: {
+            select: {
+              id: true,
+              name: true,
+              isActive: true,
+              permissions: { select: { permission: { select: { code: true } } } },
+            },
+          },
+        },
+      });
+
+      const role = account?.companyRole;
+      if (role && role.isActive) {
+        const roleCodes = new Set(role.permissions.map((rolePermission) => rolePermission.permission.code));
+        codes = codes.filter((code) => roleCodes.has(code));
+        appliedRoleId = role.id;
+        appliedRoleName = role.name;
       }
-
-      const syncedPermission = syncedPermissionMap.get(permission.code);
-      const resolvedPermissionId = syncedPermission?.id ?? permission.id;
-      const override = overridesByPermissionId.get(resolvedPermissionId);
-      return companyManagerPermissionIds.has(resolvedPermissionId) && (override?.isEnabled ?? true);
-    }).map((permission) => permission.code);
+    }
 
     return {
       actorType: PermissionActorTypeEnum.GROUP_MANAGER,
       codes,
       companyOrganizationId: actorScope.companyOrganizationId,
       companyOrganizationName: actorScope.companyOrganizationName,
+      companyRoleId: appliedRoleId,
+      companyRoleName: appliedRoleName,
     };
   }
 
@@ -1072,5 +1141,232 @@ export class PermissionsService {
     }
 
     return { success: true, updated: changedCount };
+  }
+
+  // ============ 커스텀 역할(Company Role) 관리 ============
+
+  private readonly companyRoleInclude = {
+    permissions: { include: { permission: { select: { code: true } } } },
+    updatedBy: { select: { name: true, username: true } },
+    _count: { select: { assignedAccounts: true } },
+  } as const;
+
+  private mapCompanyRole(
+    role: Prisma.CompanyRoleGetPayload<{ include: PermissionsService['companyRoleInclude'] }>,
+    assignableCodes: Set<string>,
+  ): CompanyRoleDto {
+    const permissionCodes = role.permissions.map((rolePermission) => rolePermission.permission.code);
+    const effectiveCount = permissionCodes.filter((code) => assignableCodes.has(code)).length;
+
+    return {
+      id: role.id,
+      name: role.name,
+      description: role.description ?? undefined,
+      isActive: role.isActive,
+      permissionCodes,
+      effectivePermissionCount: effectiveCount,
+      blockedPermissionCount: permissionCodes.length - effectiveCount,
+      assignedAccountCount: role._count.assignedAccounts,
+      updatedAt: role.updatedAt,
+      modifiedBy: role.updatedBy?.name || role.updatedBy?.username || undefined,
+    };
+  }
+
+  // 역할에 부여할 권한 코드를 천장(그룹 기본 권한) 안으로 클램프하고 권한 ID로 변환한다.
+  private async resolveRolePermissionIds(
+    companyOrganizationId: string,
+    requestedCodes: string[],
+  ): Promise<string[]> {
+    const syncedPermissionMap = await this.syncPermissionCatalog();
+    const baseCodes = await this.resolveGroupManagerBaseCodeSet(companyOrganizationId);
+    const uniqueCodes = Array.from(new Set(requestedCodes ?? []));
+
+    return uniqueCodes
+      .filter((code) => baseCodes.has(code))
+      .map((code) => syncedPermissionMap.get(code)?.id)
+      .filter((id): id is string => Boolean(id));
+  }
+
+  // 역할이 속한 회사를 기준으로 현재 액터가 관리 권한이 있는지 확인한다.
+  private async resolveManageableRoleCompanyScope(
+    actorScope: ResolvedActorScope,
+    roleOrganizationId: string,
+  ): Promise<ResolvedCompanyScope> {
+    if (actorScope.actorType === PermissionActorTypeEnum.COMPANY_MANAGER) {
+      if (actorScope.companyOrganizationId !== roleOrganizationId) {
+        throw new ForbiddenException('다른 회사의 역할은 관리할 수 없습니다.');
+      }
+
+      return {
+        id: actorScope.companyOrganizationId,
+        name: actorScope.companyOrganizationName ?? '',
+      };
+    }
+
+    const organization = await this.resolveOrganizationNode(roleOrganizationId);
+    if (!organization) {
+      throw new NotFoundException('역할이 속한 회사를 찾을 수 없습니다.');
+    }
+
+    return { id: organization.id, name: organization.name };
+  }
+
+  async listRoles(
+    actor: PermissionActorContext,
+    organizationId?: string,
+  ): Promise<CompanyRoleListResponseDto> {
+    const actorScope = await this.resolveActorScope(actor);
+    this.assertCanManageCompanyPermissions(actorScope);
+    const companyScope = await this.resolveTargetCompanyScope(actorScope, organizationId);
+
+    if (!companyScope) {
+      return { canEdit: true, assignablePermissions: [], roles: [] };
+    }
+
+    const assignablePermissions = await this.buildRoleAssignableCatalog(companyScope.id);
+    const assignableCodes = new Set(
+      assignablePermissions.filter((permission) => permission.assignable).map((permission) => permission.code),
+    );
+
+    const roles = await this.prisma.companyRole.findMany({
+      where: { organizationId: companyScope.id },
+      include: this.companyRoleInclude,
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return {
+      scopeOrganizationId: companyScope.id,
+      scopeOrganizationName: companyScope.name,
+      canEdit: true,
+      assignablePermissions,
+      roles: roles.map((role) => this.mapCompanyRole(role, assignableCodes)),
+    };
+  }
+
+  async createRole(actor: PermissionActorContext, dto: CreateCompanyRoleDto): Promise<CompanyRoleDto> {
+    const actorScope = await this.resolveActorScope(actor);
+    this.assertCanManageCompanyPermissions(actorScope);
+    const companyScope = await this.resolveTargetCompanyScope(actorScope, dto.organizationId);
+
+    if (!companyScope) {
+      throw new NotFoundException('대상 회사를 찾을 수 없습니다.');
+    }
+
+    const name = (dto.name ?? '').trim();
+    if (!name) {
+      throw new BadRequestException('역할 이름을 입력해주세요.');
+    }
+
+    const permissionIds = await this.resolveRolePermissionIds(companyScope.id, dto.permissionCodes);
+    const assignableCodes = await this.resolveGroupManagerBaseCodeSet(companyScope.id);
+
+    try {
+      const role = await this.prisma.companyRole.create({
+        data: {
+          organizationId: companyScope.id,
+          name,
+          description: dto.description?.trim() || null,
+          isActive: dto.isActive ?? true,
+          createdById: actor.id || null,
+          updatedById: actor.id || null,
+          permissions: { create: permissionIds.map((permissionId) => ({ permissionId })) },
+        },
+        include: this.companyRoleInclude,
+      });
+
+      return this.mapCompanyRole(role, assignableCodes);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('이미 같은 이름의 역할이 존재합니다.');
+      }
+
+      throw error;
+    }
+  }
+
+  async updateRole(
+    actor: PermissionActorContext,
+    roleId: string,
+    dto: UpdateCompanyRoleDto,
+  ): Promise<CompanyRoleDto> {
+    const actorScope = await this.resolveActorScope(actor);
+    this.assertCanManageCompanyPermissions(actorScope);
+
+    const existing = await this.prisma.companyRole.findUnique({
+      where: { id: roleId },
+      select: { id: true, organizationId: true },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('역할을 찾을 수 없습니다.');
+    }
+
+    const companyScope = await this.resolveManageableRoleCompanyScope(actorScope, existing.organizationId);
+    const assignableCodes = await this.resolveGroupManagerBaseCodeSet(companyScope.id);
+
+    const data: Prisma.CompanyRoleUpdateInput = {
+      updatedBy: actor.id ? { connect: { id: actor.id } } : { disconnect: true },
+    };
+
+    if (dto.name !== undefined) {
+      const name = dto.name.trim();
+      if (!name) {
+        throw new BadRequestException('역할 이름을 입력해주세요.');
+      }
+      data.name = name;
+    }
+
+    if (dto.description !== undefined) {
+      data.description = dto.description.trim() || null;
+    }
+
+    if (dto.isActive !== undefined) {
+      data.isActive = dto.isActive;
+    }
+
+    if (dto.permissionCodes !== undefined) {
+      const permissionIds = await this.resolveRolePermissionIds(companyScope.id, dto.permissionCodes);
+      data.permissions = {
+        deleteMany: {},
+        create: permissionIds.map((permissionId) => ({ permissionId })),
+      };
+    }
+
+    try {
+      const role = await this.prisma.companyRole.update({
+        where: { id: roleId },
+        data,
+        include: this.companyRoleInclude,
+      });
+
+      return this.mapCompanyRole(role, assignableCodes);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('이미 같은 이름의 역할이 존재합니다.');
+      }
+
+      throw error;
+    }
+  }
+
+  async deleteRole(actor: PermissionActorContext, roleId: string): Promise<{ success: boolean }> {
+    const actorScope = await this.resolveActorScope(actor);
+    this.assertCanManageCompanyPermissions(actorScope);
+
+    const existing = await this.prisma.companyRole.findUnique({
+      where: { id: roleId },
+      select: { id: true, organizationId: true },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('역할을 찾을 수 없습니다.');
+    }
+
+    await this.resolveManageableRoleCompanyScope(actorScope, existing.organizationId);
+
+    // FK가 SetNull이라 배정된 계정의 companyRoleId는 자동으로 해제된다.
+    await this.prisma.companyRole.delete({ where: { id: roleId } });
+
+    return { success: true };
   }
 }
