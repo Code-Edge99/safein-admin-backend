@@ -1,5 +1,6 @@
 import { EmployeeResponseDto } from './dto';
 import { resolveOrganizationClassification } from '../../common/utils/organization-scope.util';
+import { resolveEmployeeDisplayName } from '../../common/utils/employee-display-name.util';
 
 export function toEmployeeResponseDto(employee: any): EmployeeResponseDto {
   const isFieldReviewStatus = employee?.status === 'EXCEPTION'
@@ -9,7 +10,7 @@ export function toEmployeeResponseDto(employee: any): EmployeeResponseDto {
   return {
     id: employee.referenceId || employee.id,
     employeeId: employee.id,
-    name: employee.name,
+    name: resolveEmployeeDisplayName(employee.name),
     organizationId: employee.organizationId,
     organizationName: employee.organization?.name,
     position: employee.position,

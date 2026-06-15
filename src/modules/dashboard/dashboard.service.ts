@@ -17,6 +17,7 @@ import { buildSiteReportItem, SiteReportTrendPoint } from './dashboard.mapper';
 import { ReaggregateDayDto } from './dto/reaggregate-day.dto';
 import { ReportMetricSettingsService, type ReportMetricSettingsValues } from '../report-metric-settings/report-metric-settings.service';
 import { resolvePolicySelectionContext, selectPreferredOwnerScopedPolicies, type PolicySelectionContext } from '../../common/utils/policy-owner-fallback.util';
+import { resolveEmployeeDisplayName } from '../../common/utils/employee-display-name.util';
 
 @Injectable()
 export class DashboardService {
@@ -1233,7 +1234,7 @@ export class DashboardService {
       empMap.set(employee.id, {
         id: employee.referenceId || employee.id,
         employeeId: employee.id,
-        employeeName: employee.name || '',
+        employeeName: resolveEmployeeDisplayName(employee.name),
         organizationId: employee.organizationId || '',
         organizationName: employee.organization?.name || '',
         totalBlocks: 0,
@@ -1752,7 +1753,7 @@ export class DashboardService {
     return {
       id: employee.referenceId || employee.id,
       employeeId: employee.id,
-      employeeName: employee.name,
+      employeeName: resolveEmployeeDisplayName(employee.name),
       organizationId: employee.organizationId,
       organizationName: employee.organization?.name || '',
       period: '최근 30일',

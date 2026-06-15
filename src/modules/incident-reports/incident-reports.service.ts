@@ -18,6 +18,7 @@ import {
 import { access } from 'fs/promises';
 import * as path from 'path';
 import { decryptLocation } from '../../common/security/location-crypto';
+import { resolveEmployeeDisplayName } from '../../common/utils/employee-display-name.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ContentTranslationService } from '@/common/translation/translation.service';
 import {
@@ -208,7 +209,7 @@ export class IncidentReportsService {
       organizationId: row.organizationId,
       organizationName: row.organization?.name || '-',
       employeeId: row.employeeId,
-      employeeName: row.employee?.name || '-',
+      employeeName: resolveEmployeeDisplayName(row.employee?.name, '-'),
       title: row.title,
       category: row.category,
       severity: row.severity,
@@ -228,7 +229,7 @@ export class IncidentReportsService {
       organizationId: row.organizationId,
       organizationName: row.organization?.name || '-',
       employeeId: row.employeeId,
-      employeeName: row.employee?.name || '-',
+      employeeName: resolveEmployeeDisplayName(row.employee?.name, '-'),
       employeePhone: row.employee?.phone || null,
       title: row.title,
       description: row.description,

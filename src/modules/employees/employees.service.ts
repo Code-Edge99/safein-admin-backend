@@ -1566,7 +1566,7 @@ export class EmployeesService {
       await tx.employee.create({
         data: {
           id: hardDeletedAnchorId,
-          name: '하드삭제 사용자',
+          name: '삭제된 사용자',
           organizationId: deletedEmployeeWithOriginalId.organizationId,
           status: 'DELETE' as EmployeeStatus,
           deletedAt: now,

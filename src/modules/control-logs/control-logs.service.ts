@@ -9,6 +9,7 @@ import {
 import { decryptLocation, encryptLocation } from '../../common/security/location-crypto';
 import { formatKstDateKey, formatKstTimestampString, getKstDaysAgoStart, parseDateInputAsUtc } from '../../common/utils/kst-time.util';
 import { resolveEmployeePrimaryId } from '../../common/utils/employee-identifier.util';
+import { resolveEmployeeDisplayName } from '../../common/utils/employee-display-name.util';
 import { toControlLogResponseDto } from './control-logs.mapper';
 import {
   CreateControlLogDto,
@@ -663,7 +664,7 @@ export class ControlLogsService {
       select: { id: true, name: true },
     });
 
-    const employeeMap = new Map(employees.map((e) => [e.id, e.name]));
+    const employeeMap = new Map(employees.map((e) => [e.id, resolveEmployeeDisplayName(e.name)]));
 
     // Get blocked counts and last log times
     const stats: EmployeeLogStatsDto[] = [];

@@ -1,6 +1,7 @@
 import { ControlLogResponseDto } from './dto';
 import { decryptLocation } from '../../common/security/location-crypto';
 import { preferKstTimestamp } from '../../common/utils/kst-time.util';
+import { resolveEmployeeDisplayName } from '../../common/utils/employee-display-name.util';
 
 function toUtcIsoString(value: unknown): string | null {
   if (value instanceof Date) {
@@ -37,7 +38,7 @@ export function toControlLogResponseDto(log: any): ControlLogResponseDto {
       ? {
           id: log.employee.referenceId || log.employee.id,
           employeeId: log.employee.id,
-          name: log.employee.name,
+          name: resolveEmployeeDisplayName(log.employee.name),
           organizationId: log.employee.organizationId || undefined,
           organizationName: log.employee.organization?.name || undefined,
         }

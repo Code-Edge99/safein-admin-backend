@@ -1,11 +1,12 @@
 import { DeviceResponseDto } from './dto';
+import { resolveEmployeeDisplayName } from '../../common/utils/employee-display-name.util';
 
 export function toDeviceResponseDto(device: any): DeviceResponseDto {
   return {
     id: device.id,
     deviceId: device.deviceId,
     employeeId: device.employee?.referenceId || device.employeeId,
-    employeeName: device.employee?.name,
+    employeeName: device.employee ? resolveEmployeeDisplayName(device.employee.name) : undefined,
     organizationId: device.organizationId,
     organizationName: device.organization?.name,
     os: device.os,
