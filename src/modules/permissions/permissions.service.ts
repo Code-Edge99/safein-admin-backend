@@ -66,6 +66,8 @@ const PERMISSION_CATALOG: PermissionCatalogItem[] = [
   { id: 'perm-employee-write', category: '직원 관리', name: '직원 관리 수정', code: 'EMPLOYEE_WRITE', description: '직원 정보를 생성/수정/삭제합니다.' },
   { id: 'perm-notice-read', category: '공지사항', name: '공지사항 조회', code: 'NOTICE_READ', description: '공지사항 목록/상세를 조회합니다.' },
   { id: 'perm-notice-write', category: '공지사항', name: '공지사항 등록/수정', code: 'NOTICE_WRITE', description: '공지사항을 등록/수정/삭제합니다.' },
+  { id: 'perm-tbm-read', category: 'TBM', name: 'TBM 조회', code: 'TBM_READ', description: 'TBM 목록/상세와 이수 현황을 조회합니다.' },
+  { id: 'perm-tbm-write', category: 'TBM', name: 'TBM 등록/수정', code: 'TBM_WRITE', description: 'TBM을 등록/수정/삭제하고 교육을 시작/종료합니다.' },
   { id: 'perm-zone-read', category: '정책 관리', name: '구역 조건 조회', code: 'ZONE_READ', description: '구역 조건 화면을 조회합니다.' },
   { id: 'perm-zone-write', category: '정책 관리', name: '구역 조건 수정', code: 'ZONE_WRITE', description: '구역 조건을 생성/수정/삭제합니다.' },
   { id: 'perm-time-policy-read', category: '정책 관리', name: '시간 조건 조회', code: 'TIME_POLICY_READ', description: '시간 조건 화면을 조회합니다.' },
@@ -100,10 +102,11 @@ const CATEGORY_ORDER: Record<string, number> = {
   '현장 관리': 2,
   '직원 관리': 3,
   공지사항: 4,
-  '정책 관리': 5,
-  위험신고: 6,
-  리포트: 7,
-  시스템: 8,
+  TBM: 5,
+  '정책 관리': 6,
+  위험신고: 7,
+  리포트: 8,
+  시스템: 9,
 };
 
 const NON_DELEGABLE_GROUP_MANAGER_CODES = new Set([

@@ -21,6 +21,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { PermissionsModule } from './modules/permissions/permissions.module';
 import { MapsModule } from './modules/maps/maps.module';
 import { NoticesModule } from './modules/notices/notices.module';
+import { TbmsModule } from './modules/tbms/tbms.module';
 import { IncidentReportsModule } from './modules/incident-reports/incident-reports.module';
 import { ReportMetricSettingsModule } from './modules/report-metric-settings/report-metric-settings.module';
 import { RequestBoardModule } from './modules/request-board/request-board.module';
@@ -60,6 +61,7 @@ import { TranslationsModule } from './modules/translations/translations.module';
     PermissionsModule,
     MapsModule,
     NoticesModule,
+    TbmsModule,
     IncidentReportsModule,
     ReportMetricSettingsModule,
     RequestBoardModule,
