@@ -7,6 +7,7 @@ import {
   IsDateString,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
+import { AppLanguage } from '@prisma/client';
 import { BaseFilterDto } from '../../../common/dto';
 
 export enum DeviceOSEnum {
@@ -144,6 +145,7 @@ export class DeviceResponseDto {
   tokenInfo?: {
     isValid: boolean;
     lastLogin?: Date;
+    lastLoginLanguage?: AppLanguage;
     expiresAt?: Date;
   };
 

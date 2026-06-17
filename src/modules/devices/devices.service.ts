@@ -213,6 +213,7 @@ export class DevicesService {
       include: {
         employee: true,
         organization: true,
+        token: true,
       },
     });
 
