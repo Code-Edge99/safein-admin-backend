@@ -49,7 +49,7 @@ export class UpdateTbmDto {
   @IsString({ each: true })
   safetyRules?: string[];
 
-  @ApiPropertyOptional({ description: '교육 예정일 UTC ISO 문자열', example: '2026-06-16T15:00:00.000Z' })
+  @ApiPropertyOptional({ description: '교육 예정일시 UTC ISO 문자열. 날짜와 시간을 그대로 저장합니다.', example: '2026-06-17T00:30:00.000Z' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
   @IsDateString()

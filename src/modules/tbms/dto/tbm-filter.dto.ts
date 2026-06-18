@@ -31,11 +31,23 @@ export class TbmListFilterDto extends PaginationDto {
   @IsEnum(TbmStatus)
   status?: TbmStatus;
 
-  @ApiPropertyOptional({ description: '교육 예정일 필터(UTC ISO). 서버가 KST 날짜로 환산해 해당 날짜의 TBM만 조회합니다.' })
+  @ApiPropertyOptional({ description: '교육 예정일 필터(UTC ISO). 전달된 시각이 속한 KST 날짜 범위의 TBM만 조회합니다.' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
   @IsDateString()
   scheduledDate?: string;
+
+  @ApiPropertyOptional({ description: '교육 예정일 범위 시작(UTC ISO). 전달한 시각이 속한 KST 날짜의 00:00부터 조회합니다.' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsOptional()
+  @IsDateString()
+  scheduledDateFrom?: string;
+
+  @ApiPropertyOptional({ description: '교육 예정일 범위 종료(UTC ISO). 전달한 시각이 속한 KST 날짜의 다음 날 00:00 전까지 조회합니다.' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsOptional()
+  @IsDateString()
+  scheduledDateTo?: string;
 
   @ApiPropertyOptional({
     description: '이수 현황 필터. `hasPending`이면 미이수자가 남은 TBM, `allConfirmed`이면 전원 이수 완료 TBM만 조회합니다.',

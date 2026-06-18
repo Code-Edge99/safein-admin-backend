@@ -179,7 +179,7 @@ export class TbmAdminListItemDto {
   @ApiPropertyOptional({ description: '작성자 조직명 snapshot', nullable: true })
   authorOrganizationName!: string | null;
 
-  @ApiProperty({ description: '교육 예정일 UTC ISO 문자열', example: '2026-06-16T15:00:00.000Z' })
+  @ApiProperty({ description: '교육 예정일시 UTC ISO 문자열. 등록된 날짜와 시간을 포함합니다.', example: '2026-06-17T00:30:00.000Z' })
   scheduledDate!: string;
 
   @ApiPropertyOptional({ description: '교육 시작 시각', nullable: true })
@@ -241,7 +241,7 @@ export class TbmAdminDetailDto {
   @ApiProperty({ description: '언어별 번역 준비 상태', type: [TbmAdminTranslationTargetDto] })
   translationTargets!: TbmAdminTranslationTargetDto[];
 
-  @ApiProperty({ description: '교육 예정일 UTC ISO 문자열', example: '2026-06-16T15:00:00.000Z' })
+  @ApiProperty({ description: '교육 예정일시 UTC ISO 문자열. 등록된 날짜와 시간을 포함합니다.', example: '2026-06-17T00:30:00.000Z' })
   scheduledDate!: string;
 
   @ApiPropertyOptional({ description: '교육 시작 시각', nullable: true })

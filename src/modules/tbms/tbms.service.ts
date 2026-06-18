@@ -8,22 +8,27 @@ import {
 } from '@nestjs/common';
 import {
   AppLanguage,
+  DeviceOS,
   EmployeeStatus,
   Prisma,
+  PushTokenStatus,
   TbmAttachmentType,
   TbmParticipantState,
   TbmStatus,
   TranslatableEntityType,
 } from '@prisma/client';
 import { Request } from 'express';
+import { ConfigService } from '@nestjs/config';
 import { access } from 'fs/promises';
 import { resolve } from 'path';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResponse } from '../../common/dto';
 import { ContentTranslationService } from '@/common/translation/translation.service';
 import { resolveOrganizationClassification } from '../../common/utils/organization-scope.util';
+import { readStageConfig } from '../../common/config/stage.config';
 import {
   CreateTbmDto,
+  SendTbmPushMessageDto,
   TbmAdminAttendeeDto,
   TbmAdminDetailDto,
   TbmAdminListItemDto,
@@ -31,6 +36,7 @@ import {
   TbmCandidateFilterDto,
   TbmCandidateResponseDto,
   TbmListFilterDto,
+  TbmPushMessageResultDto,
   TbmTranslationStatus,
   UpdateTbmDto,
 } from './dto';
@@ -38,6 +44,7 @@ import {
   buildContentDisposition,
   cleanupTbmUploadFiles,
   getTbmUploadDir,
+  isAllowedTbmAttachmentFile,
   isAllowedTbmAudioFile,
   isTbmImageFile,
   normalizeTbmUploadOriginalName,
@@ -67,6 +74,35 @@ type TbmField = {
   content: string;
 };
 
+type TbmPushEvent = 'created' | 'started' | 'message';
+
+type TbmPushTarget = {
+  deviceId: string;
+  token: string;
+  os: DeviceOS;
+  employeeId: string | null;
+  language: AppLanguage;
+};
+
+type TbmPushContent = {
+  type: string;
+  notificationTitle: string;
+  notificationBody: string;
+  message?: string;
+};
+
+type TbmPushRecipient = {
+  employeeId: string;
+  language: AppLanguage;
+};
+
+type TbmPushLocalizationContext = {
+  event: TbmPushEvent;
+  title: string;
+  titleSourceLanguage: AppLanguage;
+  messageSourceLanguage?: AppLanguage;
+};
+
 @Injectable()
 export class TbmsService {
   private readonly logger = new Logger(TbmsService.name);
@@ -74,6 +110,7 @@ export class TbmsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly contentTranslationService: ContentTranslationService,
+    private readonly configService: ConfigService,
   ) {}
 
   // ============ 조직 트리 헬퍼 ============
@@ -172,20 +209,62 @@ export class TbmsService {
     return new Date(`${date}T00:00:00.000+09:00`);
   }
 
-  private parseUtcDateTimeToKstDateForDb(value: string): Date {
+  private parseUtcDateTimeForDb(value: string): Date {
     const parsed = new Date(value);
     if (Number.isNaN(parsed.getTime())) {
       throw new BadRequestException('날짜는 UTC ISO 형식이어야 합니다. 예: 2026-06-16T15:00:00.000Z');
     }
-    return this.getKstDateStartUtc(this.getKstDateString(parsed));
+    return parsed;
   }
 
-  private formatKstDateAsUtcDateTime(date: Date): string {
-    return this.getKstDateStartUtc(this.getKstDateString(date)).toISOString();
+  private formatScheduledDate(date: Date): string {
+    return date.toISOString();
   }
 
   private getNextKstDateStartUtc(date: Date): Date {
     return new Date(date.getTime() + 24 * 60 * 60 * 1000);
+  }
+
+  private getKstDateRangeForDateTime(value: string): { start: Date; end: Date } {
+    const parsed = this.parseUtcDateTimeForDb(value);
+    const start = this.getKstDateStartUtc(this.getKstDateString(parsed));
+
+    return {
+      start,
+      end: this.getNextKstDateStartUtc(start),
+    };
+  }
+
+  private buildScheduledDateFilter(filter: TbmListFilterDto): Prisma.DateTimeFilter | null {
+    let start: Date | undefined;
+    let end: Date | undefined;
+
+    if (filter.scheduledDate) {
+      const dateRange = this.getKstDateRangeForDateTime(filter.scheduledDate);
+      start = dateRange.start;
+      end = dateRange.end;
+    }
+
+    if (filter.scheduledDateFrom) {
+      start = this.getKstDateRangeForDateTime(filter.scheduledDateFrom).start;
+    }
+
+    if (filter.scheduledDateTo) {
+      end = this.getKstDateRangeForDateTime(filter.scheduledDateTo).end;
+    }
+
+    if (start && end && start >= end) {
+      throw new BadRequestException('교육일 조회 시작일은 종료일보다 늦을 수 없습니다.');
+    }
+
+    if (!start && !end) {
+      return null;
+    }
+
+    return {
+      ...(start ? { gte: start } : {}),
+      ...(end ? { lt: end } : {}),
+    };
   }
 
   private buildAbsoluteUrl(request: Request | undefined, path: string): string {
@@ -196,6 +275,387 @@ export class TbmsService {
     const protocol = forwardedProto || request.protocol;
     const host = request.get('host');
     return host ? `${protocol}://${host}/api${path}` : `/api${path}`;
+  }
+
+  private getAppBackendBaseUrl(): string {
+    const baseUrl = readStageConfig(this.configService, 'APP_BACKEND_BASE_URL', {
+      dev: 'http://localhost:3100/api/app',
+      prod: 'https://safein.code-edge.com/api/app',
+    });
+    return baseUrl.trim().replace(/\/$/, '');
+  }
+
+  private resolveTbmPushConcurrency(): number {
+    const raw = this.configService.get<string>('TBM_PUSH_CONCURRENCY')?.trim();
+    const parsed = raw ? Number(raw) : 20;
+    return Number.isFinite(parsed) && parsed > 0 ? Math.min(Math.floor(parsed), 100) : 20;
+  }
+
+  private resolveTbmPushTimeoutMs(): number {
+    const raw = this.configService.get<string>('TBM_PUSH_TIMEOUT_MS')?.trim();
+    const parsed = raw ? Number(raw) : 7000;
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 7000;
+  }
+
+  private buildTbmPushContent(event: TbmPushEvent, title: string, message?: string): TbmPushContent {
+    if (event === 'message') {
+      return {
+        type: 'tbm_message',
+        notificationTitle: 'TBM 교육 메시지',
+        notificationBody: message ?? '',
+        message,
+      };
+    }
+
+    if (event === 'started') {
+      return {
+        type: 'tbm_started',
+        notificationTitle: 'TBM 교육 시작',
+        notificationBody: `${title} 교육이 시작되었습니다.`,
+      };
+    }
+
+    return {
+      type: 'tbm_created',
+      notificationTitle: 'TBM 교육 등록',
+      notificationBody: `${title} 교육이 등록되었습니다.`,
+    };
+  }
+
+  private getTbmPushBodySuffix(event: TbmPushEvent): string | null {
+    if (event === 'started') {
+      return '교육이 시작되었습니다.';
+    }
+
+    if (event === 'created') {
+      return '교육이 등록되었습니다.';
+    }
+
+    return null;
+  }
+
+  private async translateTbmPushFields(
+    fields: TbmField[],
+    targetLanguage: AppLanguage,
+    sourceLanguage: AppLanguage,
+  ): Promise<Record<string, string>> {
+    if (targetLanguage === sourceLanguage) {
+      return Object.fromEntries(fields.map((field) => [field.fieldKey, field.content]));
+    }
+
+    return this.contentTranslationService.translateFields(fields, targetLanguage, sourceLanguage);
+  }
+
+  private async localizeTbmPushContent(
+    content: TbmPushContent,
+    targetLanguage: AppLanguage,
+    context: TbmPushLocalizationContext,
+  ): Promise<TbmPushContent> {
+    const staticTexts = await this.translateTbmPushFields([
+      { fieldKey: 'notificationTitle', content: content.notificationTitle },
+      ...(this.getTbmPushBodySuffix(context.event)
+        ? [{ fieldKey: 'bodySuffix', content: this.getTbmPushBodySuffix(context.event) ?? '' }]
+        : []),
+    ], targetLanguage, AppLanguage.ko);
+
+    if (context.event === 'message') {
+      const messageSourceLanguage = context.messageSourceLanguage ?? AppLanguage.ko;
+      const translatedMessage = await this.translateTbmPushFields([
+        { fieldKey: 'message', content: content.message ?? content.notificationBody },
+      ], targetLanguage, messageSourceLanguage);
+
+      return {
+        ...content,
+        notificationTitle: staticTexts.notificationTitle?.trim() || content.notificationTitle,
+        notificationBody: translatedMessage.message?.trim() || content.notificationBody,
+        ...(content.message ? { message: translatedMessage.message?.trim() || content.message } : {}),
+      };
+    }
+
+    const translatedTitle = await this.translateTbmPushFields([
+      { fieldKey: 'title', content: context.title },
+    ], targetLanguage, context.titleSourceLanguage);
+
+    return {
+      ...content,
+      notificationTitle: staticTexts.notificationTitle?.trim() || content.notificationTitle,
+      notificationBody: [
+        translatedTitle.title?.trim() || context.title,
+        staticTexts.bodySuffix?.trim() || this.getTbmPushBodySuffix(context.event) || '',
+      ].filter(Boolean).join(' '),
+    };
+  }
+
+  private async localizeTbmPushContentByLanguage(
+    content: TbmPushContent,
+    languages: AppLanguage[],
+    context: TbmPushLocalizationContext,
+  ): Promise<Map<AppLanguage, TbmPushContent>> {
+    const localized = new Map<AppLanguage, TbmPushContent>();
+    const targetLanguages = Array.from(new Set(languages));
+
+    await Promise.all(targetLanguages.map(async (language) => {
+      try {
+        localized.set(language, await this.localizeTbmPushContent(content, language, context));
+      } catch (error) {
+        this.logger.warn(`TBM 푸시 메시지 번역 fallback(language=${language}): ${String(error)}`);
+        localized.set(language, content);
+      }
+    }));
+
+    return localized;
+  }
+
+  private async sendTbmPush(endpointUrl: string, params: {
+    dispatchId: string;
+    event: TbmPushEvent;
+    tbmId: string;
+    title: string;
+    scheduledDate: Date;
+    target: TbmPushTarget;
+    content: TbmPushContent;
+    senderAdminId?: string;
+    source?: string;
+  }): Promise<void> {
+    const timeoutMs = this.resolveTbmPushTimeoutMs();
+    const abortController = new AbortController();
+    const timer = setTimeout(() => abortController.abort(), timeoutMs);
+    const content = params.content;
+    const isIos = params.target.os === DeviceOS.iOS;
+
+    try {
+      const response = await fetch(endpointUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-smombie-dispatch-id': params.dispatchId,
+          'x-smombie-source': params.source ?? `admin-backend:tbm_${params.event}`,
+        },
+        signal: abortController.signal,
+        body: JSON.stringify({
+          message: {
+            token: params.target.token,
+            data: {
+              type: content.type,
+              event: content.type,
+              extraData: {
+                tbmId: params.tbmId,
+                title: params.title,
+                scheduledDate: params.scheduledDate.toISOString(),
+                employeeId: params.target.employeeId ?? '',
+                language: params.target.language,
+                ...(content.message ? { message: content.message } : {}),
+                ...(params.senderAdminId ? { senderAdminId: params.senderAdminId } : {}),
+                ...(params.source ? { source: params.source } : {}),
+              },
+            },
+            notification: {
+              title: content.notificationTitle,
+              body: content.notificationBody,
+            },
+            android: {
+              priority: 'HIGH',
+            },
+            ...(isIos
+              ? {
+                  apns: {
+                    headers: {
+                      'apns-priority': '10',
+                      'apns-collapse-id': `${content.type}_${params.tbmId}`,
+                    },
+                    payload: {
+                      aps: {
+                        sound: 'default',
+                      },
+                    },
+                  },
+                }
+              : {}),
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const responseText = await response.text();
+        throw new Error(`status=${response.status}, body=${responseText || 'empty'}`);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`network-timeout>${timeoutMs}ms, endpoint=${endpointUrl}, dispatchId=${params.dispatchId}`);
+      }
+
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private resolveTbmPushRecipients(
+    participants: Array<{ employeeId: string | null; employeeIdAtAssign: string; languageAtAssigned: AppLanguage }>,
+  ): TbmPushRecipient[] {
+    return Array.from(
+      new Map(
+        participants
+          .map((participant) => ({
+            employeeId: (participant.employeeId ?? participant.employeeIdAtAssign).trim(),
+            language: participant.languageAtAssigned,
+          }))
+          .filter((recipient) => !!recipient.employeeId)
+          .map((recipient) => [recipient.employeeId, recipient] as const),
+      ).values(),
+    );
+  }
+
+  private async resolveTbmPushTargets(recipients: TbmPushRecipient[]): Promise<TbmPushTarget[]> {
+    if (recipients.length === 0) {
+      return [];
+    }
+
+    const languageByEmployeeId = new Map(recipients.map((recipient) => [recipient.employeeId, recipient.language]));
+    const employeeIds = Array.from(languageByEmployeeId.keys());
+    const devices = await this.prisma.device.findMany({
+      where: {
+        employeeId: { in: employeeIds },
+        pushToken: { not: null },
+        pushTokenStatus: { not: PushTokenStatus.ERROR },
+        employee: {
+          is: {
+            status: EmployeeStatus.ACTIVE,
+          },
+        },
+      },
+      select: {
+        id: true,
+        os: true,
+        pushToken: true,
+        employeeId: true,
+        token: {
+          select: {
+            lastLoginLanguage: true,
+          },
+        },
+      },
+    });
+
+    return Array.from(
+      new Map(
+        devices
+          .map((device) => {
+            const token = device.pushToken?.trim();
+            if (!token) {
+              return null;
+            }
+
+            const target: TbmPushTarget = {
+              deviceId: device.id,
+              token,
+              os: device.os,
+              employeeId: device.employeeId,
+              language: device.token?.lastLoginLanguage
+                ?? (device.employeeId ? languageByEmployeeId.get(device.employeeId) : undefined)
+                ?? AppLanguage.ko,
+            };
+
+            return [token, target] as const;
+          })
+          .filter((entry): entry is readonly [string, TbmPushTarget] => !!entry),
+      ).values(),
+    );
+  }
+
+  private async dispatchTbmPushToAttendees(tbmId: string, event: TbmPushEvent): Promise<void> {
+    const tbm = await this.prisma.tbmSession.findUnique({
+      where: { id: tbmId },
+      select: {
+        id: true,
+        title: true,
+        sourceLanguage: true,
+        scheduledDate: true,
+        participants: {
+          select: {
+            employeeId: true,
+            employeeIdAtAssign: true,
+            languageAtAssigned: true,
+          },
+        },
+      },
+    });
+
+    if (!tbm) {
+      return;
+    }
+
+    const recipients = this.resolveTbmPushRecipients(tbm.participants);
+
+    if (recipients.length === 0) {
+      return;
+    }
+
+    const targets = await this.resolveTbmPushTargets(recipients);
+
+    if (targets.length === 0) {
+      this.logger.debug(`TBM ${event} 알림 대상 토큰 없음(tbmId=${tbmId})`);
+      return;
+    }
+
+    const content = this.buildTbmPushContent(event, tbm.title);
+    const localizedByLanguage = await this.localizeTbmPushContentByLanguage(
+      content,
+      targets.map((target) => target.language),
+      {
+        event,
+        title: tbm.title,
+        titleSourceLanguage: tbm.sourceLanguage ?? AppLanguage.ko,
+      },
+    );
+
+    const endpointUrl = `${this.getAppBackendBaseUrl()}/internal/push/fcm/send`;
+    const dispatchId = `tbm-${event}-${tbmId}-${Date.now()}`;
+    const dispatchConcurrency = this.resolveTbmPushConcurrency();
+    let successCount = 0;
+    const failedDeviceIds: string[] = [];
+    const failureReasons: string[] = [];
+
+    for (let index = 0; index < targets.length; index += dispatchConcurrency) {
+      const chunk = targets.slice(index, index + dispatchConcurrency);
+      const results = await Promise.allSettled(chunk.map((target) => this.sendTbmPush(endpointUrl, {
+        dispatchId,
+        event,
+        tbmId,
+        title: tbm.title,
+        scheduledDate: tbm.scheduledDate,
+        target,
+        content: localizedByLanguage.get(target.language) ?? content,
+      })));
+
+      results.forEach((result, chunkIndex) => {
+        if (result.status === 'fulfilled') {
+          successCount += 1;
+          return;
+        }
+
+        const failedTarget = chunk[chunkIndex];
+        failedDeviceIds.push(failedTarget.deviceId);
+        if (failureReasons.length < 20) {
+          failureReasons.push(`${failedTarget.deviceId}:${String(result.reason)}`);
+        }
+      });
+    }
+
+    this.logger.log(
+      `[tbm_${event}] dispatchId=${dispatchId}, tbmId=${tbmId}, targets=${targets.length}, success=${successCount}, failed=${failedDeviceIds.length}`,
+    );
+
+    if (failedDeviceIds.length > 0) {
+      this.logger.warn(
+        `[tbm_${event}] failed device ids dispatchId=${dispatchId}: ${failedDeviceIds.slice(0, 20).join(', ')}`
+        + `${failedDeviceIds.length > 20 ? ' ...' : ''}`,
+      );
+
+      if (failureReasons.length > 0) {
+        this.logger.warn(`[tbm_${event}] failed reasons dispatchId=${dispatchId}: ${failureReasons.join(' | ')}`);
+      }
+    }
   }
 
   private buildSourceFields(row: {
@@ -478,9 +938,9 @@ export class TbmsService {
       andConditions.push({ status: filter.status });
     }
 
-    if (filter.scheduledDate) {
-      const date = this.parseUtcDateTimeToKstDateForDb(filter.scheduledDate);
-      andConditions.push({ scheduledDate: { gte: date, lt: this.getNextKstDateStartUtc(date) } });
+    const scheduledDateFilter = this.buildScheduledDateFilter(filter);
+    if (scheduledDateFilter) {
+      andConditions.push({ scheduledDate: scheduledDateFilter });
     }
 
     const trimmedSearch = filter.search?.trim();
@@ -526,7 +986,7 @@ export class TbmsService {
       authorEmployeeId: row.authorEmployeeId,
       authorName: row.authorNameAtCreate,
       authorOrganizationName: row.authorOrganizationNameAtCreate,
-      scheduledDate: this.formatKstDateAsUtcDateTime(row.scheduledDate),
+      scheduledDate: this.formatScheduledDate(row.scheduledDate),
       startedAt: row.startedAt,
       endedAt: row.endedAt,
       attendeeSummary: this.buildAttendeeSummary(row.participants),
@@ -644,7 +1104,7 @@ export class TbmsService {
         language,
         status: targetStatuses.get(language) ?? 'PENDING',
       })),
-      scheduledDate: this.formatKstDateAsUtcDateTime(row.scheduledDate),
+      scheduledDate: this.formatScheduledDate(row.scheduledDate),
       startedAt: row.startedAt,
       endedAt: row.endedAt,
       createdAt: row.createdAt,
@@ -660,6 +1120,102 @@ export class TbmsService {
     const row = await this.loadDetailRow(tbmId);
     await this.assertTbmInScope(row, scopeOrganizationIds);
     return this.buildDetail(row, request);
+  }
+
+  async sendAttendeePushMessage(
+    tbmId: string,
+    attendeeId: string,
+    dto: SendTbmPushMessageDto,
+    scopeOrganizationIds: string[] | undefined,
+    actorAdminId?: string,
+  ): Promise<TbmPushMessageResultDto> {
+    const row = await this.loadDetailRow(tbmId);
+    await this.assertTbmInScope(row, scopeOrganizationIds);
+
+    const participant = row.participants.find((item) => item.id === attendeeId);
+    if (!participant) {
+      throw new NotFoundException('TBM 참석자를 찾을 수 없습니다.');
+    }
+
+    const message = dto.message.trim();
+    if (!message) {
+      throw new BadRequestException('메시지를 입력해야 합니다.');
+    }
+
+    const targetEmployeeId = (participant.employeeId ?? participant.employeeIdAtAssign).trim();
+    if (!targetEmployeeId) {
+      return { targetEmployeeCount: 1, targetDeviceCount: 0, successCount: 0, failedCount: 0 };
+    }
+
+    const targets = await this.resolveTbmPushTargets([{
+      employeeId: targetEmployeeId,
+      language: participant.languageAtAssigned,
+    }]);
+    if (targets.length === 0) {
+      this.logger.debug(`TBM 메시지 알림 대상 토큰 없음(tbmId=${tbmId}, attendeeId=${attendeeId})`);
+      return { targetEmployeeCount: 1, targetDeviceCount: 0, successCount: 0, failedCount: 0 };
+    }
+
+    const content = this.buildTbmPushContent('message', row.title, message);
+    const localizedByLanguage = await this.localizeTbmPushContentByLanguage(
+      content,
+      targets.map((target) => target.language),
+      {
+        event: 'message',
+        title: row.title,
+        titleSourceLanguage: row.sourceLanguage ?? AppLanguage.ko,
+        messageSourceLanguage: AppLanguage.ko,
+      },
+    );
+    const endpointUrl = `${this.getAppBackendBaseUrl()}/internal/push/fcm/send`;
+    const dispatchId = `tbm-message-${tbmId}-${attendeeId}-${Date.now()}`;
+    const dispatchConcurrency = this.resolveTbmPushConcurrency();
+    let successCount = 0;
+    const failedDeviceIds: string[] = [];
+    const failureReasons: string[] = [];
+
+    for (let index = 0; index < targets.length; index += dispatchConcurrency) {
+      const chunk = targets.slice(index, index + dispatchConcurrency);
+      const results = await Promise.allSettled(chunk.map((target) => this.sendTbmPush(endpointUrl, {
+        dispatchId,
+        event: 'message',
+        tbmId: row.id,
+        title: row.title,
+        scheduledDate: row.scheduledDate,
+        target,
+        content: localizedByLanguage.get(target.language) ?? content,
+        senderAdminId: actorAdminId,
+        source: 'admin-backend:tbm_message',
+      })));
+
+      results.forEach((result, chunkIndex) => {
+        if (result.status === 'fulfilled') {
+          successCount += 1;
+          return;
+        }
+
+        const failedTarget = chunk[chunkIndex];
+        failedDeviceIds.push(failedTarget.deviceId);
+        if (failureReasons.length < 20) {
+          failureReasons.push(`${failedTarget.deviceId}:${String(result.reason)}`);
+        }
+      });
+    }
+
+    this.logger.log(
+      `[tbm_message] dispatchId=${dispatchId}, tbmId=${tbmId}, attendeeId=${attendeeId}, targets=${targets.length}, success=${successCount}, failed=${failedDeviceIds.length}`,
+    );
+
+    if (failureReasons.length > 0) {
+      this.logger.warn(`[tbm_message] failed reasons dispatchId=${dispatchId}: ${failureReasons.join(' | ')}`);
+    }
+
+    return {
+      targetEmployeeCount: 1,
+      targetDeviceCount: targets.length,
+      successCount,
+      failedCount: failedDeviceIds.length,
+    };
   }
 
   // ============ 직원 검증 ============
@@ -717,6 +1273,10 @@ export class TbmsService {
       if (audioFile && !isAllowedTbmAudioFile(audioFile)) {
         throw new BadRequestException('허용되지 않는 음성 파일 형식입니다.');
       }
+      const invalidAttachment = files.find((file) => !isAllowedTbmAttachmentFile(file));
+      if (invalidAttachment) {
+        throw new BadRequestException('첨부파일은 이미지 또는 PDF만 업로드할 수 있습니다.');
+      }
 
       const organizationMap = await this.getOrganizationMap();
 
@@ -752,8 +1312,8 @@ export class TbmsService {
       }
 
       const scheduledDate = dto.scheduledDate
-        ? this.parseUtcDateTimeToKstDateForDb(dto.scheduledDate)
-        : this.getKstDateStartUtc(this.getKstTodayString());
+        ? this.parseUtcDateTimeForDb(dto.scheduledDate)
+        : new Date();
       const hazards = dto.hazards ?? [];
       const safetyRules = dto.safetyRules ?? [];
 
@@ -835,6 +1395,10 @@ export class TbmsService {
         created.participants.map((p) => p.languageAtAssigned),
       );
 
+      void this.dispatchTbmPushToAttendees(created.id, 'created').catch((error) => {
+        this.logger.warn(`TBM 생성 알림 전송 실패(tbmId=${created.id}): ${String(error)}`);
+      });
+
       return this.findOne(created.id, scopeOrganizationIds, request);
     } catch (error) {
       await cleanupTbmUploadFiles(uploadedFileNames);
@@ -860,6 +1424,10 @@ export class TbmsService {
     try {
       if (audioFile && !isAllowedTbmAudioFile(audioFile)) {
         throw new BadRequestException('허용되지 않는 음성 파일 형식입니다.');
+      }
+      const invalidAttachment = files.find((file) => !isAllowedTbmAttachmentFile(file));
+      if (invalidAttachment) {
+        throw new BadRequestException('첨부파일은 이미지 또는 PDF만 업로드할 수 있습니다.');
       }
 
       const existing = await this.loadDetailRow(tbmId);
@@ -943,7 +1511,7 @@ export class TbmsService {
         ? (dto.transcriptText.trim() || null)
         : existing.transcriptText;
       const scheduledDate = dto.scheduledDate !== undefined
-        ? this.parseUtcDateTimeToKstDateForDb(dto.scheduledDate)
+        ? this.parseUtcDateTimeForDb(dto.scheduledDate)
         : existing.scheduledDate;
 
       if (!title || !location || !workContent) {
@@ -1065,6 +1633,10 @@ export class TbmsService {
     await this.prisma.tbmSession.update({
       where: { id: existing.id },
       data: { status: TbmStatus.ACTIVE, startedAt: new Date() },
+    });
+
+    void this.dispatchTbmPushToAttendees(existing.id, 'started').catch((error) => {
+      this.logger.warn(`TBM 시작 알림 전송 실패(tbmId=${existing.id}): ${String(error)}`);
     });
 
     return this.findOne(existing.id, scopeOrganizationIds, request);

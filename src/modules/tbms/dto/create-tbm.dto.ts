@@ -110,8 +110,8 @@ export class CreateTbmDto {
   safetyRules?: string[];
 
   @ApiPropertyOptional({
-    description: '교육 예정일 UTC ISO 문자열. 서버는 전달된 UTC 시각을 KST 날짜로 환산해 저장합니다. 생략하면 서버 KST 기준 오늘 날짜가 저장됩니다.',
-    example: '2026-06-16T15:00:00.000Z',
+    description: '교육 예정일시 UTC ISO 문자열. 날짜와 시간을 그대로 저장합니다. 생략하면 서버 현재 시각이 저장됩니다.',
+    example: '2026-06-17T00:30:00.000Z',
   })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()

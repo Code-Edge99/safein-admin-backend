@@ -24,6 +24,25 @@ const ALLOWED_AUDIO_MIME_VALUES = new Set([
   'application/octet-stream',
 ]);
 
+const ALLOWED_ATTACHMENT_IMAGE_EXTENSIONS = new Set([
+  '.avif',
+  '.bmp',
+  '.gif',
+  '.heic',
+  '.heif',
+  '.jpeg',
+  '.jpg',
+  '.png',
+  '.webp',
+]);
+
+const ALLOWED_ATTACHMENT_PDF_EXTENSIONS = new Set(['.pdf']);
+
+const ALLOWED_ATTACHMENT_PDF_MIME_VALUES = new Set([
+  'application/pdf',
+  'application/x-pdf',
+]);
+
 export interface TbmUploadedFile {
   path: string;
   filename: string;
@@ -100,8 +119,23 @@ export function isAllowedTbmAudioFile(file: { originalname?: string; mimetype?: 
     && (mimeType.startsWith('audio/') || ALLOWED_AUDIO_MIME_VALUES.has(mimeType));
 }
 
-export function isTbmImageFile(file: { mimetype?: string }): boolean {
-  return String(file.mimetype || '').toLowerCase().startsWith('image/');
+export function isTbmImageFile(file: { originalname?: string; mimetype?: string }): boolean {
+  const extension = extname(String(file.originalname || '')).toLowerCase();
+  const mimeType = String(file.mimetype || '').toLowerCase();
+
+  return mimeType.startsWith('image/')
+    || (ALLOWED_ATTACHMENT_IMAGE_EXTENSIONS.has(extension) && mimeType === 'application/octet-stream');
+}
+
+export function isAllowedTbmAttachmentFile(file: { originalname?: string; mimetype?: string }): boolean {
+  const extension = extname(String(file.originalname || '')).toLowerCase();
+  const mimeType = String(file.mimetype || '').toLowerCase();
+  const isImage = ALLOWED_ATTACHMENT_IMAGE_EXTENSIONS.has(extension)
+    && (mimeType.startsWith('image/') || mimeType === 'application/octet-stream');
+  const isPdf = ALLOWED_ATTACHMENT_PDF_EXTENSIONS.has(extension)
+    && (ALLOWED_ATTACHMENT_PDF_MIME_VALUES.has(mimeType) || mimeType === 'application/octet-stream');
+
+  return isImage || isPdf;
 }
 
 export function buildContentDisposition(fileName: string, isInline: boolean): string {

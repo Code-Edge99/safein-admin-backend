@@ -26,17 +26,21 @@ import { TbmsService } from './tbms.service';
 import {
   ChangeTbmStatusDto,
   CreateTbmDto,
+  SendTbmPushMessageDto,
   TbmAdminDetailDto,
   TbmAdminListItemDto,
   TbmCandidateFilterDto,
   TbmCandidateResponseDto,
   TbmListFilterDto,
+  TbmPushMessageResultDto,
   UpdateTbmDto,
 } from './dto';
 import {
   createTbmStoredFileName,
   ensureTbmUploadDir,
   getTbmUploadDir,
+  isAllowedTbmAttachmentFile,
+  isAllowedTbmAudioFile,
   TbmUploadedFile,
 } from './tbms.storage';
 
@@ -63,6 +67,19 @@ const tbmFileFields = FileFieldsInterceptor(
   {
     storage: tbmUploadStorage,
     limits: { fileSize: AUDIO_UPLOAD_LIMIT },
+    fileFilter: (_req, file, callback) => {
+      if (file.fieldname === 'audioFile' && !isAllowedTbmAudioFile(file)) {
+        callback(new BadRequestException('허용되지 않는 음성 파일 형식입니다.'), false);
+        return;
+      }
+
+      if (file.fieldname === 'files' && !isAllowedTbmAttachmentFile(file)) {
+        callback(new BadRequestException('첨부파일은 이미지 또는 PDF만 업로드할 수 있습니다.'), false);
+        return;
+      }
+
+      callback(null, true);
+    },
   },
 );
 
@@ -81,6 +98,10 @@ function extractFiles(uploaded: UploadedTbmFiles | undefined): {
   const oversizedAttachment = files.find((file) => file.size > ATTACHMENT_UPLOAD_LIMIT);
   if (oversizedAttachment) {
     throw new BadRequestException('첨부파일은 개별 20MB를 초과할 수 없습니다.');
+  }
+  const unsupportedAttachment = files.find((file) => !isAllowedTbmAttachmentFile(file));
+  if (unsupportedAttachment) {
+    throw new BadRequestException('첨부파일은 이미지 또는 PDF만 업로드할 수 있습니다.');
   }
 
   return { audioFile, files };
@@ -184,6 +205,24 @@ export class TbmsController {
   @ApiResponse({ status: 200, type: TbmAdminDetailDto })
   findOne(@Req() req: AuthenticatedAdminRequest, @Param('id') id: string): Promise<TbmAdminDetailDto> {
     return this.tbmsService.findOne(id, req.organizationScopeIds ?? undefined, req);
+  }
+
+  @Post(':id/attendees/:attendeeId/push-message')
+  @ApiOperation({ summary: 'TBM 참석자 개별 푸시 메시지 발송' })
+  @ApiResponse({ status: 201, type: TbmPushMessageResultDto })
+  sendAttendeePushMessage(
+    @Req() req: AuthenticatedAdminRequest,
+    @Param('id') id: string,
+    @Param('attendeeId') attendeeId: string,
+    @Body() dto: SendTbmPushMessageDto,
+  ): Promise<TbmPushMessageResultDto> {
+    return this.tbmsService.sendAttendeePushMessage(
+      id,
+      attendeeId,
+      dto,
+      req.organizationScopeIds ?? undefined,
+      req.user?.id,
+    );
   }
 
   @Get(':id/audio/original')

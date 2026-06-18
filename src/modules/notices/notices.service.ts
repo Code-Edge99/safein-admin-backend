@@ -148,7 +148,11 @@ export class NoticesService {
     }
   }
 
-  private resolveDeviceLanguage(refreshToken?: string | null): AppLanguage {
+  private resolveDeviceLanguage(lastLoginLanguage?: AppLanguage | null, refreshToken?: string | null): AppLanguage {
+    if (lastLoginLanguage) {
+      return lastLoginLanguage;
+    }
+
     if (!refreshToken) {
       return AppLanguage.ko;
     }
@@ -337,6 +341,7 @@ export class NoticesService {
         pushToken: true,
         token: {
           select: {
+            lastLoginLanguage: true,
             refreshToken: true,
           },
         },
@@ -353,7 +358,7 @@ export class NoticesService {
         deviceId: device.id,
         token,
         os: device.os,
-        language: this.resolveDeviceLanguage(device.token?.refreshToken),
+        language: this.resolveDeviceLanguage(device.token?.lastLoginLanguage, device.token?.refreshToken),
       }];
     });
 
