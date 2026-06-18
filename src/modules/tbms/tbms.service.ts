@@ -322,6 +322,19 @@ export class TbmsService {
     };
   }
 
+  private async transcribeTbmAudioFile(audioFile: TbmUploadedFile): Promise<string | null> {
+    const result = await this.contentTranslationService.translateAudioFile({
+      path: audioFile.path,
+      originalname: audioFile.originalname,
+      mimetype: audioFile.mimetype,
+      size: audioFile.size,
+      sourceLanguage: AppLanguage.ko,
+      targetLanguage: AppLanguage.ko,
+    });
+
+    return result.transcriptText.trim() || null;
+  }
+
   private getTbmPushBodySuffix(event: TbmPushEvent): string | null {
     if (event === 'started') {
       return '교육이 시작되었습니다.';
@@ -1316,6 +1329,9 @@ export class TbmsService {
         : new Date();
       const hazards = dto.hazards ?? [];
       const safetyRules = dto.safetyRules ?? [];
+      const transcriptText = audioFile
+        ? await this.transcribeTbmAudioFile(audioFile)
+        : dto.transcriptText?.trim() || null;
 
       const created = await this.prisma.tbmSession.create({
         data: {
@@ -1333,7 +1349,7 @@ export class TbmsService {
           workContent: dto.workContent.trim(),
           hazards,
           safetyRules,
-          transcriptText: dto.transcriptText?.trim() || null,
+          transcriptText,
           status: TbmStatus.CREATED,
           scheduledDate,
           participants: {
@@ -1507,9 +1523,13 @@ export class TbmsService {
       const workContent = dto.workContent !== undefined ? dto.workContent.trim() : existing.workContent;
       const hazards = dto.hazards !== undefined ? dto.hazards : this.parseJsonStringArray(existing.hazards);
       const safetyRules = dto.safetyRules !== undefined ? dto.safetyRules : this.parseJsonStringArray(existing.safetyRules);
-      const transcriptText = dto.transcriptText !== undefined
-        ? (dto.transcriptText.trim() || null)
-        : existing.transcriptText;
+      const transcriptText = audioFile
+        ? await this.transcribeTbmAudioFile(audioFile)
+        : dto.transcriptText !== undefined
+          ? (dto.transcriptText.trim() || null)
+          : dto.removeAudio === true
+            ? null
+            : existing.transcriptText;
       const scheduledDate = dto.scheduledDate !== undefined
         ? this.parseUtcDateTimeForDb(dto.scheduledDate)
         : existing.scheduledDate;

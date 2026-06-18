@@ -1,5 +1,6 @@
 import {
   BadGatewayException,
+  BadRequestException,
   Injectable,
   Logger,
   OnModuleDestroy,
@@ -7,9 +8,11 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { readFile } from 'fs/promises';
 import { AppLanguage, Prisma, TranslationJobStatus, TranslatableEntityType } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import { resolveRuntimeStage } from '../config/stage.config';
+import { normalizeAppLanguage } from './app-language.util';
 
 type TranslationFieldInput = {
   fieldKey: string;
@@ -27,6 +30,22 @@ type QueueEntityTranslationsParams = {
 
 type TranslateFieldsOptions = {
   requireTranslation?: boolean;
+};
+
+type AudioFileInput = {
+  path: string;
+  originalname: string;
+  mimetype: string;
+  size: number;
+  sourceLanguage: string;
+  targetLanguage: string;
+};
+
+type AudioTranslationResult = {
+  sourceLanguage: string;
+  targetLanguage: string;
+  transcriptText: string;
+  translatedText: string;
 };
 
 type TranslationApiBatchResponse = {
@@ -65,6 +84,13 @@ type TranslationApiMultiLangHtmlBatchResponse = {
       translated_html?: string;
     }>>;
   }>;
+};
+
+type TranslationApiAudioTranslationResponse = {
+  source_language?: string;
+  transcript_text?: string;
+  target_language?: string;
+  translated_text?: string;
 };
 
 class TranslationApiError extends Error {
@@ -146,6 +172,26 @@ export class ContentTranslationService implements OnModuleInit, OnModuleDestroy 
       this.logger.warn(`번역 API 호출 실패(target=${targetLanguage}): ${String(error)}`);
       return Object.fromEntries(filteredFields.map((field) => [field.fieldKey, field.content]));
     }
+  }
+
+  async translateAudioFile(input: AudioFileInput): Promise<AudioTranslationResult> {
+    const sourceLanguage = this.normalizeRequiredAppLanguage(input.sourceLanguage, 'sourceLanguage');
+    const targetLanguage = this.normalizeRequiredAppLanguage(input.targetLanguage, 'targetLanguage');
+    const formData = await this.buildAudioFormData(input, sourceLanguage);
+    formData.append('target_language', targetLanguage);
+
+    const response = await this.requestTranslationMultipartApi<TranslationApiAudioTranslationResponse>(
+      '/audio/translate',
+      formData,
+      `path=/audio/translate, source=${sourceLanguage}, target=${targetLanguage}, fileBytes=${input.size}`,
+    );
+
+    return {
+      sourceLanguage: response.source_language ?? '',
+      targetLanguage: response.target_language ?? '',
+      transcriptText: response.transcript_text ?? '',
+      translatedText: response.translated_text ?? '',
+    };
   }
 
   async storeEntityTranslations(
@@ -963,6 +1009,66 @@ export class ContentTranslationService implements OnModuleInit, OnModuleDestroy 
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  private async requestTranslationMultipartApi<T>(path: string, formData: FormData, requestSummary: string): Promise<T> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.getTranslationApiTimeoutMs());
+    const startedAt = Date.now();
+    let responseStatus: number | null = null;
+
+    try {
+      const response = await fetch(`${this.getTranslationApiBaseUrl()}${path}`, {
+        method: 'POST',
+        body: formData,
+        signal: controller.signal,
+      });
+      responseStatus = response.status;
+
+      if (!response.ok) {
+        const responseText = await response.text();
+        this.logger.warn(
+          `오디오 번역 요청 실패(${requestSummary}, status=${response.status}, durationMs=${Date.now() - startedAt}): ${responseText}`,
+        );
+        throw new BadGatewayException(`Translation audio API ${response.status}: ${responseText}`);
+      }
+
+      const result = await response.json() as T;
+      this.logger.log(`오디오 번역 요청 완료(${requestSummary}, durationMs=${Date.now() - startedAt})`);
+      return result;
+    } catch (error) {
+      if (responseStatus === null) {
+        this.logger.warn(`오디오 번역 요청 예외(${requestSummary}, durationMs=${Date.now() - startedAt}): ${String(error)}`);
+      }
+
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new BadGatewayException(`Translation audio API timeout after ${this.getTranslationApiTimeoutMs()}ms`);
+      }
+
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private async buildAudioFormData(file: AudioFileInput, sourceLanguage: AppLanguage): Promise<FormData> {
+    const formData = new FormData();
+    const buffer = await readFile(file.path);
+    const contentType = file.mimetype || 'application/octet-stream';
+    const fileName = file.originalname || 'audio';
+    const audioBlob = new Blob([new Uint8Array(buffer)], { type: contentType });
+
+    formData.append('file', audioBlob, fileName);
+    formData.append('source_language', sourceLanguage);
+    return formData;
+  }
+
+  private normalizeRequiredAppLanguage(value: unknown, fieldName: string): AppLanguage {
+    const normalized = normalizeAppLanguage(value);
+    if (!normalized) {
+      throw new BadRequestException(`${fieldName} 값이 지원 언어가 아닙니다.`);
+    }
+    return normalized;
   }
 
   private buildTranslationRequestSummary(path: string, payload: Record<string, unknown>): string {
