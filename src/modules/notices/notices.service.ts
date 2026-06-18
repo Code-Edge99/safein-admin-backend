@@ -11,6 +11,7 @@ import { access, unlink } from 'fs/promises';
 import { PaginatedResponse } from '../../common/dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { resolveOrganizationClassification } from '../../common/utils/organization-scope.util';
+import { isSuperAdminRole } from '../../common/utils/admin-role.util';
 import { ContentTranslationService } from '@/common/translation/translation.service';
 import { resolveAppLanguage } from '@/common/translation/app-language.util';
 import { readStageConfig } from '../../common/config/stage.config';
@@ -83,10 +84,6 @@ export class NoticesService {
     private readonly configService: ConfigService,
   ) {
     ensureNoticeUploadDirs();
-  }
-
-  private isSuperAdmin(role?: string): boolean {
-    return role === AdminRole.SUPER_ADMIN || role === 'SUPER_ADMIN';
   }
 
   private async syncNoticeTranslations(
@@ -585,7 +582,7 @@ export class NoticesService {
     actorUserId?: string,
     actorUserRole?: string,
   ): Promise<NoticeActorAccessContext> {
-    if (this.isSuperAdmin(actorUserRole)) {
+    if (isSuperAdminRole(actorUserRole)) {
       return {
         actorType: 'SUPER_ADMIN',
         canEditScopedNotices: true,
@@ -651,7 +648,7 @@ export class NoticesService {
     actorUserId?: string,
     actorUserRole?: string,
   ): Promise<string[] | undefined> {
-    if (this.isSuperAdmin(actorUserRole)) {
+    if (isSuperAdminRole(actorUserRole)) {
       return undefined;
     }
 
@@ -914,7 +911,7 @@ export class NoticesService {
   }
 
   private async canActorEditScopedNotices(actorUserId?: string, actorUserRole?: string): Promise<boolean> {
-    if (this.isSuperAdmin(actorUserRole)) {
+    if (isSuperAdminRole(actorUserRole)) {
       return true;
     }
 
@@ -945,7 +942,7 @@ export class NoticesService {
     readableOrganizationIds?: string[],
     canEditScopedNotices: boolean = false,
   ): boolean {
-    if (this.isSuperAdmin(currentUserRole)) {
+    if (isSuperAdminRole(currentUserRole)) {
       return true;
     }
 

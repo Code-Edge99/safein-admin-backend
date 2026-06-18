@@ -16,6 +16,7 @@ import {
   resolveOrganizationClassification,
 } from '../../common/utils/organization-scope.util';
 import { resolveEmployeePrimaryIds } from '../../common/utils/employee-identifier.util';
+import { isSuperAdminRole } from '../../common/utils/admin-role.util';
 import { toControlPolicyDetailDto, toControlPolicyResponseDto } from './control-policies.mapper';
 import { readStageConfig } from '../../common/config/stage.config';
 import {
@@ -64,10 +65,6 @@ export class ControlPoliciesService {
     private readonly contentTranslationService: ContentTranslationService,
   ) {}
 
-  private isSuperAdminRole(role?: string): boolean {
-    return role === AdminRole.SUPER_ADMIN || role === 'SUPER_ADMIN';
-  }
-
   private async syncControlPolicyTranslations(
     policyId: string,
     values: { name: string; description: string },
@@ -92,26 +89,30 @@ export class ControlPoliciesService {
     });
   }
 
-  private ensureOrganizationInScope(
-    organizationId: string | undefined,
-    scopeOrganizationIds?: string[],
-  ): void {
-    ensureOrganizationInScope(organizationId, scopeOrganizationIds);
-  }
-
+  /**
+   * 조회 where 절에 조직 권한 범위를 적용한다.
+   * - scopeOrganizationIds가 없으면(=슈퍼관리자 등 전체 권한) 제한하지 않는다.
+   * - where에 이미 특정 organizationId가 지정돼 있으면 그 값이 권한 범위 안인지 검증한다.
+   * - 아니면 권한 범위 내 조직들로만 조회하도록 in 조건을 건다.
+   */
   private applyOrganizationScope(where: any, scopeOrganizationIds?: string[]): void {
     if (!scopeOrganizationIds) {
       return;
     }
 
     if (where.organizationId) {
-      this.ensureOrganizationInScope(where.organizationId, scopeOrganizationIds);
+      ensureOrganizationInScope(where.organizationId, scopeOrganizationIds);
       return;
     }
 
     where.organizationId = { in: scopeOrganizationIds };
   }
 
+  /**
+   * 초안(isDraft) 정책의 가시성 규칙을 where 절에 추가한다.
+   * 초안은 작성자 본인에게만 보이고, 그 외에는 게시된(isDraft=false) 정책만 노출한다.
+   * actorUserId가 없으면(비로그인 등) 게시된 정책만 보이도록 제한한다.
+   */
   private appendDraftVisibilityWhere(where: any, actorUserId?: string): void {
     const visibilityCondition = actorUserId
       ? {
@@ -167,7 +168,7 @@ export class ControlPoliciesService {
     actorUserRole?: string,
   ): Promise<ControlPolicyImpactPreviewResponseDto> {
     const ownerOrganizationId = String(dto.organizationId || '').trim();
-    this.ensureOrganizationInScope(ownerOrganizationId, scopeOrganizationIds);
+    ensureOrganizationInScope(ownerOrganizationId, scopeOrganizationIds);
 
     await assertPolicyOwnerOrganization(this.prisma, ownerOrganizationId);
 
@@ -175,7 +176,7 @@ export class ControlPoliciesService {
       this.prisma,
       ownerOrganizationId,
       dto.targetOrganizationIds,
-      this.isSuperAdminRole(actorUserRole),
+      isSuperAdminRole(actorUserRole),
     );
 
     const effectiveTargetUnitIds = await this.resolveEffectiveTargetUnitIds(
@@ -227,7 +228,7 @@ export class ControlPoliciesService {
     const isDraft = isDraftInput === true;
     const resolvedEmployeeIds = await resolveEmployeePrimaryIds(this.prisma, employeeIds);
 
-    this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
+    ensureOrganizationInScope(organizationId, scopeOrganizationIds);
 
     // Validate organization
     const org = await this.prisma.organization.findUnique({
@@ -243,7 +244,7 @@ export class ControlPoliciesService {
       this.prisma,
       organizationId,
       targetOrganizationIds,
-      this.isSuperAdminRole(actorUserRole),
+      isSuperAdminRole(actorUserRole),
     );
 
     const existingPolicy = await this.prisma.controlPolicy.findFirst({
@@ -261,7 +262,7 @@ export class ControlPoliciesService {
       allowedAppPresetIds,
       employeeIds,
       targetOrganizationIds: resolvedTargetUnitIds,
-    }, this.isSuperAdminRole(actorUserRole));
+    }, isSuperAdminRole(actorUserRole));
 
     this.ensureSingleSelectionConstraints({
       timePolicyIds,
@@ -498,7 +499,7 @@ export class ControlPoliciesService {
     scopeOrganizationIds?: string[],
     actorUserId?: string,
   ): Promise<ControlPolicyResponseDto[]> {
-    this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
+    ensureOrganizationInScope(organizationId, scopeOrganizationIds);
 
     const where: any = {
       organizationId,
@@ -793,7 +794,7 @@ export class ControlPoliciesService {
         tx,
         targetOrganizationId,
         targetOrganizationIds,
-        this.isSuperAdminRole(actorUserRole),
+        isSuperAdminRole(actorUserRole),
       );
       updateData.targetUnitIds = resolvedTargetUnitIds;
 
@@ -804,7 +805,7 @@ export class ControlPoliciesService {
         allowedAppPresetIds,
         employeeIds,
         targetOrganizationIds: resolvedTargetUnitIds,
-      }, this.isSuperAdminRole(actorUserRole));
+      }, isSuperAdminRole(actorUserRole));
 
       this.ensureSingleSelectionConstraints({
         timePolicyIds,
@@ -2115,7 +2116,7 @@ export class ControlPoliciesService {
         allowedApps: policy._count.allowedApps,
       }).length > 0;
 
-    await this.validatePolicyRelations(this.prisma, policy.organizationId, { zoneIds }, this.isSuperAdminRole(actorUserRole));
+    await this.validatePolicyRelations(this.prisma, policy.organizationId, { zoneIds }, isSuperAdminRole(actorUserRole));
 
     await this.prisma.$transaction(async (tx: any) => {
       await tx.controlPolicyZone.deleteMany({ where: { policyId } });
@@ -2169,7 +2170,7 @@ export class ControlPoliciesService {
         allowedApps: policy._count.allowedApps,
       }).length > 0;
 
-    await this.validatePolicyRelations(this.prisma, policy.organizationId, { timePolicyIds }, this.isSuperAdminRole(actorUserRole));
+    await this.validatePolicyRelations(this.prisma, policy.organizationId, { timePolicyIds }, isSuperAdminRole(actorUserRole));
     this.ensureSingleSelectionConstraints({ timePolicyIds });
 
     await this.prisma.$transaction(async (tx: any) => {
@@ -2224,7 +2225,7 @@ export class ControlPoliciesService {
         allowedApps: policy._count.allowedApps,
       }).length > 0;
 
-    await this.validatePolicyRelations(this.prisma, policy.organizationId, { behaviorConditionIds }, this.isSuperAdminRole(actorUserRole));
+    await this.validatePolicyRelations(this.prisma, policy.organizationId, { behaviorConditionIds }, isSuperAdminRole(actorUserRole));
     this.ensureSingleSelectionConstraints({ behaviorConditionIds });
 
     await this.prisma.$transaction(async (tx: any) => {
@@ -2282,7 +2283,7 @@ export class ControlPoliciesService {
         allowedApps: policy._count.allowedApps,
       }).length > 0;
 
-    await this.validatePolicyRelations(this.prisma, policy.organizationId, { allowedAppPresetIds }, this.isSuperAdminRole(actorUserRole));
+    await this.validatePolicyRelations(this.prisma, policy.organizationId, { allowedAppPresetIds }, isSuperAdminRole(actorUserRole));
 
     await this.prisma.$transaction(async (tx: any) => {
       await tx.controlPolicyAllowedApp.deleteMany({ where: { policyId } });
