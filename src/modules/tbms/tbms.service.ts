@@ -88,7 +88,6 @@ type TbmPushContent = {
   type: string;
   notificationTitle: string;
   notificationBody: string;
-  message?: string;
 };
 
 type TbmPushRecipient = {
@@ -297,13 +296,12 @@ export class TbmsService {
     return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 7000;
   }
 
-  private buildTbmPushContent(event: TbmPushEvent, title: string, message?: string): TbmPushContent {
+  private buildTbmPushContent(event: TbmPushEvent, title: string, body?: string): TbmPushContent {
     if (event === 'message') {
       return {
         type: 'tbm_message',
         notificationTitle: 'TBM 교육 메시지',
-        notificationBody: message ?? '',
-        message,
+        notificationBody: body ?? '',
       };
     }
 
@@ -373,15 +371,14 @@ export class TbmsService {
 
     if (context.event === 'message') {
       const messageSourceLanguage = context.messageSourceLanguage ?? AppLanguage.ko;
-      const translatedMessage = await this.translateTbmPushFields([
-        { fieldKey: 'message', content: content.message ?? content.notificationBody },
+      const translatedBody = await this.translateTbmPushFields([
+        { fieldKey: 'body', content: content.notificationBody },
       ], targetLanguage, messageSourceLanguage);
 
       return {
         ...content,
         notificationTitle: staticTexts.notificationTitle?.trim() || content.notificationTitle,
-        notificationBody: translatedMessage.message?.trim() || content.notificationBody,
-        ...(content.message ? { message: translatedMessage.message?.trim() || content.message } : {}),
+        notificationBody: translatedBody.body?.trim() || content.notificationBody,
       };
     }
 
@@ -457,7 +454,6 @@ export class TbmsService {
                 scheduledDate: params.scheduledDate.toISOString(),
                 employeeId: params.target.employeeId ?? '',
                 language: params.target.language,
-                ...(content.message ? { message: content.message } : {}),
                 ...(params.senderAdminId ? { senderAdminId: params.senderAdminId } : {}),
                 ...(params.source ? { source: params.source } : {}),
               },
