@@ -19,8 +19,6 @@ import {
 } from '@prisma/client';
 import { Request } from 'express';
 import { ConfigService } from '@nestjs/config';
-import { access } from 'fs/promises';
-import { resolve } from 'path';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResponse } from '../../common/dto';
 import { ContentTranslationService } from '@/common/translation/translation.service';
@@ -43,12 +41,11 @@ import {
 import {
   buildContentDisposition,
   cleanupTbmUploadFiles,
-  getTbmUploadDir,
   isAllowedTbmAttachmentFile,
   isAllowedTbmAudioFile,
   isTbmImageFile,
   normalizeTbmUploadOriginalName,
-  sanitizeTbmStoredFileName,
+  resolveTbmStoredFilePath,
   TbmUploadedFile,
 } from './tbms.storage';
 
@@ -1735,9 +1732,10 @@ export class TbmsService {
       throw new NotFoundException('원본 음성 파일이 없습니다.');
     }
 
-    const fileName = sanitizeTbmStoredFileName(row.originalAudio.storagePath);
-    const absolutePath = resolve(getTbmUploadDir(), fileName);
-    await access(absolutePath);
+    const absolutePath = await resolveTbmStoredFilePath(row.originalAudio.storagePath);
+    if (!absolutePath) {
+      throw new NotFoundException('원본 음성 파일을 찾을 수 없습니다.');
+    }
 
     return {
       absolutePath,
@@ -1765,9 +1763,10 @@ export class TbmsService {
       throw new NotFoundException('첨부파일을 찾을 수 없습니다.');
     }
 
-    const fileName = sanitizeTbmStoredFileName(attachment.storagePath);
-    const absolutePath = resolve(getTbmUploadDir(), fileName);
-    await access(absolutePath);
+    const absolutePath = await resolveTbmStoredFilePath(attachment.storagePath);
+    if (!absolutePath) {
+      throw new NotFoundException('첨부파일을 찾을 수 없습니다.');
+    }
 
     return {
       absolutePath,

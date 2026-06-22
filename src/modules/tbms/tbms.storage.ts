@@ -1,9 +1,15 @@
 import { randomUUID } from 'crypto';
 import { existsSync, mkdirSync } from 'fs';
-import { unlink } from 'fs/promises';
+import { access, unlink } from 'fs/promises';
 import { basename, extname, resolve } from 'path';
 
 const TBM_UPLOAD_DIR = resolve(process.cwd(), 'uploads', 'tbms');
+const TBM_UPLOAD_ROOT_CANDIDATES = Array.from(new Set([
+  TBM_UPLOAD_DIR,
+  resolve(process.cwd(), '..', 'uploads', 'tbms'),
+  resolve(process.cwd(), '..', 'safein-admin-backend', 'uploads', 'tbms'),
+  resolve(process.cwd(), '..', 'safein-app-backend', 'uploads', 'tbms'),
+]));
 
 const ALLOWED_AUDIO_EXTENSIONS = new Set([
   '.m4a',
@@ -62,6 +68,10 @@ export function getTbmUploadDir(): string {
   return TBM_UPLOAD_DIR;
 }
 
+export function getTbmUploadRootCandidates(): string[] {
+  return TBM_UPLOAD_ROOT_CANDIDATES;
+}
+
 function recoverUtf8FileName(fileName: string): string {
   const trimmed = String(fileName || '').trim();
   if (!trimmed) {
@@ -109,6 +119,27 @@ export function sanitizeTbmStoredFileName(fileName: string): string {
   }
 
   return normalized;
+}
+
+export async function resolveTbmStoredFilePath(fileName: string): Promise<string | null> {
+  let safeFileName: string;
+  try {
+    safeFileName = sanitizeTbmStoredFileName(fileName);
+  } catch {
+    return null;
+  }
+
+  for (const rootPath of getTbmUploadRootCandidates()) {
+    const absolutePath = resolve(rootPath, safeFileName);
+    try {
+      await access(absolutePath);
+      return absolutePath;
+    } catch {
+      // try next candidate
+    }
+  }
+
+  return null;
 }
 
 export function isAllowedTbmAudioFile(file: { originalname?: string; mimetype?: string }): boolean {
@@ -166,12 +197,18 @@ export async function cleanupTbmUploadFiles(fileNames: string[]): Promise<void> 
       .map(async (fileName) => {
         try {
           const safeFileName = sanitizeTbmStoredFileName(fileName);
-          await unlink(resolve(getTbmUploadDir(), safeFileName));
-        } catch (error) {
-          const err = error as NodeJS.ErrnoException;
-          if (err.code !== 'ENOENT') {
-            // 파일 정리는 best-effort로 수행
+          for (const rootPath of getTbmUploadRootCandidates()) {
+            try {
+              await unlink(resolve(rootPath, safeFileName));
+            } catch (error) {
+              const err = error as NodeJS.ErrnoException;
+              if (err.code !== 'ENOENT') {
+                // 파일 정리는 best-effort로 수행
+              }
+            }
           }
+        } catch {
+          // 파일 정리는 best-effort로 수행
         }
       }),
   );
