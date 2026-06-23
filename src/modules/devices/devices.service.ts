@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   ConflictException,
   BadRequestException,
@@ -12,7 +13,7 @@ import { assertOrganizationInScopeOrThrow, ensureOrganizationInScope } from '../
 import { findEmployeeByIdentifier, resolveEmployeePrimaryId } from '../../common/utils/employee-identifier.util';
 import { toDeviceResponseDto } from './devices.mapper';
 import { decryptLocation, encryptLocation } from '../../common/security/location-crypto';
-import { formatKstTimestampString, preferKstTimestamp } from '../../common/utils/kst-time.util';
+import { preferKstTimestamp } from '../../common/utils/kst-time.util';
 import {
   CreateDeviceDto,
   UpdateDeviceDto,
@@ -25,6 +26,8 @@ import {
 
 @Injectable()
 export class DevicesService {
+  private readonly logger = new Logger(DevicesService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   private ensureOrganizationInScope(
@@ -343,16 +346,32 @@ export class DevicesService {
     });
 
     const now = new Date();
+    const locationData = {
+      ...encryptedLocation,
+      accuracy: dto.accuracy,
+      timestamp: now,
+    };
 
     await this.prisma.deviceLocation.create({
       data: {
         deviceId: id,
-        ...encryptedLocation,
-        accuracy: dto.accuracy,
-        timestamp: now,
-        timestampKst: formatKstTimestampString(now),
+        ...locationData,
       },
     });
+
+    try {
+      await this.prisma.deviceCurrentLocation.upsert({
+        where: { deviceId: id },
+        update: locationData,
+        create: {
+          deviceId: id,
+          ...locationData,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`device_current_locations 갱신 실패(deviceId=${id}): ${message}`);
+    }
 
     // 마지막 통신 시간 업데이트
     await this.prisma.device.update({

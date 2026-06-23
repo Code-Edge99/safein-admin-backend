@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { parseDateInputAsUtc } from '../../common/utils/kst-time.util';
+import { resolveLogQueryDateRange } from '../../common/utils/kst-time.util';
 import { toLoginHistoryResponseDto } from './login-history.mapper';
 
 @Injectable()
@@ -36,11 +36,8 @@ export class LoginHistoryService {
       };
     }
 
-    if (filter.startDate || filter.endDate) {
-      where.loginTime = {};
-      if (filter.startDate) where.loginTime.gte = parseDateInputAsUtc(filter.startDate, 'start');
-      if (filter.endDate) where.loginTime.lte = parseDateInputAsUtc(filter.endDate, 'end');
-    }
+    // 보존 정책(최근 2년) 내로 조회 범위를 강제한다. 미지정 시 하한을 2년 전으로 기본 설정.
+    where.loginTime = resolveLogQueryDateRange(filter.startDate, filter.endDate);
 
     if (filter.search) {
       where.OR = [

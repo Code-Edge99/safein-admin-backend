@@ -90,3 +90,43 @@ export function parseDateInputAsUtc(input: string, boundary: 'start' | 'end' = '
 
   return parsed;
 }
+
+/**
+ * 원시 로그/시계열 조회의 최대 소급 조회 기간(일).
+ *
+ * 파티션 보존·드롭 정책과 정합을 위한 단일 소스. 보존 정책이 보장하는 조회 가능 창보다
+ * 길게 잡으면 드롭된 파티션을 건드려 "조용한 부분 응답"이 발생하므로, 이 값은
+ * 항상 보장 보존 창(현재 정책상 직전 2년) 이하로 유지해야 한다.
+ */
+export const LOG_QUERY_MAX_WINDOW_DAYS = 730;
+
+/**
+ * 로그성(시계열) 조회의 날짜 범위를 보존 정책 한계 내로 강제한다.
+ *
+ * - 시작일이 한계(now - LOG_QUERY_MAX_WINDOW_DAYS, KST 일 시작 기준)보다 과거이면 거부한다
+ *   → 드롭된 데이터에 대한 불완전(부분) 응답을 막고 명확히 실패시킨다.
+ * - 시작일 미지정 시 하한을 한계로 기본 설정한다 → 전체 스캔/드롭 파티션 접근 방지.
+ *
+ * 반환값은 Prisma where 절(`timestamp`/`loginTime` 등)에 그대로 할당할 수 있는 `{ gte, lte? }`.
+ */
+export function resolveLogQueryDateRange(
+  startDate?: string,
+  endDate?: string,
+  now: Date = new Date(),
+): { gte: Date; lte?: Date } {
+  const floor = getKstDaysAgoStart(LOG_QUERY_MAX_WINDOW_DAYS, now);
+  const lte = endDate ? parseDateInputAsUtc(endDate, 'end') : undefined;
+
+  if (!startDate) {
+    return { gte: floor, lte };
+  }
+
+  const gte = parseDateInputAsUtc(startDate, 'start');
+  if (gte.getTime() < floor.getTime()) {
+    throw new BadRequestException(
+      `로그 데이터는 최근 ${LOG_QUERY_MAX_WINDOW_DAYS}일 이내만 조회할 수 있습니다.`,
+    );
+  }
+
+  return { gte, lte };
+}
