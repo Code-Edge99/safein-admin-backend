@@ -10,7 +10,7 @@ const sourceAtPrismaClientDir = path.resolve(prismaProjectDir, 'node_modules', '
 
 const targetPrismaClientDir = path.resolve(backendRoot, 'node_modules', '.prisma', 'client');
 const targetAtPrismaClientDir = path.resolve(backendRoot, 'node_modules', '@prisma', 'client');
-const prismaSchemaPath = path.resolve(prismaProjectDir, 'prisma', 'schema.prisma');
+const prismaSchemaDir = path.resolve(prismaProjectDir, 'prisma');
 const prismaMigrationsDir = path.resolve(prismaProjectDir, 'prisma', 'migrations');
 const generatedClientIndexPath = path.resolve(sourcePrismaClientDir, 'index.d.ts');
 
@@ -64,7 +64,7 @@ function isGeneratedClientStale() {
   }
 
   const generatedAt = fs.statSync(generatedClientIndexPath).mtimeMs;
-  const schemaUpdatedAt = getLatestModifiedTime(prismaSchemaPath);
+  const schemaUpdatedAt = getLatestModifiedTime(prismaSchemaDir);
   const migrationsUpdatedAt = getLatestModifiedTime(prismaMigrationsDir);
 
   return Math.max(schemaUpdatedAt, migrationsUpdatedAt) > generatedAt;

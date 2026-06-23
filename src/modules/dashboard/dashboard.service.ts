@@ -602,11 +602,11 @@ export class DashboardService {
       ? await this.collectDescendantOrganizationIds(organizationId, scopeOrganizationIds)
       : scopeOrganizationIds;
 
-    const where: any = { date: targetDate };
     const controlLogScopeCondition = targetOrganizationIds
       ? this.buildControlLogOrganizationIdsCondition(targetOrganizationIds)
       : this.buildControlLogOrganizationScopeCondition(scopeOrganizationIds, organizationId);
     const hourlyMap = new Map<number, any>();
+    const emptySummary = { totalBlocks: 0, behaviorBlocks: 0, appControlBlocks: 0 };
     const loadDailyBlockedLogs = async (day: Date) => {
       const dayStart = new Date(day);
       const dayEnd = new Date(day);
@@ -627,18 +627,95 @@ export class DashboardService {
         },
       });
     };
+    const loadDailyBlockedSummary = async (day: Date) => {
+      const dayStart = new Date(day);
+      const dayEnd = new Date(day);
+      dayEnd.setDate(dayEnd.getDate() + 1);
 
-    const logs = await loadDailyBlockedLogs(targetDate);
-
-    logs.forEach((log) => {
-      const hour = this.getKstHourFromUtc(log.timestamp);
-      const existing = hourlyMap.get(hour) || { totalBlocks: 0, behaviorBlocks: 0, allowedAppBlocks: 0 };
-      hourlyMap.set(hour, {
-        totalBlocks: existing.totalBlocks + 1,
-        behaviorBlocks: existing.behaviorBlocks + (log.type === 'behavior' ? 1 : 0),
-        allowedAppBlocks: existing.allowedAppBlocks + (log.type === 'app_control' ? 1 : 0),
+      const grouped = await this.prisma.controlLog.groupBy({
+        by: ['type'],
+        where: {
+          action: 'blocked',
+          timestamp: { gte: dayStart, lt: dayEnd },
+          employee: {
+            deletedAt: null,
+          },
+          ...(controlLogScopeCondition ? { AND: [controlLogScopeCondition] } : {}),
+        },
+        _count: {
+          _all: true,
+        },
       });
+
+      return grouped.reduce((summary, row) => {
+        const count = row._count._all;
+        summary.totalBlocks += count;
+        if (row.type === 'behavior') {
+          summary.behaviorBlocks += count;
+        } else if (row.type === 'app_control') {
+          summary.appControlBlocks += count;
+        }
+        return summary;
+      }, { ...emptySummary });
+    };
+    const addRawLogsToHourlyMap = async () => {
+      const logs = await loadDailyBlockedLogs(targetDate);
+
+      logs.forEach((log) => {
+        const hour = this.getKstHourFromUtc(log.timestamp);
+        const existing = hourlyMap.get(hour) || { ...emptySummary, allowedAppBlocks: 0 };
+        hourlyMap.set(hour, {
+          totalBlocks: existing.totalBlocks + 1,
+          behaviorBlocks: existing.behaviorBlocks + (log.type === 'behavior' ? 1 : 0),
+          allowedAppBlocks: existing.allowedAppBlocks + (log.type === 'app_control' ? 1 : 0),
+        });
+      });
+    };
+
+    const hourlyStats = await this.prisma.hourlyBlockStat.findMany({
+      where: {
+        date: this.getAggregatedStatStoredDate(targetDate),
+        ...(targetOrganizationIds ? { organizationId: { in: targetOrganizationIds } } : {}),
+      },
+      select: {
+        hour: true,
+        totalBlocks: true,
+        behaviorBlocks: true,
+        appControlBlocks: true,
+      },
     });
+
+    if (hourlyStats.length > 0) {
+      const hourlySummary = hourlyStats.reduce((summary, stat) => {
+        summary.totalBlocks += stat.totalBlocks;
+        summary.behaviorBlocks += stat.behaviorBlocks;
+        summary.appControlBlocks += stat.appControlBlocks;
+        return summary;
+      }, { ...emptySummary });
+      const rawSummary = await loadDailyBlockedSummary(targetDate);
+      const isHourlyStatsComplete =
+        hourlySummary.totalBlocks === rawSummary.totalBlocks
+        && hourlySummary.behaviorBlocks === rawSummary.behaviorBlocks
+        && hourlySummary.appControlBlocks === rawSummary.appControlBlocks;
+
+      if (isHourlyStatsComplete) {
+        hourlyStats.forEach((stat) => {
+          const existing = hourlyMap.get(stat.hour) || { ...emptySummary, allowedAppBlocks: 0 };
+          hourlyMap.set(stat.hour, {
+            totalBlocks: existing.totalBlocks + stat.totalBlocks,
+            behaviorBlocks: existing.behaviorBlocks + stat.behaviorBlocks,
+            allowedAppBlocks: existing.allowedAppBlocks + stat.appControlBlocks,
+          });
+        });
+      } else {
+        this.logger.warn(
+          `hourly_block_stats 불일치로 control_logs fallback 사용(date=${formatKstDateKey(targetDate)}, organizationId=${organizationId ?? 'all'}, hourly=${JSON.stringify(hourlySummary)}, raw=${JSON.stringify(rawSummary)})`,
+        );
+        await addRawLogsToHourlyMap();
+      }
+    } else {
+      await addRawLogsToHourlyMap();
+    }
 
     const result = [];
     for (let h = 0; h < 24; h++) {
