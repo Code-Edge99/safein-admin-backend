@@ -1,16 +1,19 @@
 import {
-  CallHandler,
-  ExecutionContext,
-  HttpException,
   Injectable,
-  Logger,
   NestInterceptor,
+  ExecutionContext,
+  CallHandler,
+  Logger,
+  HttpException,
 } from '@nestjs/common';
-import { Request, Response } from 'express';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
-import { HttpFileLogger } from '@/common/utils/http-file.logger';
+import { Request, Response } from 'express';
+import { AuditAction, Prisma } from '@prisma/client';
+import { PrismaService } from '@/prisma/prisma.service';
 import {
+  createRequestLogSummary,
+  isImportantReadRequest,
   isLowValueRequestPath,
   stripApiPrefix,
 } from '@/common/utils/system-log-summary.util';
@@ -18,10 +21,24 @@ import {
 @Injectable()
 export class RequestLoggingInterceptor implements NestInterceptor {
   private readonly logger = new Logger(RequestLoggingInterceptor.name);
+  constructor(private readonly prisma: PrismaService) {}
   private readonly maxSerializedLength = 400;
   private readonly maxObjectDepth = 4;
   private readonly maxArrayLength = 20;
   private readonly slowReadRequestWarnMs = 1500;
+
+  private isAuditAccountForeignKeyViolation(error: unknown): boolean {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+      return false;
+    }
+
+    if (error.code !== 'P2003') {
+      return false;
+    }
+
+    const fieldName = String((error.meta as any)?.field_name || '');
+    return fieldName.includes('audit_logs_accountId_fkey') || fieldName.toLowerCase().includes('accountid');
+  }
 
   private readonly sensitiveQueryKeys = [
     'token',
@@ -47,8 +64,6 @@ export class RequestLoggingInterceptor implements NestInterceptor {
     'apiKey',
     'privateKey',
   ];
-
-  constructor(private readonly httpFileLogger: HttpFileLogger) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const http = context.switchToHttp();
@@ -77,13 +92,15 @@ export class RequestLoggingInterceptor implements NestInterceptor {
             this.logger.log(message);
           }
 
-          this.writeHttpLog(request, safeUrl, statusCode, durationMs, undefined, responseBody);
+          void this.persistAuditLog(request, safeUrl, statusCode, durationMs, undefined, responseBody);
         },
         error: (error) => {
           const durationMs = Date.now() - startedAt;
           const statusCode = this.resolveErrorStatusCode(error, response.statusCode);
-          this.logger.warn(`${request.method} ${safeUrl} ${statusCode} ${durationMs}ms`);
-          this.writeHttpLog(request, safeUrl, statusCode, durationMs, error);
+          this.logger.warn(
+            `${request.method} ${safeUrl} ${statusCode} ${durationMs}ms`,
+          );
+          void this.persistAuditLog(request, safeUrl, statusCode, durationMs, error);
         },
       }),
     );
@@ -111,8 +128,53 @@ export class RequestLoggingInterceptor implements NestInterceptor {
     return 500;
   }
 
-  private shouldWriteHttpLog(safeUrl: string): boolean {
-    return !safeUrl.startsWith('/api/docs') && !isLowValueRequestPath(safeUrl);
+  private shouldPersist(method: string, statusCode: number, safeUrl: string): boolean {
+    if (safeUrl.startsWith('/api/docs') || isLowValueRequestPath(safeUrl)) {
+      return false;
+    }
+
+    if (statusCode >= 400) {
+      return true;
+    }
+
+    const normalizedMethod = method.toUpperCase();
+
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(normalizedMethod)) {
+      return true;
+    }
+
+    if (['GET', 'HEAD'].includes(normalizedMethod)) {
+      return isImportantReadRequest(safeUrl);
+    }
+
+    return false;
+  }
+
+  private resolveAction(method: string, safeUrl: string, statusCode: number): AuditAction {
+    const normalizedMethod = method.toUpperCase();
+    const lowerUrl = safeUrl.toLowerCase();
+
+    if (statusCode >= 400) {
+      return AuditAction.UPDATE;
+    }
+
+    if (lowerUrl.includes('/activate')) {
+      return AuditAction.ACTIVATE;
+    }
+
+    if (lowerUrl.includes('/deactivate')) {
+      return AuditAction.DEACTIVATE;
+    }
+
+    if (normalizedMethod === 'POST') {
+      return AuditAction.CREATE;
+    }
+
+    if (normalizedMethod === 'DELETE') {
+      return AuditAction.DELETE;
+    }
+
+    return AuditAction.UPDATE;
   }
 
   private resolveResource(safeUrl: string): { resourceType: string; resourceId?: string } {
@@ -127,15 +189,15 @@ export class RequestLoggingInterceptor implements NestInterceptor {
     return { resourceType, resourceId };
   }
 
-  private writeHttpLog(
+  private async persistAuditLog(
     request: Request,
     safeUrl: string,
     statusCode: number,
     durationMs: number,
     error?: unknown,
     responseBody?: unknown,
-  ): void {
-    if (!this.shouldWriteHttpLog(safeUrl)) {
+  ): Promise<void> {
+    if (!this.shouldPersist(request.method, statusCode, safeUrl)) {
       return;
     }
 
@@ -149,36 +211,90 @@ export class RequestLoggingInterceptor implements NestInterceptor {
     const normalizedUserAgent = Array.isArray(userAgent)
       ? userAgent.join(', ')
       : userAgent || null;
+    const query = this.sanitizeValue(request.query || {}, 0);
+    const requestBody = this.sanitizeValue(request.body || {}, 0);
     const normalizedMethod = request.method.toUpperCase();
-    const actor = user
-      ? this.sanitizeValue({
-        id: user.id,
-        username: user.username,
-        name: user.name,
-        role: user.role,
-        organizationId: user.organizationId,
-      }, 0)
-      : null;
-
-    this.httpFileLogger.write({
+    const requestSummary = createRequestLogSummary({
       method: normalizedMethod,
-      url: safeUrl,
-      route: this.resolveRoute(safeUrl),
+      path: safeUrl,
       statusCode,
       durationMs,
-      ipAddress: request.ip,
-      userAgent: this.truncate(normalizedUserAgent, 120),
+    });
+    const actor = user
+      ? this.sanitizeValue(
+          {
+            id: user.id,
+            username: user.username,
+            name: user.name,
+            role: user.role,
+            organizationId: user.organizationId,
+          },
+          0,
+        )
+      : null;
+    const responseSummary = this.sanitizeResponseBody(responseBody);
+
+    const errorMessage = error instanceof Error
+      ? error.message
+      : typeof error === 'string'
+        ? error
+        : undefined;
+
+    const auditLogData: Prisma.AuditLogUncheckedCreateInput = {
+      accountId,
+      organizationId,
+      action: this.resolveAction(normalizedMethod, safeUrl, statusCode),
       resourceType,
       resourceId,
-      result: statusCode >= 400 ? 'failure' : 'success',
-      severity: this.resolveSeverity(statusCode),
-      eventCode: this.resolveEventCode(normalizedMethod, safeUrl, statusCode, resourceType),
-      actor: actor ? { accountId, organizationId, ...actor } : null,
-      query: this.summarizeRecord(request.query || {}),
-      request: this.summarizeRecord(request.body || {}),
-      response: this.sanitizeResponseBody(responseBody),
-      error: this.summarizeError(error),
-    });
+      resourceName: `${normalizedMethod} ${safeUrl}`,
+      ipAddress: request.ip,
+      changesAfter: {
+        schemaVersion: 'system-log-v1',
+        eventKind: 'http-request',
+        category: requestSummary.category,
+        summary: {
+          action: requestSummary.action,
+          target: requestSummary.target,
+          details: requestSummary.details,
+          severity: requestSummary.severity,
+          result: requestSummary.result,
+          category: requestSummary.category,
+        } as Prisma.InputJsonObject,
+        method: normalizedMethod,
+        path: safeUrl,
+        statusCode,
+        durationMs,
+        userAgent: normalizedUserAgent,
+        query,
+        requestBody,
+        response: responseSummary,
+        actor,
+        errorMessage: errorMessage || null,
+      },
+    };
+
+    try {
+      await this.prisma.auditLog.create({ data: auditLogData });
+    } catch (persistError) {
+      if (accountId && this.isAuditAccountForeignKeyViolation(persistError)) {
+        try {
+          await this.prisma.auditLog.create({
+            data: {
+              ...auditLogData,
+              accountId: null,
+            },
+          });
+          return;
+        } catch (fallbackError) {
+          const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+          this.logger.warn(`audit_log 저장 실패(fallback): ${fallbackMessage}`);
+          return;
+        }
+      }
+
+      const message = persistError instanceof Error ? persistError.message : String(persistError);
+      this.logger.warn(`audit_log 저장 실패: ${message}`);
+    }
   }
 
   private sanitizeUrl(rawUrl: string): string {
@@ -247,7 +363,7 @@ export class RequestLoggingInterceptor implements NestInterceptor {
     return value;
   }
 
-  private sanitizeResponseBody(responseBody: unknown): Record<string, any> | null {
+  private sanitizeResponseBody(responseBody: unknown): any {
     if (!responseBody || typeof responseBody !== 'object') {
       return null;
     }
@@ -257,183 +373,15 @@ export class RequestLoggingInterceptor implements NestInterceptor {
       ? (body.data as Record<string, unknown>)
       : body;
 
-    return this.summarizeRecord({
-      id: payload.id,
-      createdAt: payload.createdAt,
-      updatedAt: payload.updatedAt,
-      createdById: payload.createdById,
-      updatedById: payload.updatedById,
-      status: payload.status,
-    });
-  }
-
-  private summarizeRecord(value: unknown): Record<string, any> | null {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      return null;
-    }
-
-    const entries = Object.entries(value as Record<string, unknown>);
-    if (entries.length === 0) {
-      return null;
-    }
-
-    const identifiers: Record<string, any> = {};
-    const counts: Record<string, number> = {};
-    const fields: string[] = [];
-
-    for (const [key, raw] of entries) {
-      if (raw === undefined) {
-        continue;
-      }
-
-      const lowerKey = key.toLowerCase();
-      const isSensitive = this.sensitiveBodyKeys.some((sensitiveKey) => lowerKey.includes(sensitiveKey.toLowerCase()));
-      const isIdentifier = lowerKey === 'id'
-        || lowerKey.endsWith('id')
-        || lowerKey.endsWith('ids')
-        || lowerKey.includes('code')
-        || lowerKey.includes('type')
-        || lowerKey.includes('status');
-
-      if (Array.isArray(raw)) {
-        counts[key] = raw.length;
-      }
-
-      if (isIdentifier) {
-        identifiers[key] = isSensitive ? '***' : this.sanitizeValue(raw, 0);
-        continue;
-      }
-
-      fields.push(key);
-    }
-
-    return this.omitEmpty({
-      fields: fields.length > 0 ? fields : null,
-      ids: Object.keys(identifiers).length > 0 ? identifiers : null,
-      counts: Object.keys(counts).length > 0 ? counts : null,
-    });
-  }
-
-  private summarizeError(error: unknown): Record<string, any> | null {
-    if (!error) {
-      return null;
-    }
-
-    if (error instanceof Error) {
-      return this.omitEmpty({
-        name: error.name,
-        message: this.truncate(error.message, 160),
-      });
-    }
-
-    if (typeof error === 'string') {
-      return { message: this.truncate(error, 160) };
-    }
-
-    return { message: this.truncate(String(error), 160) };
-  }
-
-  private resolveRoute(safeUrl: string): string {
-    return stripApiPrefix(safeUrl.split('?')[0]).toLowerCase();
-  }
-
-  private resolveEventCode(method: string, safeUrl: string, statusCode: number, resourceType: string): string {
-    const resourceCode = this.toCode(resourceType || 'system');
-    const actionCode = this.resolveEventActionCode(method, safeUrl);
-    const resultCode = statusCode >= 400 ? 'FAIL' : 'OK';
-
-    return `HTTP_${resourceCode}_${actionCode}_${resultCode}`;
-  }
-
-  private resolveEventActionCode(method: string, safeUrl: string): string {
-    const normalizedMethod = method.toUpperCase();
-    const path = safeUrl.split('?')[0].toLowerCase();
-
-    if (path.includes('/activate') || path.includes('/toggle-active')) {
-      return 'ACTIVATE';
-    }
-
-    if (path.includes('/deactivate')) {
-      return 'DEACTIVATE';
-    }
-
-    if (path.includes('/start')) {
-      return 'START';
-    }
-
-    if (path.includes('/end')) {
-      return 'END';
-    }
-
-    if (path.includes('/assign')) {
-      return 'ASSIGN';
-    }
-
-    if (path.includes('/unassign')) {
-      return 'UNASSIGN';
-    }
-
-    if (normalizedMethod === 'POST') {
-      return 'CREATE';
-    }
-
-    if (normalizedMethod === 'DELETE') {
-      return 'DELETE';
-    }
-
-    return 'UPDATE';
-  }
-
-  private resolveSeverity(statusCode: number): 'success' | 'warning' | 'error' {
-    if (statusCode >= 500) {
-      return 'error';
-    }
-    if (statusCode >= 400) {
-      return 'warning';
-    }
-    return 'success';
-  }
-
-  private toCode(value: string): string {
-    const code = value.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '').toUpperCase();
-    return code || 'SYSTEM';
-  }
-
-  private omitEmpty<T extends Record<string, any>>(value: T): Record<string, any> {
-    const result: Record<string, any> = {};
-
-    for (const [key, raw] of Object.entries(value)) {
-      if (raw === null || raw === undefined) {
-        continue;
-      }
-
-      if (Array.isArray(raw) && raw.length === 0) {
-        continue;
-      }
-
-      if (typeof raw === 'object' && !Array.isArray(raw) && Object.keys(raw).length === 0) {
-        continue;
-      }
-
-      result[key] = raw;
-    }
-
-    return result;
-  }
-
-  private truncate(value: string | null | undefined, maxLength: number): string | null {
-    if (!value) {
-      return null;
-    }
-
-    if (value.length <= maxLength) {
-      return value;
-    }
-
-    if (maxLength <= 3) {
-      return value.slice(0, maxLength);
-    }
-
-    return `${value.slice(0, maxLength - 3)}...`;
+    return this.sanitizeValue(
+      {
+        id: payload.id,
+        createdAt: payload.createdAt,
+        updatedAt: payload.updatedAt,
+        createdById: payload.createdById,
+        updatedById: payload.updatedById,
+      },
+      0,
+    );
   }
 }

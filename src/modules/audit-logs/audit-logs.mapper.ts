@@ -57,13 +57,7 @@ const resourceLabelMap: Record<string, string> = {
   'control-logs': '제어 로그',
   controlpolicypush: '통제 정책',
   devices: '디바이스 관리',
-  auth: '인증',
-  profile: '프로필',
-  tbms: 'TBM',
-  notices: '공지사항',
-  'incident-reports': '위험 신고',
-  installers: '설치파일',
-  'app-system': '앱 시스템',
+  'system-log': '시스템 로그',
 };
 
 function toNumberOrNull(value: unknown): number | null {
@@ -88,7 +82,7 @@ function resolveResourceLabel(resourceType: unknown, resourceName: unknown): str
   const rawName = resolveDisplayValue(resourceName);
   const typeKey = toStringOrEmpty(resourceType).toLowerCase();
 
-  if (rawName && !looksLikeHttpRequestResourceName(rawName)) {
+  if (rawName && typeKey !== 'system-log' && !looksLikeHttpRequestResourceName(rawName)) {
     return rawName;
   }
 
@@ -105,7 +99,7 @@ function resolveAuditCategory(resourceType: unknown): FallbackSummary['category'
   const typeKey = toStringOrEmpty(resourceType).toLowerCase();
   if (typeKey === 'login-history') return 'auth';
   if (typeKey === 'control-logs') return 'control';
-  if (typeKey === 'devices') return 'batch';
+  if (typeKey === 'system-log' || typeKey === 'devices') return 'batch';
   return 'audit';
 }
 
@@ -265,7 +259,7 @@ function enrichChangesAfter(log: any): unknown {
   const before = toObject(log.changesBefore);
   if (!base) {
     return {
-      schemaVersion: 'audit-event-v1',
+      schemaVersion: 'system-log-v1',
       eventKind: 'audit-event',
       category: resolveAuditCategory(log.resourceType),
       summary: buildFallbackSummary(log, before, null),
@@ -278,7 +272,7 @@ function enrichChangesAfter(log: any): unknown {
 
   return {
     ...base,
-    schemaVersion: toStringOrEmpty(base.schemaVersion) || 'audit-event-v1',
+    schemaVersion: toStringOrEmpty(base.schemaVersion) || 'system-log-v1',
     eventKind: toStringOrEmpty(base.eventKind) || 'audit-event',
     category: toStringOrEmpty(base.category) || resolveAuditCategory(log.resourceType),
     summary: buildFallbackSummary(log, before, base),
@@ -336,10 +330,10 @@ export function toAuditLogResponseDto(log: any, options?: { revealActorIdentity?
     resourceId: log.resourceId,
     resourceName: log.resourceName,
     organizationId: log.organizationId,
-    changesBefore: log.changesBefore ?? null,
+    changesBefore: log.changesBefore,
     changesAfter: enrichedChangesAfter,
     ipAddress: log.ipAddress,
     timestamp: log.timestamp,
-    createdAt: log.createdAt ?? log.timestamp,
+    createdAt: log.createdAt,
   };
 }
