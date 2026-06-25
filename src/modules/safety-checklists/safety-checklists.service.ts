@@ -509,6 +509,10 @@ export class SafetyChecklistsService {
     filter: SafetyInspectionSubmissionFilterDto,
     scopeOrganizationIds?: string[],
   ): Promise<SafetyInspectionSubmissionListResponseDto> {
+    if (filter.includeUnsubmitted) {
+      return this.findAssignmentSubmissionStatuses(filter, scopeOrganizationIds);
+    }
+
     const page = Math.max(Number(filter.page || DEFAULT_PAGE), 1);
     const limit = Math.min(Math.max(Number(filter.limit || DEFAULT_LIMIT), 1), 100);
     const where = this.buildSubmissionWhere(filter, scopeOrganizationIds);
@@ -520,12 +524,14 @@ export class SafetyChecklistsService {
           checklist: { select: { id: true, title: true } },
           assignment: {
             select: {
+              id: true,
               inspectionDate: true,
               organizationNameAtAssign: true,
               groupIdAtAssign: true,
               groupNameAtAssign: true,
               teamIdAtAssign: true,
               teamNameAtAssign: true,
+              status: true,
             },
           },
         },
@@ -538,6 +544,41 @@ export class SafetyChecklistsService {
 
     return {
       data: rows.map((row) => this.buildSubmissionListItem(row)),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  private async findAssignmentSubmissionStatuses(
+    filter: SafetyInspectionSubmissionFilterDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<SafetyInspectionSubmissionListResponseDto> {
+    const page = Math.max(Number(filter.page || DEFAULT_PAGE), 1);
+    const limit = Math.min(Math.max(Number(filter.limit || DEFAULT_LIMIT), 1), 100);
+    const where = this.buildAssignmentSubmissionWhere(filter, scopeOrganizationIds);
+
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.safetyChecklistAssignment.findMany({
+        where,
+        include: {
+          checklist: { select: { id: true, title: true } },
+          submission: true,
+        },
+        orderBy: [
+          { inspectionDate: 'desc' },
+          { submittedAt: 'desc' },
+          { employeeNameAtAssign: 'asc' },
+        ],
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.safetyChecklistAssignment.count({ where }),
+    ]);
+
+    return {
+      data: rows.map((row) => this.buildAssignmentSubmissionListItem(row)),
       total,
       page,
       limit,
@@ -567,6 +608,7 @@ export class SafetyChecklistsService {
             inspectionDate: true,
             startedAt: true,
             dueAt: true,
+            status: true,
           },
         },
         answers: {
@@ -891,6 +933,54 @@ export class SafetyChecklistsService {
     return where;
   }
 
+  private buildAssignmentSubmissionWhere(
+    filter: SafetyInspectionSubmissionFilterDto,
+    scopeOrganizationIds?: string[],
+  ): Prisma.SafetyChecklistAssignmentWhereInput {
+    const where: Prisma.SafetyChecklistAssignmentWhereInput = {
+      ...(scopeOrganizationIds ? { checklist: { organizationId: { in: scopeOrganizationIds } } } : {}),
+    };
+    const and: Prisma.SafetyChecklistAssignmentWhereInput[] = [];
+
+    if (filter.checklistId) {
+      where.checklistId = filter.checklistId;
+    }
+
+    if (filter.reviewStatus) {
+      and.push({ submission: { is: this.buildReviewStatusWhere(filter.reviewStatus) } });
+    }
+
+    const employeeName = filter.employeeName || filter.search;
+    if (employeeName) {
+      and.push({
+        OR: [
+          { employeeNameAtAssign: { contains: employeeName, mode: 'insensitive' } },
+          { employeeIdAtAssign: { contains: employeeName, mode: 'insensitive' } },
+          { organizationNameAtAssign: { contains: employeeName, mode: 'insensitive' } },
+          { groupNameAtAssign: { contains: employeeName, mode: 'insensitive' } },
+          { teamNameAtAssign: { contains: employeeName, mode: 'insensitive' } },
+          { checklist: { title: { contains: employeeName, mode: 'insensitive' } } },
+        ],
+      });
+    }
+
+    if (filter.dateFrom || filter.dateTo) {
+      where.inspectionDate = {};
+      if (filter.dateFrom) {
+        where.inspectionDate.gte = this.parseDateOnly(filter.dateFrom);
+      }
+      if (filter.dateTo) {
+        where.inspectionDate.lte = this.parseDateOnly(filter.dateTo);
+      }
+    }
+
+    if (and.length > 0) {
+      where.AND = and;
+    }
+
+    return where;
+  }
+
   private buildReviewStatusWhere(
     reviewStatus: SafetyInspectionReviewStatus,
   ): Prisma.SafetyInspectionSubmissionWhereInput {
@@ -1198,16 +1288,13 @@ export class SafetyChecklistsService {
       inProgressCount,
       overdueCount,
       targets: assignments
-        .filter((assignment) => (
-          assignment.status === SafetyChecklistAssignmentStatus.SUBMITTED || Boolean(assignment.submission)
-        ))
-        .slice(0, 8)
         .map((assignment) => ({
           assignmentId: assignment.id,
           employeeId: assignment.employeeId ?? assignment.employeeIdAtAssign,
           employeeName: resolveEmployeeDisplayName(assignment.employeeNameAtAssign, assignment.employeeIdAtAssign),
           organizationName: assignment.organizationNameAtAssign ?? null,
           status: assignment.status,
+          submitted: assignment.status === SafetyChecklistAssignmentStatus.SUBMITTED || Boolean(assignment.submission),
           submittedAt: assignment.submittedAt ?? null,
           actionNeeded: Boolean(
             assignment.submission
@@ -1225,6 +1312,7 @@ export class SafetyChecklistsService {
 
   private buildSubmissionListItem(row: {
     id: string;
+    assignmentId: string;
     checklistId: string;
     checklist: { title: string };
     employeeId: string | null;
@@ -1235,16 +1323,19 @@ export class SafetyChecklistsService {
     xCount: number;
     submittedAt: Date;
     assignment?: {
+      id: string;
       inspectionDate: Date;
       organizationNameAtAssign: string | null;
       groupIdAtAssign: string | null;
       groupNameAtAssign: string | null;
       teamIdAtAssign: string | null;
       teamNameAtAssign: string | null;
+      status: SafetyChecklistAssignmentStatus;
     } | null;
   }): SafetyInspectionSubmissionListItemDto {
     return {
       id: row.id,
+      assignmentId: row.assignment?.id ?? row.assignmentId,
       checklistId: row.checklistId,
       checklistTitle: row.checklist.title,
       employeeId: row.employeeId ?? null,
@@ -1256,10 +1347,66 @@ export class SafetyChecklistsService {
       teamIdAtAssign: row.assignment?.teamIdAtAssign ?? null,
       teamNameAtAssign: row.assignment?.teamNameAtAssign ?? null,
       inspectionDate: row.assignment?.inspectionDate ?? null,
+      assignmentStatus: row.assignment?.status ?? SafetyChecklistAssignmentStatus.SUBMITTED,
+      submitted: true,
       reviewStatus: row.reviewStatus,
       oCount: row.oCount,
       xCount: row.xCount,
       submittedAt: row.submittedAt,
+    };
+  }
+
+  private buildAssignmentSubmissionListItem(row: {
+    id: string;
+    checklistId: string;
+    checklist: { title: string };
+    employeeId: string | null;
+    employeeIdAtAssign: string;
+    employeeNameAtAssign: string;
+    organizationNameAtAssign: string | null;
+    groupIdAtAssign: string | null;
+    groupNameAtAssign: string | null;
+    teamIdAtAssign: string | null;
+    teamNameAtAssign: string | null;
+    inspectionDate: Date;
+    status: SafetyChecklistAssignmentStatus;
+    submittedAt: Date | null;
+    submission?: {
+      id: string;
+      employeeId: string | null;
+      employeeIdAtSubmit: string;
+      employeeNameAtSubmit: string;
+      reviewStatus: SafetyInspectionReviewStatus;
+      oCount: number;
+      xCount: number;
+      submittedAt: Date;
+    } | null;
+  }): SafetyInspectionSubmissionListItemDto {
+    const submission = row.submission ?? null;
+
+    return {
+      id: submission?.id ?? row.id,
+      assignmentId: row.id,
+      checklistId: row.checklistId,
+      checklistTitle: row.checklist.title,
+      employeeId: submission?.employeeId ?? row.employeeId ?? null,
+      employeeIdAtSubmit: submission?.employeeIdAtSubmit ?? row.employeeIdAtAssign,
+      employeeNameAtSubmit: resolveEmployeeDisplayName(
+        submission?.employeeNameAtSubmit ?? row.employeeNameAtAssign,
+        submission?.employeeIdAtSubmit ?? row.employeeIdAtAssign,
+      ),
+      organizationNameAtAssign: row.organizationNameAtAssign ?? null,
+      groupIdAtAssign: row.groupIdAtAssign ?? null,
+      groupNameAtAssign: row.groupNameAtAssign ?? null,
+      teamIdAtAssign: row.teamIdAtAssign ?? null,
+      teamNameAtAssign: row.teamNameAtAssign ?? null,
+      inspectionDate: row.inspectionDate,
+      assignmentStatus: row.status,
+      submitted: Boolean(submission),
+      reviewStatus: submission?.reviewStatus ?? null,
+      oCount: submission?.oCount ?? 0,
+      xCount: submission?.xCount ?? 0,
+      submittedAt: submission?.submittedAt ?? null,
     };
   }
 

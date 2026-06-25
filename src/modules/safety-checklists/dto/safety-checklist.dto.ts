@@ -33,6 +33,26 @@ function normalizeOptionalString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function normalizeOptionalBoolean(value: unknown): boolean | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) {
+    return true;
+  }
+  if (['false', '0', 'no', 'n', 'off'].includes(normalized)) {
+    return false;
+  }
+
+  return value as boolean;
+}
+
 function parseStringArray(value: unknown): string[] {
   if (value === undefined || value === null || value === '') {
     return [];
@@ -338,6 +358,15 @@ export class SafetyInspectionSubmissionFilterDto extends PaginationDto {
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
   dateTo?: string;
+
+  @ApiPropertyOptional({
+    description: '체크리스트 배정 기준으로 미제출 작업자를 함께 조회합니다.',
+    type: Boolean,
+  })
+  @Transform(({ value }) => normalizeOptionalBoolean(value))
+  @IsOptional()
+  @IsBoolean()
+  includeUnsubmitted?: boolean;
 }
 
 export class ReviewSafetyInspectionSubmissionDto {
@@ -493,6 +522,7 @@ export class SafetyChecklistTodayTargetDto {
   employeeName!: string;
   organizationName!: string | null;
   status!: SafetyChecklistAssignmentStatus;
+  submitted!: boolean;
   submittedAt!: Date | null;
   actionNeeded!: boolean;
   actionCompleted!: boolean;
@@ -543,6 +573,7 @@ export class SafetyInspectionAnswerDto {
 
 export class SafetyInspectionSubmissionListItemDto {
   id!: string;
+  assignmentId!: string;
   checklistId!: string;
   checklistTitle!: string;
   employeeId!: string | null;
@@ -554,10 +585,12 @@ export class SafetyInspectionSubmissionListItemDto {
   teamIdAtAssign!: string | null;
   teamNameAtAssign!: string | null;
   inspectionDate!: Date | null;
-  reviewStatus!: SafetyInspectionReviewStatus;
+  assignmentStatus!: SafetyChecklistAssignmentStatus | null;
+  submitted!: boolean;
+  reviewStatus!: SafetyInspectionReviewStatus | null;
   oCount!: number;
   xCount!: number;
-  submittedAt!: Date;
+  submittedAt!: Date | null;
 }
 
 export class SafetyInspectionSubmissionListResponseDto {
