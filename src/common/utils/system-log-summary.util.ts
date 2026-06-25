@@ -37,7 +37,7 @@ const RESOURCE_MATCHERS: Array<{ matcher: RegExp; info: ResourceInfo }> = [
   { matcher: /^\/zones(?:\/|$)/, info: { label: '구역 관리', category: 'audit' } },
   { matcher: /^\/time-policies(?:\/|$)/, info: { label: '시간 관리', category: 'audit' } },
   { matcher: /^\/behavior-conditions(?:\/|$)/, info: { label: '행동 조건 관리', category: 'audit' } },
-  { matcher: /^\/(?:control-policies|policies)(?:\/|$)/, info: { label: '스몸비 통제 관리', category: 'audit' } },
+  { matcher: /^\/(?:control-policies|policies)(?:\/|$)/, info: { label: '스몸비 관리', category: 'audit' } },
   { matcher: /^\/allowed-apps(?:\/|$)/, info: { label: '허용 앱 관리', category: 'audit' } },
   { matcher: /^\/permissions(?:\/|$)/, info: { label: '권한 관리', category: 'audit' } },
   { matcher: /^\/maps(?:\/|$)/, info: { label: '지도 관리', category: 'audit' } },
