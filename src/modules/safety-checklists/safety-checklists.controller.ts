@@ -27,7 +27,7 @@ import {
 } from './dto';
 import { SafetyChecklistsService } from './safety-checklists.service';
 
-@ApiTags('Safety checklists')
+@ApiTags('안전점검 체크리스트')
 @Controller('safety-checklists')
 @UseGuards(JwtAuthGuard, OrganizationScopeGuard, EffectivePermissionsGuard)
 @PermissionCodes('SAFETY_CHECKLIST_READ')
@@ -36,14 +36,14 @@ export class SafetyChecklistsController {
   constructor(private readonly safetyChecklistsService: SafetyChecklistsService) {}
 
   @Get('candidates')
-  @ApiOperation({ summary: 'Get employees available for checklist assignment' })
+  @ApiOperation({ summary: '안전점검 배정 가능 직원 후보 조회' })
   @ApiResponse({ status: 200, type: SafetyChecklistCandidateResponseDto })
   findCandidates(@Req() req: AuthenticatedAdminRequest): Promise<SafetyChecklistCandidateResponseDto> {
     return this.safetyChecklistsService.findCandidates(req.organizationScopeIds ?? undefined);
   }
 
   @Get('submissions')
-  @ApiOperation({ summary: 'Get safety inspection submission history' })
+  @ApiOperation({ summary: '안전점검 제출 현황 조회' })
   @ApiResponse({ status: 200, type: SafetyInspectionSubmissionListResponseDto })
   findSubmissions(
     @Req() req: AuthenticatedAdminRequest,
@@ -53,7 +53,7 @@ export class SafetyChecklistsController {
   }
 
   @Get('submissions/:id')
-  @ApiOperation({ summary: 'Get safety inspection submission detail' })
+  @ApiOperation({ summary: '안전점검 제출 상세 조회' })
   @ApiResponse({ status: 200, type: SafetyInspectionSubmissionDetailDto })
   findSubmissionDetail(
     @Req() req: AuthenticatedAdminRequest,
@@ -64,7 +64,7 @@ export class SafetyChecklistsController {
 
   @Patch('submissions/:id/review')
   @PermissionCodes('SAFETY_CHECKLIST_WRITE')
-  @ApiOperation({ summary: 'Update safety inspection review status' })
+  @ApiOperation({ summary: '안전점검 관리자 검토 상태 변경' })
   @ApiResponse({ status: 200, type: SafetyInspectionSubmissionDetailDto })
   reviewSubmission(
     @Req() req: AuthenticatedAdminRequest,
@@ -80,7 +80,7 @@ export class SafetyChecklistsController {
   }
 
   @Get('answers/:answerId/attachments/:attachmentId/download')
-  @ApiOperation({ summary: 'Download safety inspection answer attachment' })
+  @ApiOperation({ summary: '안전점검 답변 첨부파일 다운로드' })
   async downloadAnswerAttachment(
     @Req() req: AuthenticatedAdminRequest,
     @Param('answerId') answerId: string,
@@ -99,7 +99,7 @@ export class SafetyChecklistsController {
   }
 
   @Get('statistics')
-  @ApiOperation({ summary: 'Get safety inspection statistics and trends' })
+  @ApiOperation({ summary: '안전점검 통계 및 추세 조회' })
   @ApiResponse({ status: 200, type: SafetyChecklistStatisticsDto })
   getStatistics(
     @Req() req: AuthenticatedAdminRequest,
@@ -109,7 +109,7 @@ export class SafetyChecklistsController {
   }
 
   @Get('patterns')
-  @ApiOperation({ summary: 'Get safety inspection repeat patterns' })
+  @ApiOperation({ summary: '안전점검 반복 조치필요 항목 조회' })
   @ApiResponse({ status: 200, type: SafetyChecklistPatternsDto })
   getPatterns(
     @Req() req: AuthenticatedAdminRequest,
@@ -119,7 +119,7 @@ export class SafetyChecklistsController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Get safety checklists' })
+  @ApiOperation({ summary: '안전점검 체크리스트 목록 조회' })
   @ApiResponse({ status: 200, type: SafetyChecklistListResponseDto })
   findAll(
     @Req() req: AuthenticatedAdminRequest,
@@ -130,7 +130,7 @@ export class SafetyChecklistsController {
 
   @Post()
   @PermissionCodes('SAFETY_CHECKLIST_WRITE')
-  @ApiOperation({ summary: 'Create a safety checklist' })
+  @ApiOperation({ summary: '안전점검 체크리스트 생성' })
   @ApiResponse({ status: 201, type: SafetyChecklistDetailDto })
   create(
     @Req() req: AuthenticatedAdminRequest,
@@ -145,7 +145,7 @@ export class SafetyChecklistsController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get safety checklist detail' })
+  @ApiOperation({ summary: '안전점검 체크리스트 상세 조회' })
   @ApiResponse({ status: 200, type: SafetyChecklistDetailDto })
   findOne(
     @Req() req: AuthenticatedAdminRequest,
@@ -192,7 +192,7 @@ export class SafetyChecklistsController {
 
   @Patch(':id')
   @PermissionCodes('SAFETY_CHECKLIST_WRITE')
-  @ApiOperation({ summary: 'Update a safety checklist' })
+  @ApiOperation({ summary: '안전점검 체크리스트 수정' })
   @ApiResponse({ status: 200, type: SafetyChecklistDetailDto })
   update(
     @Req() req: AuthenticatedAdminRequest,
@@ -204,7 +204,7 @@ export class SafetyChecklistsController {
 
   @Post(':id/deploy')
   @PermissionCodes('SAFETY_CHECKLIST_WRITE')
-  @ApiOperation({ summary: 'Apply a safety checklist to employees' })
+  @ApiOperation({ summary: '안전점검 체크리스트 작업자 배포' })
   @ApiResponse({ status: 201, type: SafetyChecklistDetailDto })
   deploy(
     @Req() req: AuthenticatedAdminRequest,

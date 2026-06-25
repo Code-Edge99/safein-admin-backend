@@ -80,29 +80,29 @@ function parseStringArray(value: unknown): string[] {
 }
 
 export class SafetyChecklistItemInputDto {
-  @ApiPropertyOptional({ example: 'fall-prevention' })
+  @ApiPropertyOptional({ description: '점검 항목 분류', example: '추락 예방' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
   @IsString()
   @MaxLength(80)
   category?: string;
 
-  @ApiProperty({ example: 'Work area guardrails are installed and stable.' })
+  @ApiProperty({ description: '점검 항목 질문', example: '작업구역 난간이 설치되어 있고 흔들림이 없습니다.' })
   @IsString()
   question!: string;
 
-  @ApiPropertyOptional({ example: 'Check every open edge before work starts.' })
+  @ApiPropertyOptional({ description: '작업자가 볼 수 있는 보조 설명', example: '작업 시작 전 개구부와 단부를 함께 확인합니다.' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
   @IsString()
   helpText?: string;
 
-  @ApiPropertyOptional({ default: true })
+  @ApiPropertyOptional({ description: '필수 응답 여부', default: true })
   @IsOptional()
   @IsBoolean()
   required?: boolean;
 
-  @ApiPropertyOptional({ default: 0 })
+  @ApiPropertyOptional({ description: '표시 순서', default: 0 })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -112,18 +112,18 @@ export class SafetyChecklistItemInputDto {
 }
 
 export class SafetyChecklistSectionInputDto {
-  @ApiProperty({ example: 'Before work' })
+  @ApiProperty({ description: '점검 구역 또는 섹션명', example: '작업 전 점검' })
   @IsString()
   @MaxLength(120)
   title!: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: '섹션 설명' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
   @IsString()
   description?: string;
 
-  @ApiPropertyOptional({ default: 0 })
+  @ApiPropertyOptional({ description: '표시 순서', default: 0 })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -131,7 +131,7 @@ export class SafetyChecklistSectionInputDto {
   @Max(1000)
   sortOrder?: number;
 
-  @ApiProperty({ type: [SafetyChecklistItemInputDto] })
+  @ApiProperty({ description: '섹션에 포함된 점검 항목 목록', type: [SafetyChecklistItemInputDto] })
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })
@@ -140,67 +140,67 @@ export class SafetyChecklistSectionInputDto {
 }
 
 export class CreateSafetyChecklistDto {
-  @ApiPropertyOptional({ description: 'Organization that owns this checklist.' })
+  @ApiPropertyOptional({ description: '체크리스트를 소유할 조직 ID' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
   @IsString()
   organizationId?: string;
 
-  @ApiProperty({ example: 'Daily high-place work checklist' })
+  @ApiProperty({ description: '체크리스트명', example: '고소작업 일일 안전점검' })
   @IsString()
   @MaxLength(200)
   title!: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: '체크리스트 설명' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
   @IsString()
   description?: string;
 
-  @ApiPropertyOptional({ example: 'construction' })
+  @ApiPropertyOptional({ description: '업종 또는 현장 유형', example: '건설' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
   @IsString()
   @MaxLength(80)
   industry?: string;
 
-  @ApiPropertyOptional({ enum: SafetyChecklistStatus, default: SafetyChecklistStatus.ACTIVE })
+  @ApiPropertyOptional({ description: '체크리스트 상태', enum: SafetyChecklistStatus, default: SafetyChecklistStatus.ACTIVE })
   @IsOptional()
   @IsEnum(SafetyChecklistStatus)
   status?: SafetyChecklistStatus;
 
-  @ApiPropertyOptional({ example: '2026-06-24' })
+  @ApiPropertyOptional({ description: '배포 시작일', example: '2026-06-24' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
   startDate?: string;
 
-  @ApiPropertyOptional({ example: '2026-06-30' })
+  @ApiPropertyOptional({ description: '배포 종료일', example: '2026-06-30' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
   endDate?: string;
 
-  @ApiPropertyOptional({ example: '09:00' })
+  @ApiPropertyOptional({ description: '점검 시작 시각', example: '09:00' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
   @Matches(/^([01]\d|2[0-3]):[0-5]\d$/)
   startTime?: string;
 
-  @ApiPropertyOptional({ example: '17:30' })
+  @ApiPropertyOptional({ description: '점검 마감 시각', example: '17:30' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
   @Matches(/^([01]\d|2[0-3]):[0-5]\d$/)
   endTime?: string;
 
-  @ApiPropertyOptional({ type: [String] })
+  @ApiPropertyOptional({ description: '배포 대상 직원 ID 목록', type: [String] })
   @Transform(({ value }) => parseStringArray(value))
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
   targetEmployeeIds?: string[];
 
-  @ApiProperty({ type: [SafetyChecklistSectionInputDto] })
+  @ApiProperty({ description: '체크리스트 섹션과 항목 목록', type: [SafetyChecklistSectionInputDto] })
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })
@@ -209,49 +209,49 @@ export class CreateSafetyChecklistDto {
 }
 
 export class UpdateSafetyChecklistDto {
-  @ApiPropertyOptional({ example: 'Daily high-place work checklist' })
+  @ApiPropertyOptional({ description: '체크리스트명', example: '고소작업 일일 안전점검' })
   @IsOptional()
   @IsString()
   @MaxLength(200)
   title?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: '체크리스트 설명' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
   @IsString()
   description?: string;
 
-  @ApiPropertyOptional({ example: 'construction' })
+  @ApiPropertyOptional({ description: '업종 또는 현장 유형', example: '건설' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
   @IsString()
   @MaxLength(80)
   industry?: string;
 
-  @ApiPropertyOptional({ enum: SafetyChecklistStatus })
+  @ApiPropertyOptional({ description: '체크리스트 상태', enum: SafetyChecklistStatus })
   @IsOptional()
   @IsEnum(SafetyChecklistStatus)
   status?: SafetyChecklistStatus;
 
-  @ApiPropertyOptional({ example: '2026-06-24' })
+  @ApiPropertyOptional({ description: '배포 시작일', example: '2026-06-24' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
   startDate?: string;
 
-  @ApiPropertyOptional({ example: '2026-06-30' })
+  @ApiPropertyOptional({ description: '배포 종료일', example: '2026-06-30' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
   endDate?: string;
 
-  @ApiPropertyOptional({ example: '09:00' })
+  @ApiPropertyOptional({ description: '점검 시작 시각', example: '09:00' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
   @Matches(/^([01]\d|2[0-3]):[0-5]\d$/)
   startTime?: string;
 
-  @ApiPropertyOptional({ example: '17:30' })
+  @ApiPropertyOptional({ description: '점검 마감 시각', example: '17:30' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
   @Matches(/^([01]\d|2[0-3]):[0-5]\d$/)
@@ -336,7 +336,7 @@ export class SafetyInspectionSubmissionFilterDto extends PaginationDto {
   @IsString()
   checklistId?: string;
 
-  @ApiPropertyOptional({ description: 'Submitted employee name search.' })
+  @ApiPropertyOptional({ description: '제출 또는 배정된 작업자 이름 검색' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
   @IsString()
@@ -370,11 +370,11 @@ export class SafetyInspectionSubmissionFilterDto extends PaginationDto {
 }
 
 export class ReviewSafetyInspectionSubmissionDto {
-  @ApiProperty({ enum: SafetyInspectionReviewStatus })
+  @ApiProperty({ description: '관리자 검토 상태', enum: SafetyInspectionReviewStatus })
   @IsEnum(SafetyInspectionReviewStatus)
   reviewStatus!: SafetyInspectionReviewStatus;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: '관리자 검토 메모' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
   @IsString()
