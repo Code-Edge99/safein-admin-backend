@@ -23,6 +23,7 @@ import { MapsModule } from './modules/maps/maps.module';
 import { NoticesModule } from './modules/notices/notices.module';
 import { TbmsModule } from './modules/tbms/tbms.module';
 import { IncidentReportsModule } from './modules/incident-reports/incident-reports.module';
+import { SafetyChecklistsModule } from './modules/safety-checklists/safety-checklists.module';
 import { ReportMetricSettingsModule } from './modules/report-metric-settings/report-metric-settings.module';
 import { RequestBoardModule } from './modules/request-board/request-board.module';
 import { CommonCodesModule } from './modules/common-codes/common-codes.module';
@@ -66,6 +67,7 @@ import { HttpFileLogger } from './common/utils/http-file.logger';
     NoticesModule,
     TbmsModule,
     IncidentReportsModule,
+    SafetyChecklistsModule,
     ReportMetricSettingsModule,
     RequestBoardModule,
     CommonCodesModule,
