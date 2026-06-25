@@ -156,7 +156,7 @@ export class SafetyChecklistsController {
 
   @Post(':id/today-non-submitters/push-message')
   @PermissionCodes('SAFETY_CHECKLIST_WRITE')
-  @ApiOperation({ summary: 'Send a push message to today non-submitters' })
+  @ApiOperation({ summary: '오늘 미제출 작업자 전체에게 푸시 메시지 발송' })
   @ApiResponse({ status: 201, type: SafetyChecklistPushMessageResultDto })
   sendTodayNonSubmitterPushMessage(
     @Req() req: AuthenticatedAdminRequest,
@@ -165,6 +165,25 @@ export class SafetyChecklistsController {
   ): Promise<SafetyChecklistPushMessageResultDto> {
     return this.safetyChecklistsService.sendTodayNonSubmitterPushMessage(
       id,
+      dto,
+      req.organizationScopeIds ?? undefined,
+      req.user?.id,
+    );
+  }
+
+  @Post(':id/assignments/:assignmentId/push-message')
+  @PermissionCodes('SAFETY_CHECKLIST_WRITE')
+  @ApiOperation({ summary: '오늘 미제출 작업자에게 개별 푸시 메시지 발송' })
+  @ApiResponse({ status: 201, type: SafetyChecklistPushMessageResultDto })
+  sendAssignmentPushMessage(
+    @Req() req: AuthenticatedAdminRequest,
+    @Param('id') id: string,
+    @Param('assignmentId') assignmentId: string,
+    @Body() dto: SendSafetyChecklistPushMessageDto,
+  ): Promise<SafetyChecklistPushMessageResultDto> {
+    return this.safetyChecklistsService.sendAssignmentPushMessage(
+      id,
+      assignmentId,
       dto,
       req.organizationScopeIds ?? undefined,
       req.user?.id,

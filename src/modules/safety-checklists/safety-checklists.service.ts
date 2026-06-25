@@ -696,6 +696,54 @@ export class SafetyChecklistsService {
     });
   }
 
+  async sendAssignmentPushMessage(
+    id: string,
+    assignmentId: string,
+    dto: SendSafetyChecklistPushMessageDto,
+    scopeOrganizationIds: string[] | undefined,
+    actorAdminId?: string,
+  ): Promise<SafetyChecklistPushMessageResultDto> {
+    const assignment = await this.prisma.safetyChecklistAssignment.findFirst({
+      where: {
+        id: assignmentId,
+        checklistId: id,
+        inspectionDate: this.parseDateOnly(this.getKstTodayString()),
+        checklist: {
+          deletedAt: null,
+          ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+        },
+      },
+      select: {
+        id: true,
+        status: true,
+        submission: { select: { id: true } },
+      },
+    });
+
+    if (!assignment) {
+      throw new NotFoundException('오늘 미제출 점검 대상을 찾을 수 없습니다.');
+    }
+
+    if (assignment.status === SafetyChecklistAssignmentStatus.SUBMITTED || assignment.submission) {
+      throw new BadRequestException('이미 제출된 작업자에게는 미제출 알림을 발송할 수 없습니다.');
+    }
+
+    const message = dto.message.trim();
+    if (!message) {
+      throw new BadRequestException('메시지를 입력해야 합니다.');
+    }
+
+    const sender = actorAdminId
+      ? await this.prisma.account.findUnique({ where: { id: actorAdminId }, select: { name: true } })
+      : null;
+
+    return this.callAppBackendSafetyChecklistPush(id, {
+      message,
+      senderAdminId: actorAdminId,
+      senderName: sender?.name,
+    }, assignmentId);
+  }
+
   async getStatistics(
     filter: SafetyChecklistStatisticsFilterDto,
     scopeOrganizationIds?: string[],
@@ -1027,8 +1075,12 @@ export class SafetyChecklistsService {
       senderAdminId?: string;
       senderName?: string;
     },
+    assignmentId?: string,
   ): Promise<SafetyChecklistPushMessageResultDto> {
-    const endpointUrl = `${this.getAppBackendBaseUrl()}/internal/safety-checklists/${encodeURIComponent(checklistId)}/today-non-submitters/push-message`;
+    const encodedChecklistId = encodeURIComponent(checklistId);
+    const endpointUrl = assignmentId
+      ? `${this.getAppBackendBaseUrl()}/internal/safety-checklists/${encodedChecklistId}/assignments/${encodeURIComponent(assignmentId)}/push-message`
+      : `${this.getAppBackendBaseUrl()}/internal/safety-checklists/${encodedChecklistId}/today-non-submitters/push-message`;
     const timeoutMs = this.resolveSafetyChecklistPushTimeoutMs();
     const abortController = new AbortController();
     const timer = setTimeout(() => abortController.abort(), timeoutMs);
