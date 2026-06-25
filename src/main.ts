@@ -9,14 +9,24 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { RequestLoggingInterceptor } from './common/interceptors/request-logging.interceptor';
 import { readStageConfig, resolveRuntimeStage } from './common/config/stage.config';
-import { PersistentAuditLogger } from './common/utils/persistent-audit.logger';
+import { PrismaService } from './prisma/prisma.service';
+import {
+  PersistentAuditLogger,
+  parseBoolean,
+  parsePersistLogLevels,
+} from './common/utils/persistent-audit.logger';
+import { createSlackLogNotifierFromConfig } from './common/utils/slack-log.notifier';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
+  const prismaService = app.get(PrismaService);
 
-  const persistentLogger = new PersistentAuditLogger({
+  const persistentLogger = new PersistentAuditLogger(prismaService, {
     source: 'admin-backend',
+    enabled: parseBoolean(configService.get<string>('SYSTEM_LOG_PERSIST_ENABLED'), true),
+    levels: parsePersistLogLevels(configService.get<string>('SYSTEM_LOG_PERSIST_LEVELS')),
+    slackNotifier: createSlackLogNotifierFromConfig(configService, 'admin-backend'),
   });
   app.useLogger(persistentLogger);
 
@@ -94,9 +104,6 @@ async function bootstrap() {
     const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
     SwaggerModule.setup('api/docs', app, swaggerDocument);
   }
-
-  // SIGTERM/SIGINT 시 onModuleDestroy 훅 실행 → HTTP 파일 로그 flush 및 자원 정리
-  app.enableShutdownHooks();
 
   const port = configService.get('PORT', 3000);
   await app.listen(port);
