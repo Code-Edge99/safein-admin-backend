@@ -1739,6 +1739,12 @@ export class SafetyChecklistsService {
       throw new BadRequestException('적용 가능한 활성 직원이 없습니다.');
     }
 
+    await this.removeOverlappingOpenAssignments(tx, {
+      checklistId: input.checklistId,
+      employeeIds: employees.map((employee) => employee.id),
+      inspectionDates: dates,
+    });
+
     const deployment = await tx.safetyChecklistDeployment.create({
       data: {
         checklistId: input.checklistId,
@@ -1795,6 +1801,63 @@ export class SafetyChecklistsService {
     }
 
     return Array.from(new Set(employees.map((employee) => employee.employeeAccount?.preferredLanguage ?? AppLanguage.ko)));
+  }
+
+  private async removeOverlappingOpenAssignments(
+    tx: Prisma.TransactionClient,
+    input: {
+      checklistId: string;
+      employeeIds: string[];
+      inspectionDates: Date[];
+    },
+  ): Promise<void> {
+    if (input.employeeIds.length === 0 || input.inspectionDates.length === 0) {
+      return;
+    }
+
+    const assignments = await tx.safetyChecklistAssignment.findMany({
+      where: {
+        checklistId: input.checklistId,
+        employeeIdAtAssign: { in: input.employeeIds },
+        inspectionDate: { in: input.inspectionDates },
+        status: { not: SafetyChecklistAssignmentStatus.SUBMITTED },
+        submission: { is: null },
+      },
+      select: {
+        id: true,
+        deploymentId: true,
+      },
+    });
+
+    if (assignments.length === 0) {
+      return;
+    }
+
+    const assignmentIds = assignments.map((assignment) => assignment.id);
+    const affectedDeploymentIds = Array.from(new Set(assignments.map((assignment) => assignment.deploymentId)));
+
+    await tx.safetyChecklistPushNotification.deleteMany({
+      where: { assignmentId: { in: assignmentIds } },
+    });
+
+    await tx.safetyChecklistAssignment.deleteMany({
+      where: { id: { in: assignmentIds } },
+    });
+
+    const emptyDeployments = await tx.safetyChecklistDeployment.findMany({
+      where: {
+        id: { in: affectedDeploymentIds },
+        assignments: { none: {} },
+      },
+      select: { id: true },
+    });
+
+    if (emptyDeployments.length > 0) {
+      await tx.safetyChecklistDeployment.updateMany({
+        where: { id: { in: emptyDeployments.map((deployment) => deployment.id) } },
+        data: { status: SafetyChecklistDeploymentStatus.ENDED },
+      });
+    }
   }
 
   private async findAssignableEmployees(
