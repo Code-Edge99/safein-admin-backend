@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   assertGroupOrganization,
@@ -7,7 +7,7 @@ import {
   resolveOrganizationClassification,
 } from '../../common/utils/organization-scope.util';
 import { decryptLocation, encryptLocation } from '../../common/security/location-crypto';
-import { formatKstDateKey, formatKstTimestampString, getKstDaysAgoStart, parseDateInputAsUtc } from '../../common/utils/kst-time.util';
+import { formatKstDateKey, formatKstTimestampString, getKstDaysAgoStart, resolveLogQueryDateRange } from '../../common/utils/kst-time.util';
 import { resolveEmployeePrimaryId } from '../../common/utils/employee-identifier.util';
 import { resolveEmployeeDisplayName } from '../../common/utils/employee-display-name.util';
 import { toControlLogResponseDto } from './control-logs.mapper';
@@ -22,11 +22,16 @@ import {
 
 @Injectable()
 export class ControlLogsService {
+  private readonly logger = new Logger(ControlLogsService.name);
+
   constructor(private prisma: PrismaService) {}
 
   private static readonly NON_REPORTABLE_EMPLOYEE_STATUSES = ['DELETE', 'PHONE_INFO_REVIEW'] as const;
 
   private static readonly ROOT_PARENT_KEY = '__root__';
+
+  private static readonly LOCATION_FALLBACK_MAX_AGE_MS = 10 * 60 * 1000;
+  private static readonly LOCATION_FALLBACK_QUERY_CHUNK_SIZE = 100;
 
   private async resolveAppNameMap(packageNames: string[]): Promise<Map<string, string>> {
     if (packageNames.length === 0) {
@@ -60,33 +65,169 @@ export class ControlLogsService {
     return packageNameToAppName;
   }
 
-  private async resolveLocationFallback(
-    deviceId: string,
-    timestamp: Date,
-  ): Promise<{ latitude?: number; longitude?: number }> {
-    const nearestLocation = await this.prisma.deviceLocation.findFirst({
-      where: {
-        deviceId,
-        timestamp: { lte: timestamp },
-      },
-      orderBy: { timestamp: 'desc' },
-    }) ?? await this.prisma.deviceLocation.findFirst({
-      where: {
-        deviceId,
-        timestamp: { gte: timestamp },
-      },
-      orderBy: { timestamp: 'asc' },
+  private parseLogTimestamp(log: any): Date | null {
+    const timestamp = log?.timestamp instanceof Date ? log.timestamp : new Date(log?.timestamp);
+    return Number.isNaN(timestamp.getTime()) ? null : timestamp;
+  }
+
+  private buildLocationFallbackWindows(
+    items: Array<{ log: any; dto: ControlLogResponseDto }>,
+  ): Array<{ logId: string; deviceId: string; timestamp: Date; start: Date; end: Date }> {
+    return items
+      .filter(({ log, dto }) => (
+        !!log?.id
+        && !!log?.deviceId
+        && (dto.latitude === undefined || dto.longitude === undefined)
+      ))
+      .map(({ log }) => {
+        const timestamp = this.parseLogTimestamp(log);
+        if (!timestamp) {
+          return null;
+        }
+
+        return {
+          logId: log.id as string,
+          deviceId: log.deviceId as string,
+          timestamp,
+          start: new Date(timestamp.getTime() - ControlLogsService.LOCATION_FALLBACK_MAX_AGE_MS),
+          end: new Date(timestamp.getTime() + ControlLogsService.LOCATION_FALLBACK_MAX_AGE_MS),
+        };
+      })
+      .filter((window): window is { logId: string; deviceId: string; timestamp: Date; start: Date; end: Date } => !!window);
+  }
+
+  private mergeLocationFallbackWindows(
+    windows: Array<{ deviceId: string; start: Date; end: Date }>,
+  ): Array<{ deviceId: string; start: Date; end: Date }> {
+    const grouped = new Map<string, Array<{ start: Date; end: Date }>>();
+    windows.forEach((window) => {
+      const group = grouped.get(window.deviceId) ?? [];
+      group.push({ start: window.start, end: window.end });
+      grouped.set(window.deviceId, group);
     });
 
-    if (!nearestLocation) {
-      return {};
+    const merged: Array<{ deviceId: string; start: Date; end: Date }> = [];
+    grouped.forEach((group, deviceId) => {
+      const sorted = group.sort((left, right) => left.start.getTime() - right.start.getTime());
+      sorted.forEach((window) => {
+        const last = merged[merged.length - 1];
+        if (last?.deviceId === deviceId && window.start.getTime() <= last.end.getTime()) {
+          if (window.end.getTime() > last.end.getTime()) {
+            last.end = window.end;
+          }
+          return;
+        }
+
+        merged.push({ deviceId, start: window.start, end: window.end });
+      });
+    });
+
+    return merged;
+  }
+
+  private async findDeviceLocationsForFallback(
+    windows: Array<{ deviceId: string; start: Date; end: Date }>,
+  ): Promise<any[]> {
+    const chunks: Array<Array<{ deviceId: string; start: Date; end: Date }>> = [];
+    for (let index = 0; index < windows.length; index += ControlLogsService.LOCATION_FALLBACK_QUERY_CHUNK_SIZE) {
+      chunks.push(windows.slice(index, index + ControlLogsService.LOCATION_FALLBACK_QUERY_CHUNK_SIZE));
     }
 
-    const location = decryptLocation(nearestLocation);
-    return {
-      latitude: location?.latitude,
-      longitude: location?.longitude,
-    };
+    const results = await Promise.all(chunks.map((chunk) => (
+      this.prisma.deviceLocation.findMany({
+        where: {
+          OR: chunk.map((window) => ({
+            deviceId: window.deviceId,
+            timestamp: {
+              gte: window.start,
+              lte: window.end,
+            },
+          })),
+        },
+        orderBy: [
+          { deviceId: 'asc' },
+          { timestamp: 'asc' },
+        ],
+      })
+    )));
+
+    return results.flat();
+  }
+
+  private async findDeviceCurrentLocationsForFallback(
+    windows: Array<{ deviceId: string }>,
+  ): Promise<any[]> {
+    const deviceIds = Array.from(new Set(windows.map((window) => window.deviceId)));
+    if (deviceIds.length === 0) {
+      return [];
+    }
+
+    try {
+      return await this.prisma.deviceCurrentLocation.findMany({
+        where: {
+          deviceId: { in: deviceIds },
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`device_current_locations fallback 조회 실패: ${message}`);
+      return [];
+    }
+  }
+
+  private findNearestLocation(locations: any[], timestamp: Date): any | null {
+    const eventTime = timestamp.getTime();
+    let nearestLocation: any | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    for (const location of locations) {
+      const distance = Math.abs(location.timestamp.getTime() - eventTime);
+      if (distance < nearestDistance) {
+        nearestLocation = location;
+        nearestDistance = distance;
+      }
+    }
+
+    return nearestDistance <= ControlLogsService.LOCATION_FALLBACK_MAX_AGE_MS ? nearestLocation : null;
+  }
+
+  private async resolveLocationFallbacks(
+    items: Array<{ log: any; dto: ControlLogResponseDto }>,
+  ): Promise<Map<string, { latitude?: number; longitude?: number }>> {
+    const windows = this.buildLocationFallbackWindows(items);
+    if (windows.length === 0) {
+      return new Map();
+    }
+
+    const mergedWindows = this.mergeLocationFallbackWindows(windows);
+    const [locations, currentLocations] = await Promise.all([
+      this.findDeviceLocationsForFallback(mergedWindows),
+      this.findDeviceCurrentLocationsForFallback(mergedWindows),
+    ]);
+    const locationsByDeviceId = new Map<string, any[]>();
+    [...locations, ...currentLocations].forEach((location) => {
+      const group = locationsByDeviceId.get(location.deviceId) ?? [];
+      group.push(location);
+      locationsByDeviceId.set(location.deviceId, group);
+    });
+
+    const fallbackByLogId = new Map<string, { latitude?: number; longitude?: number }>();
+    windows.forEach((window) => {
+      const nearestLocation = this.findNearestLocation(locationsByDeviceId.get(window.deviceId) ?? [], window.timestamp);
+      if (!nearestLocation) {
+        return;
+      }
+
+      const location = decryptLocation(nearestLocation);
+      if (location?.latitude !== undefined || location?.longitude !== undefined) {
+        fallbackByLogId.set(window.logId, {
+          latitude: location?.latitude,
+          longitude: location?.longitude,
+        });
+      }
+    });
+
+    return fallbackByLogId;
   }
 
   private async enrichLogDtos(logs: any[]): Promise<ControlLogResponseDto[]> {
@@ -99,27 +240,32 @@ export class ControlLogsService {
     );
     const packageNameToAppName = await this.resolveAppNameMap(packageNames);
 
-    const dtos = await Promise.all(logs.map(async (log) => {
+    const items = logs.map((log) => {
       const dto = this.toResponseDto(log);
 
       if (!dto.appName && dto.packageName) {
         dto.appName = packageNameToAppName.get(dto.packageName) || dto.packageName;
       }
 
-      if ((dto.latitude === undefined || dto.longitude === undefined) && log.deviceId) {
-        const fallbackLocation = await this.resolveLocationFallback(log.deviceId, log.timestamp);
-        if (dto.latitude === undefined && fallbackLocation.latitude !== undefined) {
-          dto.latitude = fallbackLocation.latitude;
-        }
-        if (dto.longitude === undefined && fallbackLocation.longitude !== undefined) {
-          dto.longitude = fallbackLocation.longitude;
-        }
+      return { log, dto };
+    });
+
+    const locationFallbacks = await this.resolveLocationFallbacks(items);
+    items.forEach(({ log, dto }) => {
+      const fallbackLocation = locationFallbacks.get(log.id);
+      if (!fallbackLocation) {
+        return;
       }
 
-      return dto;
-    }));
+      if (dto.latitude === undefined && fallbackLocation.latitude !== undefined) {
+        dto.latitude = fallbackLocation.latitude;
+      }
+      if (dto.longitude === undefined && fallbackLocation.longitude !== undefined) {
+        dto.longitude = fallbackLocation.longitude;
+      }
+    });
 
-    return dtos;
+    return items.map((item) => item.dto);
   }
 
   private buildScopeCondition(scopeOrganizationIds: string[]) {
@@ -409,15 +555,8 @@ export class ControlLogsService {
       where.action = action;
     }
 
-    if (startDate || endDate) {
-      where.timestamp = {};
-      if (startDate) {
-        where.timestamp.gte = parseDateInputAsUtc(startDate, 'start');
-      }
-      if (endDate) {
-        where.timestamp.lte = parseDateInputAsUtc(endDate, 'end');
-      }
-    }
+    // 보존 정책(최근 2년) 내로 조회 범위를 강제한다. 미지정 시 하한을 2년 전으로 기본 설정.
+    where.timestamp = resolveLogQueryDateRange(startDate, endDate);
 
     const normalizedOrganizationId = organizationId?.trim();
     const normalizedGroupId = groupId?.trim();
@@ -568,15 +707,8 @@ export class ControlLogsService {
   ): Promise<ControlLogStatsDto> {
     const where: any = {};
 
-    if (startDate || endDate) {
-      where.timestamp = {};
-      if (startDate) {
-        where.timestamp.gte = parseDateInputAsUtc(startDate, 'start');
-      }
-      if (endDate) {
-        where.timestamp.lte = parseDateInputAsUtc(endDate, 'end');
-      }
-    }
+    // 보존 정책(최근 2년) 내로 조회 범위를 강제한다. 미지정 시 하한을 2년 전으로 기본 설정.
+    where.timestamp = resolveLogQueryDateRange(startDate, endDate);
 
     this.applyScopeToWhere(where, scopeOrganizationIds);
 

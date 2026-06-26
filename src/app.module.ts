@@ -31,6 +31,8 @@ import { DocumentIssuesModule } from './modules/document-issues/document-issues.
 import { RequestLoggingInterceptor } from './common/interceptors/request-logging.interceptor';
 import { TranslationModule } from './common/translation/translation.module';
 import { TranslationsModule } from './modules/translations/translations.module';
+import { SystemStorageModule } from './modules/system-storage/system-storage.module';
+import { HttpFileLogger } from './common/utils/http-file.logger';
 
 @Module({
   imports: [
@@ -71,8 +73,9 @@ import { TranslationsModule } from './modules/translations/translations.module';
     CommonCodesModule,
     DocumentIssuesModule,
     TranslationsModule,
+    SystemStorageModule,
   ],
   controllers: [],
-  providers: [RequestLoggingInterceptor],
+  providers: [RequestLoggingInterceptor, HttpFileLogger],
 })
 export class AppModule {}
