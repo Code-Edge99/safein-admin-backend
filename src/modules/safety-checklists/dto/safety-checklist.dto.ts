@@ -547,6 +547,9 @@ export class SafetyChecklistDetailDto extends SafetyChecklistListItemDto {
   deployments!: SafetyChecklistDeploymentDto[];
   assignments!: SafetyChecklistAssignmentDto[];
   todaySummary!: SafetyChecklistTodaySummaryDto;
+
+  @ApiProperty({ description: '최신 배포에 포함된 고유 작업자 ID 목록', type: [String] })
+  latestDeploymentTargetEmployeeIds!: string[];
 }
 
 export class SafetyInspectionAttachmentDto {

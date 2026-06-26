@@ -266,6 +266,9 @@ export class SafetyChecklistsService {
 
     const base = this.buildChecklistListItem(row);
     const version = this.pickCurrentVersion(row.versions, row.currentVersionId);
+    const latestDeploymentTargetEmployeeIds = row.deployments[0]
+      ? await this.findDeploymentTargetEmployeeIds(row.deployments[0].id)
+      : [];
 
     return {
       ...base,
@@ -273,6 +276,7 @@ export class SafetyChecklistsService {
       deployments: row.deployments.map((deployment) => this.buildDeploymentDto(deployment)),
       assignments: row.assignments.map((assignment) => this.buildAssignmentDto(assignment)),
       todaySummary: await this.buildTodaySummary(row.id),
+      latestDeploymentTargetEmployeeIds,
     };
   }
 
@@ -325,7 +329,7 @@ export class SafetyChecklistsService {
       });
 
       let targetLanguages: AppLanguage[] = [];
-      if (targetEmployeeIds.length > 0 && status !== SafetyChecklistStatus.DRAFT) {
+      if (targetEmployeeIds.length > 0 && status === SafetyChecklistStatus.ACTIVE) {
         targetLanguages = await this.createDeploymentAndAssignments(tx, {
           checklistId: checklist.id,
           versionId: version.id,
@@ -412,7 +416,7 @@ export class SafetyChecklistsService {
         },
       });
 
-      const shouldDeploy = nextStatus !== SafetyChecklistStatus.DRAFT
+      const shouldDeploy = nextStatus === SafetyChecklistStatus.ACTIVE
         && versionId
         && targetEmployeeIds !== undefined
         && targetEmployeeIds.length > 0;
@@ -441,6 +445,45 @@ export class SafetyChecklistsService {
     }
 
     return this.findOne(id, scopeOrganizationIds);
+  }
+
+  async remove(
+    id: string,
+    scopeOrganizationIds: string[] | undefined,
+    actorId: string | undefined,
+  ): Promise<void> {
+    const existing = await this.prisma.safetyChecklist.findFirst({
+      where: {
+        id,
+        deletedAt: null,
+        ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+      },
+      select: {
+        id: true,
+        versions: { select: { id: true } },
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Safety checklist not found.');
+    }
+
+    await this.prisma.safetyChecklist.update({
+      where: { id: existing.id },
+      data: {
+        deletedAt: new Date(),
+        status: SafetyChecklistStatus.ARCHIVED,
+        updatedById: actorId,
+      },
+    });
+
+    const versionIds = existing.versions.map((version) => version.id);
+    if (versionIds.length > 0) {
+      await this.contentTranslationService.deleteEntityTranslationBundles(
+        TranslatableEntityType.SAFETY_CHECKLIST,
+        versionIds,
+      );
+    }
   }
 
   async deploy(
@@ -1169,6 +1212,17 @@ export class SafetyChecklistsService {
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
+  }
+
+  private async findDeploymentTargetEmployeeIds(deploymentId: string): Promise<string[]> {
+    const rows = await this.prisma.safetyChecklistAssignment.findMany({
+      where: { deploymentId },
+      select: { employeeIdAtAssign: true },
+      distinct: ['employeeIdAtAssign'],
+      orderBy: { employeeIdAtAssign: 'asc' },
+    });
+
+    return rows.map((row) => row.employeeIdAtAssign);
   }
 
   private pickCurrentVersion(

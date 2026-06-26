@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 import { AuthenticatedAdminRequest } from '../../common/types/authenticated-request.type';
@@ -200,6 +200,17 @@ export class SafetyChecklistsController {
     @Body() dto: UpdateSafetyChecklistDto,
   ): Promise<SafetyChecklistDetailDto> {
     return this.safetyChecklistsService.update(id, dto, req.organizationScopeIds ?? undefined, req.user?.id);
+  }
+
+  @Delete(':id')
+  @PermissionCodes('SAFETY_CHECKLIST_WRITE')
+  @ApiOperation({ summary: '안전점검 체크리스트 삭제' })
+  async remove(
+    @Req() req: AuthenticatedAdminRequest,
+    @Param('id') id: string,
+  ): Promise<{ success: boolean }> {
+    await this.safetyChecklistsService.remove(id, req.organizationScopeIds ?? undefined, req.user?.id);
+    return { success: true };
   }
 
   @Post(':id/deploy')
