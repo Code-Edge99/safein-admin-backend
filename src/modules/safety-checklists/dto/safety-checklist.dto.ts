@@ -321,6 +321,12 @@ export class SafetyChecklistFilterDto extends PaginationDto {
   @IsOptional()
   @IsString()
   organizationId?: string;
+
+  @ApiPropertyOptional({ description: '슈퍼관리자 회사 필터 ID' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsOptional()
+  @IsString()
+  companyId?: string;
 }
 
 export class SafetyInspectionSubmissionFilterDto extends PaginationDto {
@@ -367,6 +373,24 @@ export class SafetyInspectionSubmissionFilterDto extends PaginationDto {
   @IsOptional()
   @IsBoolean()
   includeUnsubmitted?: boolean;
+
+  @ApiPropertyOptional({ description: '회사 필터 ID' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsOptional()
+  @IsString()
+  companyId?: string;
+
+  @ApiPropertyOptional({ description: '그룹 필터 ID' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsOptional()
+  @IsString()
+  groupId?: string;
+
+  @ApiPropertyOptional({ description: '팀 필터 ID' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsOptional()
+  @IsString()
+  teamId?: string;
 }
 
 export class ReviewSafetyInspectionSubmissionDto {
@@ -408,6 +432,19 @@ export class SafetyChecklistPushMessageResultDto {
   failedCount!: number;
 }
 
+export class SafetyChecklistCandidateFilterDto {
+  @ApiPropertyOptional({ description: '슈퍼관리자 회사 필터 ID' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsOptional()
+  @IsString()
+  companyId?: string;
+}
+
+export class SafetyChecklistCandidateCompanyDto {
+  id!: string;
+  name!: string;
+}
+
 export class SafetyChecklistCandidateEmployeeDto {
   id!: string;
   name!: string;
@@ -434,6 +471,7 @@ export class SafetyChecklistCandidateGroupDto {
 }
 
 export class SafetyChecklistCandidateResponseDto {
+  companies!: SafetyChecklistCandidateCompanyDto[];
   groups!: SafetyChecklistCandidateGroupDto[];
   total!: number;
 }
@@ -638,6 +676,24 @@ export class SafetyChecklistStatisticsFilterDto {
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
   dateTo?: string;
+
+  @ApiPropertyOptional({ description: '회사 필터 ID' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsOptional()
+  @IsString()
+  companyId?: string;
+
+  @ApiPropertyOptional({ description: '그룹 필터 ID' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsOptional()
+  @IsString()
+  groupId?: string;
+
+  @ApiPropertyOptional({ description: '팀 필터 ID' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsOptional()
+  @IsString()
+  teamId?: string;
 }
 
 export class SafetyChecklistStatisticsSummaryDto {
@@ -653,8 +709,28 @@ export class SafetyChecklistStatisticsSummaryDto {
 
 export class SafetyChecklistStatisticsTrendPointDto {
   date!: string;
+  targetCount!: number;
+  submittedCount!: number;
   submitted!: number;
+  submissionRate!: number;
   xCount!: number;
+  actionRequiredCount!: number;
+  actionCompletedCount!: number;
+  actionCompletionRate!: number;
+}
+
+export class SafetyChecklistTeamComparisonDto {
+  groupId!: string | null;
+  groupName!: string | null;
+  teamId!: string | null;
+  teamName!: string | null;
+  targetCount!: number;
+  submittedCount!: number;
+  submissionRate!: number;
+  xCount!: number;
+  actionRequiredCount!: number;
+  actionCompletedCount!: number;
+  actionCompletionRate!: number;
 }
 
 export class SafetyChecklistStatisticsDto {
@@ -662,6 +738,7 @@ export class SafetyChecklistStatisticsDto {
   dateTo!: string;
   summary!: SafetyChecklistStatisticsSummaryDto;
   dailyTrend!: SafetyChecklistStatisticsTrendPointDto[];
+  teamComparisons!: SafetyChecklistTeamComparisonDto[];
 }
 
 export class SafetyChecklistPatternsFilterDto {
@@ -682,6 +759,24 @@ export class SafetyChecklistPatternsFilterDto {
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
   dateTo?: string;
+
+  @ApiPropertyOptional({ description: '회사 필터 ID' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsOptional()
+  @IsString()
+  companyId?: string;
+
+  @ApiPropertyOptional({ description: '그룹 필터 ID' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsOptional()
+  @IsString()
+  groupId?: string;
+
+  @ApiPropertyOptional({ description: '팀 필터 ID' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsOptional()
+  @IsString()
+  teamId?: string;
 }
 
 export class SafetyChecklistRepeatXItemDto {
@@ -692,8 +787,21 @@ export class SafetyChecklistRepeatXItemDto {
   xRate!: number;
 }
 
+export class SafetyChecklistRepeatNonSubmitterDto {
+  employeeIdAtAssign!: string;
+  employeeName!: string;
+  groupName!: string | null;
+  teamName!: string | null;
+  missedCount!: number;
+  totalAssignments!: number;
+  submittedCount!: number;
+  submissionRate!: number;
+  lastSubmittedAt!: Date | null;
+}
+
 export class SafetyChecklistPatternsDto {
   dateFrom!: string;
   dateTo!: string;
+  repeatNonSubmitters!: SafetyChecklistRepeatNonSubmitterDto[];
   repeatXItems!: SafetyChecklistRepeatXItemDto[];
 }

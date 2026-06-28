@@ -10,6 +10,7 @@ import {
   CreateSafetyChecklistDeploymentDto,
   CreateSafetyChecklistDto,
   ReviewSafetyInspectionSubmissionDto,
+  SafetyChecklistCandidateFilterDto,
   SafetyChecklistPushMessageResultDto,
   SafetyChecklistCandidateResponseDto,
   SafetyChecklistDetailDto,
@@ -38,8 +39,11 @@ export class SafetyChecklistsController {
   @Get('candidates')
   @ApiOperation({ summary: '안전점검 배정 가능 직원 후보 조회' })
   @ApiResponse({ status: 200, type: SafetyChecklistCandidateResponseDto })
-  findCandidates(@Req() req: AuthenticatedAdminRequest): Promise<SafetyChecklistCandidateResponseDto> {
-    return this.safetyChecklistsService.findCandidates(req.organizationScopeIds ?? undefined);
+  findCandidates(
+    @Req() req: AuthenticatedAdminRequest,
+    @Query() filter: SafetyChecklistCandidateFilterDto,
+  ): Promise<SafetyChecklistCandidateResponseDto> {
+    return this.safetyChecklistsService.findCandidates(filter, req.organizationScopeIds ?? undefined);
   }
 
   @Get('submissions')

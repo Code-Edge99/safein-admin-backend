@@ -19,6 +19,7 @@ import {
   CreateSafetyChecklistDeploymentDto,
   CreateSafetyChecklistDto,
   ReviewSafetyInspectionSubmissionDto,
+  SafetyChecklistCandidateFilterDto,
   SafetyChecklistAssignmentDto,
   SafetyChecklistCandidateEmployeeDto,
   SafetyChecklistCandidateGroupDto,
@@ -92,13 +93,26 @@ export class SafetyChecklistsService {
     private readonly configService: ConfigService,
   ) {}
 
-  async findCandidates(scopeOrganizationIds?: string[]): Promise<SafetyChecklistCandidateResponseDto> {
+  async findCandidates(
+    filter: SafetyChecklistCandidateFilterDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<SafetyChecklistCandidateResponseDto> {
     const organizationMap = await this.getOrganizationMap(this.prisma);
+    const accessibleOrganizationIds = this.resolveCompanyExpandedScopeOrganizationIdsFromMap(
+      organizationMap,
+      scopeOrganizationIds,
+    );
+    const organizationIds = this.resolveCompanyExpandedScopeOrganizationIdsFromMap(
+      organizationMap,
+      scopeOrganizationIds,
+      filter.companyId,
+    );
+    const companies = this.buildCandidateCompanyOptions(organizationMap, accessibleOrganizationIds);
     const employees = await this.prisma.employee.findMany({
       where: {
         deletedAt: null,
         status: EmployeeStatus.ACTIVE,
-        ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+        ...(organizationIds ? { organizationId: { in: organizationIds } } : {}),
       },
       include: {
         organization: {
@@ -153,6 +167,7 @@ export class SafetyChecklistsService {
     })).sort((left, right) => left.name.localeCompare(right.name));
 
     return {
+      companies,
       groups,
       total: employees.length,
     };
@@ -164,7 +179,12 @@ export class SafetyChecklistsService {
   ): Promise<SafetyChecklistListResponseDto> {
     const page = Math.max(Number(filter.page || DEFAULT_PAGE), 1);
     const limit = Math.min(Math.max(Number(filter.limit || DEFAULT_LIMIT), 1), 100);
-    const where = this.buildChecklistWhere(filter, scopeOrganizationIds);
+    const organizationIds = await this.resolveChecklistQueryOrganizationIds(
+      scopeOrganizationIds,
+      filter.companyId,
+      filter.organizationId,
+    );
+    const where = this.buildChecklistWhere(filter, organizationIds);
     const today = this.parseDateOnly(this.getKstTodayString());
 
     const [rows, total] = await this.prisma.$transaction([
@@ -220,11 +240,12 @@ export class SafetyChecklistsService {
   }
 
   async findOne(id: string, scopeOrganizationIds?: string[]): Promise<SafetyChecklistDetailDto> {
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds);
     const row = await this.prisma.safetyChecklist.findFirst({
       where: {
         id,
         deletedAt: null,
-        ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+        ...(organizationIds ? { organizationId: { in: organizationIds } } : {}),
       },
       include: {
         organization: { select: { id: true, name: true } },
@@ -286,8 +307,9 @@ export class SafetyChecklistsService {
     fallbackOrganizationId: string | undefined,
     actorId: string | undefined,
   ): Promise<SafetyChecklistDetailDto> {
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds);
     const organizationId = this.resolveOwnerOrganizationId(dto.organizationId, fallbackOrganizationId);
-    this.assertOrganizationInScope(organizationId, scopeOrganizationIds);
+    this.assertOrganizationInScope(organizationId, organizationIds);
     await this.assertOrganizationExists(organizationId);
 
     const normalizedSections = this.normalizeSections(dto.sections);
@@ -340,7 +362,7 @@ export class SafetyChecklistsService {
           endTime: dto.endTime,
           targetEmployeeIds,
           actorId,
-          scopeOrganizationIds,
+          scopeOrganizationIds: organizationIds,
         });
       }
 
@@ -348,7 +370,7 @@ export class SafetyChecklistsService {
     });
 
     await this.queueSafetyChecklistVersionTranslations(createdResult.versionId, createdResult.targetLanguages);
-    return this.findOne(createdResult.checklistId, scopeOrganizationIds);
+    return this.findOne(createdResult.checklistId, organizationIds);
   }
 
   async update(
@@ -357,11 +379,12 @@ export class SafetyChecklistsService {
     scopeOrganizationIds: string[] | undefined,
     actorId: string | undefined,
   ): Promise<SafetyChecklistDetailDto> {
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds);
     const existing = await this.prisma.safetyChecklist.findFirst({
       where: {
         id,
         deletedAt: null,
-        ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+        ...(organizationIds ? { organizationId: { in: organizationIds } } : {}),
       },
       include: {
         versions: {
@@ -433,7 +456,7 @@ export class SafetyChecklistsService {
           endTime: dto.endTime,
           targetEmployeeIds,
           actorId,
-          scopeOrganizationIds,
+          scopeOrganizationIds: organizationIds,
         });
       }
 
@@ -444,7 +467,7 @@ export class SafetyChecklistsService {
       await this.queueSafetyChecklistVersionTranslations(updateResult.versionId, updateResult.targetLanguages);
     }
 
-    return this.findOne(id, scopeOrganizationIds);
+    return this.findOne(id, organizationIds);
   }
 
   async remove(
@@ -452,11 +475,12 @@ export class SafetyChecklistsService {
     scopeOrganizationIds: string[] | undefined,
     actorId: string | undefined,
   ): Promise<void> {
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds);
     const existing = await this.prisma.safetyChecklist.findFirst({
       where: {
         id,
         deletedAt: null,
-        ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+        ...(organizationIds ? { organizationId: { in: organizationIds } } : {}),
       },
       select: {
         id: true,
@@ -492,11 +516,12 @@ export class SafetyChecklistsService {
     scopeOrganizationIds: string[] | undefined,
     actorId: string | undefined,
   ): Promise<SafetyChecklistDetailDto> {
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds);
     const existing = await this.prisma.safetyChecklist.findFirst({
       where: {
         id,
         deletedAt: null,
-        ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+        ...(organizationIds ? { organizationId: { in: organizationIds } } : {}),
       },
     });
 
@@ -528,7 +553,7 @@ export class SafetyChecklistsService {
         endTime: dto.endTime,
         targetEmployeeIds: this.uniqueStrings(dto.targetEmployeeIds ?? []),
         actorId,
-        scopeOrganizationIds,
+        scopeOrganizationIds: organizationIds,
       });
 
       if (existing.status === SafetyChecklistStatus.DRAFT) {
@@ -545,20 +570,21 @@ export class SafetyChecklistsService {
     });
 
     await this.queueSafetyChecklistVersionTranslations(existing.currentVersionId, targetLanguages);
-    return this.findOne(id, scopeOrganizationIds);
+    return this.findOne(id, organizationIds);
   }
 
   async findSubmissions(
     filter: SafetyInspectionSubmissionFilterDto,
     scopeOrganizationIds?: string[],
   ): Promise<SafetyInspectionSubmissionListResponseDto> {
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds, filter.companyId);
     if (filter.includeUnsubmitted) {
-      return this.findAssignmentSubmissionStatuses(filter, scopeOrganizationIds);
+      return this.findAssignmentSubmissionStatuses(filter, organizationIds);
     }
 
     const page = Math.max(Number(filter.page || DEFAULT_PAGE), 1);
     const limit = Math.min(Math.max(Number(filter.limit || DEFAULT_LIMIT), 1), 100);
-    const where = this.buildSubmissionWhere(filter, scopeOrganizationIds);
+    const where = this.buildSubmissionWhere(filter, organizationIds);
 
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.safetyInspectionSubmission.findMany({
@@ -633,10 +659,11 @@ export class SafetyChecklistsService {
     id: string,
     scopeOrganizationIds?: string[],
   ): Promise<SafetyInspectionSubmissionDetailDto> {
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds);
     const row = await this.prisma.safetyInspectionSubmission.findFirst({
       where: {
         id,
-        ...(scopeOrganizationIds ? { checklist: { organizationId: { in: scopeOrganizationIds } } } : {}),
+        ...(organizationIds ? { checklist: { organizationId: { in: organizationIds } } } : {}),
       },
       include: {
         checklist: { select: { id: true, title: true } },
@@ -710,11 +737,12 @@ export class SafetyChecklistsService {
     scopeOrganizationIds: string[] | undefined,
     actorAdminId?: string,
   ): Promise<SafetyChecklistPushMessageResultDto> {
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds);
     const checklist = await this.prisma.safetyChecklist.findFirst({
       where: {
         id,
         deletedAt: null,
-        ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+        ...(organizationIds ? { organizationId: { in: organizationIds } } : {}),
       },
       select: { id: true },
     });
@@ -746,6 +774,7 @@ export class SafetyChecklistsService {
     scopeOrganizationIds: string[] | undefined,
     actorAdminId?: string,
   ): Promise<SafetyChecklistPushMessageResultDto> {
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds);
     const assignment = await this.prisma.safetyChecklistAssignment.findFirst({
       where: {
         id: assignmentId,
@@ -753,7 +782,7 @@ export class SafetyChecklistsService {
         inspectionDate: this.parseDateOnly(this.getKstTodayString()),
         checklist: {
           deletedAt: null,
-          ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+          ...(organizationIds ? { organizationId: { in: organizationIds } } : {}),
         },
       },
       select: {
@@ -795,25 +824,44 @@ export class SafetyChecklistsService {
     // inspectionDate는 @db.Date(UTC 자정)이므로 UTC 자정 경계를 사용한다.
     const from = this.parseDateOnly(dateFrom);
     const toExclusive = this.addDays(this.parseDateOnly(dateTo), 1);
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds, filter.companyId);
 
     const assignments = await this.prisma.safetyChecklistAssignment.findMany({
       where: {
         inspectionDate: { gte: from, lt: toExclusive },
         ...(filter.checklistId ? { checklistId: filter.checklistId } : {}),
-        ...(scopeOrganizationIds ? { checklist: { organizationId: { in: scopeOrganizationIds } } } : {}),
+        ...(organizationIds ? { checklist: { organizationId: { in: organizationIds } } } : {}),
+        ...(filter.groupId ? { groupIdAtAssign: filter.groupId } : {}),
+        ...(filter.teamId ? { teamIdAtAssign: filter.teamId } : {}),
       },
       select: {
         inspectionDate: true,
         status: true,
+        groupIdAtAssign: true,
+        groupNameAtAssign: true,
+        teamIdAtAssign: true,
+        teamNameAtAssign: true,
         submission: { select: { xCount: true, reviewStatus: true } },
       },
     });
 
     // 출근 여부를 알 수 없어 제출률은 통계로서 의미가 없다.
     // 제출/미제출은 단순 건수(참고 표기)로만, 조치필요 응답·조치는 실제 제출 데이터 기반으로 집계한다.
-    const dayBuckets = new Map<string, { submitted: number; xCount: number }>();
+    const dayBuckets = new Map<string, {
+      targetCount: number;
+      submittedCount: number;
+      xCount: number;
+      actionRequiredCount: number;
+      actionCompletedCount: number;
+    }>();
     for (const dateKey of this.enumerateDateStrings(dateFrom, dateTo)) {
-      dayBuckets.set(dateKey, { submitted: 0, xCount: 0 });
+      dayBuckets.set(dateKey, {
+        targetCount: 0,
+        submittedCount: 0,
+        xCount: 0,
+        actionRequiredCount: 0,
+        actionCompletedCount: 0,
+      });
     }
 
     let submittedCount = 0;
@@ -821,21 +869,59 @@ export class SafetyChecklistsService {
     let pendingReviewCount = 0;
     let actionRequiredCount = 0;
     let actionCompletedCount = 0;
+    const teamBuckets = new Map<string, {
+      groupId: string | null;
+      groupName: string | null;
+      teamId: string | null;
+      teamName: string | null;
+      targetCount: number;
+      submittedCount: number;
+      xCount: number;
+      actionRequiredCount: number;
+      actionCompletedCount: number;
+    }>();
 
     for (const assignment of assignments) {
       const dateKey = this.formatDateOnly(assignment.inspectionDate);
-      const dayBucket = dayBuckets.get(dateKey) ?? { submitted: 0, xCount: 0 };
+      const dayBucket = dayBuckets.get(dateKey) ?? {
+        targetCount: 0,
+        submittedCount: 0,
+        xCount: 0,
+        actionRequiredCount: 0,
+        actionCompletedCount: 0,
+      };
+      dayBucket.targetCount += 1;
+
+      const teamKey = assignment.teamIdAtAssign
+        || assignment.groupIdAtAssign
+        || assignment.teamNameAtAssign
+        || assignment.groupNameAtAssign
+        || 'unassigned';
+      const teamBucket = teamBuckets.get(teamKey) ?? {
+        groupId: assignment.groupIdAtAssign ?? null,
+        groupName: assignment.groupNameAtAssign ?? null,
+        teamId: assignment.teamIdAtAssign ?? null,
+        teamName: assignment.teamNameAtAssign ?? assignment.groupNameAtAssign ?? '미분류',
+        targetCount: 0,
+        submittedCount: 0,
+        xCount: 0,
+        actionRequiredCount: 0,
+        actionCompletedCount: 0,
+      };
+      teamBucket.targetCount += 1;
 
       const isSubmitted = assignment.status === SafetyChecklistAssignmentStatus.SUBMITTED || Boolean(assignment.submission);
       if (isSubmitted) {
         submittedCount += 1;
-        dayBucket.submitted += 1;
+        dayBucket.submittedCount += 1;
+        teamBucket.submittedCount += 1;
       }
 
       if (assignment.submission) {
         const { xCount, reviewStatus } = assignment.submission;
         xResponseCount += xCount;
         dayBucket.xCount += xCount;
+        teamBucket.xCount += xCount;
         if (xCount > 0 && reviewStatus === SafetyInspectionReviewStatus.PENDING) pendingReviewCount += 1;
         if (
           xCount > 0
@@ -845,11 +931,18 @@ export class SafetyChecklistsService {
           )
         ) {
           actionRequiredCount += 1;
+          dayBucket.actionRequiredCount += 1;
+          teamBucket.actionRequiredCount += 1;
         }
-        if (xCount > 0 && reviewStatus === SafetyInspectionReviewStatus.ACTION_COMPLETED) actionCompletedCount += 1;
+        if (xCount > 0 && reviewStatus === SafetyInspectionReviewStatus.ACTION_COMPLETED) {
+          actionCompletedCount += 1;
+          dayBucket.actionCompletedCount += 1;
+          teamBucket.actionCompletedCount += 1;
+        }
       }
 
       dayBuckets.set(dateKey, dayBucket);
+      teamBuckets.set(teamKey, teamBucket);
     }
 
     const totalAssignments = assignments.length;
@@ -870,9 +963,37 @@ export class SafetyChecklistsService {
       },
       dailyTrend: Array.from(dayBuckets.entries()).map(([date, bucket]) => ({
         date,
-        submitted: bucket.submitted,
+        targetCount: bucket.targetCount,
+        submittedCount: bucket.submittedCount,
+        submitted: bucket.submittedCount,
+        submissionRate: this.toRate(bucket.submittedCount, bucket.targetCount),
         xCount: bucket.xCount,
+        actionRequiredCount: bucket.actionRequiredCount,
+        actionCompletedCount: bucket.actionCompletedCount,
+        actionCompletionRate: this.toRate(
+          bucket.actionCompletedCount,
+          bucket.actionRequiredCount + bucket.actionCompletedCount,
+        ),
       })),
+      teamComparisons: Array.from(teamBuckets.values())
+        .map((bucket) => ({
+          groupId: bucket.groupId,
+          groupName: bucket.groupName,
+          teamId: bucket.teamId,
+          teamName: bucket.teamName,
+          targetCount: bucket.targetCount,
+          submittedCount: bucket.submittedCount,
+          submissionRate: this.toRate(bucket.submittedCount, bucket.targetCount),
+          xCount: bucket.xCount,
+          actionRequiredCount: bucket.actionRequiredCount,
+          actionCompletedCount: bucket.actionCompletedCount,
+          actionCompletionRate: this.toRate(
+            bucket.actionCompletedCount,
+            bucket.actionRequiredCount + bucket.actionCompletedCount,
+          ),
+        }))
+        .sort((left, right) => right.targetCount - left.targetCount || right.submissionRate - left.submissionRate)
+        .slice(0, 20),
     };
   }
 
@@ -881,19 +1002,44 @@ export class SafetyChecklistsService {
     scopeOrganizationIds?: string[],
   ): Promise<SafetyChecklistPatternsDto> {
     const { dateFrom, dateTo } = this.resolveStatsRange(filter.dateFrom, filter.dateTo, 30);
-    const scopeFilter = scopeOrganizationIds ? { checklist: { organizationId: { in: scopeOrganizationIds } } } : {};
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds, filter.companyId);
+    const scopeFilter = organizationIds ? { checklist: { organizationId: { in: organizationIds } } } : {};
+    const assignmentSnapshotFilter = {
+      ...(filter.groupId ? { groupIdAtAssign: filter.groupId } : {}),
+      ...(filter.teamId ? { teamIdAtAssign: filter.teamId } : {}),
+    };
 
     // 출근 여부를 알 수 없어 미제출은 통계로서 의미가 없으므로 반복 미제출 집계는 제공하지 않는다.
     // 실제 제출된 답변 기반의 반복 조치필요 응답 항목만 집계한다.
     // submittedAt은 timestamptz이므로 KST 경계를 사용한다.
     const submittedFrom = this.parseKstDateStart(dateFrom);
     const submittedToExclusive = this.addDays(this.parseKstDateStart(dateTo), 1);
+    const assignmentFrom = this.parseDateOnly(dateFrom);
+    const assignmentToExclusive = this.addDays(this.parseDateOnly(dateTo), 1);
+    const assignments = await this.prisma.safetyChecklistAssignment.findMany({
+      where: {
+        inspectionDate: { gte: assignmentFrom, lt: assignmentToExclusive },
+        ...(filter.checklistId ? { checklistId: filter.checklistId } : {}),
+        ...(organizationIds ? { checklist: { organizationId: { in: organizationIds } } } : {}),
+        ...assignmentSnapshotFilter,
+      },
+      select: {
+        employeeIdAtAssign: true,
+        employeeNameAtAssign: true,
+        groupNameAtAssign: true,
+        teamNameAtAssign: true,
+        status: true,
+        submittedAt: true,
+        submission: { select: { id: true, submittedAt: true } },
+      },
+    });
     const answers = await this.prisma.safetyInspectionAnswer.findMany({
       where: {
         submission: {
           submittedAt: { gte: submittedFrom, lt: submittedToExclusive },
           ...(filter.checklistId ? { checklistId: filter.checklistId } : {}),
           ...scopeFilter,
+          ...(Object.keys(assignmentSnapshotFilter).length > 0 ? { assignment: assignmentSnapshotFilter } : {}),
         },
       },
       select: { question: true, sectionTitle: true, answer: true },
@@ -920,7 +1066,57 @@ export class SafetyChecklistsService {
       .sort((a, b) => b.xCount - a.xCount || b.xRate - a.xRate)
       .slice(0, 10);
 
-    return { dateFrom, dateTo, repeatXItems };
+    const employeeBuckets = new Map<string, {
+      employeeIdAtAssign: string;
+      employeeName: string;
+      groupName: string | null;
+      teamName: string | null;
+      totalAssignments: number;
+      submittedCount: number;
+      lastSubmittedAt: Date | null;
+    }>();
+
+    for (const assignment of assignments) {
+      const bucket = employeeBuckets.get(assignment.employeeIdAtAssign) ?? {
+        employeeIdAtAssign: assignment.employeeIdAtAssign,
+        employeeName: assignment.employeeNameAtAssign,
+        groupName: assignment.groupNameAtAssign ?? null,
+        teamName: assignment.teamNameAtAssign ?? null,
+        totalAssignments: 0,
+        submittedCount: 0,
+        lastSubmittedAt: null,
+      };
+      bucket.totalAssignments += 1;
+
+      const submittedAt = assignment.submission?.submittedAt ?? assignment.submittedAt ?? null;
+      const isSubmitted = assignment.status === SafetyChecklistAssignmentStatus.SUBMITTED || Boolean(assignment.submission);
+      if (isSubmitted) {
+        bucket.submittedCount += 1;
+        if (submittedAt && (!bucket.lastSubmittedAt || submittedAt > bucket.lastSubmittedAt)) {
+          bucket.lastSubmittedAt = submittedAt;
+        }
+      }
+
+      employeeBuckets.set(assignment.employeeIdAtAssign, bucket);
+    }
+
+    const repeatNonSubmitters = Array.from(employeeBuckets.values())
+      .map((bucket) => ({
+        employeeIdAtAssign: bucket.employeeIdAtAssign,
+        employeeName: bucket.employeeName,
+        groupName: bucket.groupName,
+        teamName: bucket.teamName,
+        missedCount: bucket.totalAssignments - bucket.submittedCount,
+        totalAssignments: bucket.totalAssignments,
+        submittedCount: bucket.submittedCount,
+        submissionRate: this.toRate(bucket.submittedCount, bucket.totalAssignments),
+        lastSubmittedAt: bucket.lastSubmittedAt,
+      }))
+      .filter((bucket) => bucket.missedCount > 0)
+      .sort((left, right) => right.missedCount - left.missedCount || left.submissionRate - right.submissionRate)
+      .slice(0, 10);
+
+    return { dateFrom, dateTo, repeatNonSubmitters, repeatXItems };
   }
 
   private resolveStatsRange(
@@ -957,6 +1153,160 @@ export class SafetyChecklistsService {
   private toRate(numerator: number, denominator: number): number {
     if (denominator <= 0) return 0;
     return Math.round((numerator / denominator) * 1000) / 10;
+  }
+
+  private async resolveCompanyExpandedScopeOrganizationIds(
+    scopeOrganizationIds?: string[],
+    companyId?: string,
+  ): Promise<string[] | undefined> {
+    const organizationMap = await this.getOrganizationMap(this.prisma);
+    return this.resolveCompanyExpandedScopeOrganizationIdsFromMap(
+      organizationMap,
+      scopeOrganizationIds,
+      companyId,
+    );
+  }
+
+  private async resolveChecklistQueryOrganizationIds(
+    scopeOrganizationIds: string[] | undefined,
+    companyId?: string,
+    organizationId?: string,
+  ): Promise<string[] | undefined> {
+    const organizationMap = await this.getOrganizationMap(this.prisma);
+    const organizationIds = this.resolveCompanyExpandedScopeOrganizationIdsFromMap(
+      organizationMap,
+      scopeOrganizationIds,
+      companyId,
+    );
+
+    if (!organizationId) {
+      return organizationIds;
+    }
+
+    if (!organizationMap.has(organizationId)) {
+      throw new NotFoundException('Organization not found.');
+    }
+
+    if (organizationIds && !organizationIds.includes(organizationId)) {
+      throw new ForbiddenException('Requested organization is outside the allowed company scope.');
+    }
+
+    return [organizationId];
+  }
+
+  private resolveCompanyExpandedScopeOrganizationIdsFromMap(
+    organizationMap: Map<string, OrganizationNode>,
+    scopeOrganizationIds?: string[],
+    companyId?: string,
+  ): string[] | undefined {
+    let allowedOrganizationIds: Set<string> | undefined;
+
+    if (scopeOrganizationIds) {
+      const companyIds = new Set<string>();
+      for (const organizationId of scopeOrganizationIds) {
+        const resolvedCompanyId = this.resolveCompanyIdFromMap(organizationId, organizationMap);
+        if (resolvedCompanyId) {
+          companyIds.add(resolvedCompanyId);
+        }
+      }
+
+      allowedOrganizationIds = new Set<string>();
+      for (const resolvedCompanyId of companyIds) {
+        for (const descendantId of this.collectDescendantOrganizationIds(resolvedCompanyId, organizationMap)) {
+          allowedOrganizationIds.add(descendantId);
+        }
+      }
+
+      if (allowedOrganizationIds.size === 0) {
+        allowedOrganizationIds = new Set(scopeOrganizationIds);
+      }
+    }
+
+    if (!companyId) {
+      return allowedOrganizationIds ? Array.from(allowedOrganizationIds).sort() : undefined;
+    }
+
+    const company = organizationMap.get(companyId);
+    if (!company) {
+      throw new NotFoundException('Company organization not found.');
+    }
+    if (resolveOrganizationClassification(company) !== 'COMPANY') {
+      throw new BadRequestException('companyId must be a company organization.');
+    }
+
+    const selectedOrganizationIds = this.collectDescendantOrganizationIds(companyId, organizationMap);
+    if (!allowedOrganizationIds) {
+      return selectedOrganizationIds.sort();
+    }
+
+    const selectedSet = new Set(selectedOrganizationIds);
+    const intersection = Array.from(allowedOrganizationIds)
+      .filter((organizationId) => selectedSet.has(organizationId))
+      .sort();
+
+    if (intersection.length === 0) {
+      throw new ForbiddenException('Requested company is outside the allowed scope.');
+    }
+
+    return intersection;
+  }
+
+  private buildCandidateCompanyOptions(
+    organizationMap: Map<string, OrganizationNode>,
+    accessibleOrganizationIds?: string[],
+  ): Array<{ id: string; name: string }> {
+    const accessibleSet = accessibleOrganizationIds ? new Set(accessibleOrganizationIds) : null;
+    return Array.from(organizationMap.values())
+      .filter((organization) => resolveOrganizationClassification(organization) === 'COMPANY')
+      .filter((organization) => !accessibleSet || accessibleSet.has(organization.id))
+      .map((organization) => ({ id: organization.id, name: organization.name }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  private resolveCompanyIdFromMap(
+    organizationId: string,
+    organizationMap: Map<string, OrganizationNode>,
+  ): string | null {
+    const visited = new Set<string>();
+    let current = organizationMap.get(organizationId) ?? null;
+
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      if (resolveOrganizationClassification(current) === 'COMPANY') {
+        return current.id;
+      }
+      current = current.parentId ? organizationMap.get(current.parentId) ?? null : null;
+    }
+
+    return null;
+  }
+
+  private collectDescendantOrganizationIds(
+    organizationId: string,
+    organizationMap: Map<string, OrganizationNode>,
+  ): string[] {
+    const result: string[] = [];
+    const visited = new Set<string>();
+    let frontier = [organizationId];
+
+    while (frontier.length > 0) {
+      const currentId = frontier.shift()!;
+      if (visited.has(currentId)) {
+        continue;
+      }
+      visited.add(currentId);
+      if (organizationMap.has(currentId)) {
+        result.push(currentId);
+      }
+
+      for (const organization of organizationMap.values()) {
+        if (organization.parentId === currentId && !visited.has(organization.id)) {
+          frontier.push(organization.id);
+        }
+      }
+    }
+
+    return result;
   }
 
   private buildChecklistWhere(
@@ -1006,6 +1356,11 @@ export class SafetyChecklistsService {
       ];
     }
 
+    const assignmentWhere = this.buildAssignmentSnapshotFilter(filter);
+    if (Object.keys(assignmentWhere).length > 0) {
+      where.assignment = assignmentWhere;
+    }
+
     const employeeName = filter.employeeName || filter.search;
     if (employeeName) {
       where.employeeNameAtSubmit = { contains: employeeName, mode: 'insensitive' };
@@ -1030,6 +1385,7 @@ export class SafetyChecklistsService {
   ): Prisma.SafetyChecklistAssignmentWhereInput {
     const where: Prisma.SafetyChecklistAssignmentWhereInput = {
       ...(scopeOrganizationIds ? { checklist: { organizationId: { in: scopeOrganizationIds } } } : {}),
+      ...this.buildAssignmentSnapshotFilter(filter),
     };
     const and: Prisma.SafetyChecklistAssignmentWhereInput[] = [];
 
@@ -1070,6 +1426,16 @@ export class SafetyChecklistsService {
     }
 
     return where;
+  }
+
+  private buildAssignmentSnapshotFilter(filter: {
+    groupId?: string;
+    teamId?: string;
+  }): Prisma.SafetyChecklistAssignmentWhereInput {
+    return {
+      ...(filter.groupId ? { groupIdAtAssign: filter.groupId } : {}),
+      ...(filter.teamId ? { teamIdAtAssign: filter.teamId } : {}),
+    };
   }
 
   private buildReviewStatusWhere(
@@ -1564,12 +1930,13 @@ export class SafetyChecklistsService {
     originalName: string;
     isImage: boolean;
   }> {
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds);
     const attachment = await this.prisma.safetyInspectionAttachment.findFirst({
       where: {
         id: attachmentId,
         answerId,
-        ...(scopeOrganizationIds
-          ? { answer: { submission: { checklist: { organizationId: { in: scopeOrganizationIds } } } } }
+        ...(organizationIds
+          ? { answer: { submission: { checklist: { organizationId: { in: organizationIds } } } } }
           : {}),
       },
     });
