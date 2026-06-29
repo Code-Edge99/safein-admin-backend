@@ -59,8 +59,8 @@ type PermissionCatalogItem = {
 };
 
 const PERMISSION_CATALOG: PermissionCatalogItem[] = [
-  { id: 'perm-safety-checklist-read', category: 'Safety Checklist', name: 'Safety checklist read', code: 'SAFETY_CHECKLIST_READ', description: 'View safety checklists and inspection submissions.' },
-  { id: 'perm-safety-checklist-write', category: 'Safety Checklist', name: 'Safety checklist write', code: 'SAFETY_CHECKLIST_WRITE', description: 'Create, update, deploy, and review safety checklists.' },
+  { id: 'perm-safety-checklist-read', category: '안전점검', name: '안전점검 조회', code: 'SAFETY_CHECKLIST_READ', description: '안전점검 체크리스트와 점검 제출 내역을 조회합니다.' },
+  { id: 'perm-safety-checklist-write', category: '안전점검', name: '안전점검 등록/수정', code: 'SAFETY_CHECKLIST_WRITE', description: '안전점검 체크리스트를 생성/수정/배포하고 점검 결과를 검토합니다.' },
   { id: 'perm-dashboard-read', category: '대시보드', name: '대시보드 화면 조회', code: 'DASHBOARD_READ', description: '대시보드 화면을 조회합니다.' },
   { id: 'perm-org-read', category: '현장 관리', name: '현장 관리 조회', code: 'ORG_READ', description: '현장 관리 화면을 조회합니다.' },
   { id: 'perm-org-write', category: '현장 관리', name: '현장 관리 수정', code: 'ORG_WRITE', description: '현장 정보를 생성/수정/삭제합니다.' },
@@ -100,7 +100,7 @@ const PERMISSION_CATALOG_BY_CODE = new Map(
 );
 
 const CATEGORY_ORDER: Record<string, number> = {
-  'Safety Checklist': 6,
+  안전점검: 6,
   대시보드: 1,
   '현장 관리': 2,
   '직원 관리': 3,
