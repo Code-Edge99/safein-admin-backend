@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   AppLanguage,
@@ -17,6 +17,7 @@ import { resolveOrganizationClassification } from '../../common/utils/organizati
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateSafetyChecklistDeploymentDto,
+  CreateSafetyChecklistItemTemplateDto,
   CreateSafetyChecklistDto,
   ReviewSafetyInspectionSubmissionDto,
   SafetyChecklistCandidateFilterDto,
@@ -29,6 +30,8 @@ import {
   SafetyChecklistDateRangeDto,
   SafetyChecklistDetailDto,
   SafetyChecklistFilterDto,
+  SafetyChecklistItemTemplateDto,
+  SafetyChecklistItemTemplateFilterDto,
   SafetyChecklistItemDto,
   SafetyChecklistListItemDto,
   SafetyChecklistListResponseDto,
@@ -49,6 +52,7 @@ import {
   SafetyInspectionSubmissionListItemDto,
   SafetyInspectionSubmissionListResponseDto,
   SendSafetyChecklistPushMessageDto,
+  UpdateSafetyChecklistItemTemplateDto,
   UpdateSafetyChecklistDto,
 } from './dto';
 import { buildContentDisposition, isSafetyInspectionImageFile, resolveSafetyInspectionStoredFilePath } from './safety-checklists.storage';
@@ -99,6 +103,20 @@ type ChecklistVersionWithSections = Prisma.SafetyChecklistVersionGetPayload<{
       };
     };
   };
+}>;
+
+const SAFETY_CHECKLIST_ITEM_TEMPLATE_INCLUDE = Prisma.validator<Prisma.SafetyChecklistItemTemplateInclude>()({
+  organization: { select: { id: true, name: true } },
+  sections: {
+    orderBy: { sortOrder: 'asc' },
+    include: {
+      items: { orderBy: { sortOrder: 'asc' } },
+    },
+  },
+});
+
+type SafetyChecklistItemTemplateWithSections = Prisma.SafetyChecklistItemTemplateGetPayload<{
+  include: typeof SAFETY_CHECKLIST_ITEM_TEMPLATE_INCLUDE;
 }>;
 
 type SafetyChecklistField = {
@@ -394,6 +412,138 @@ export class SafetyChecklistsService {
 
     await this.queueSafetyChecklistVersionTranslations(createdResult.versionId, createdResult.targetLanguages);
     return this.findOne(createdResult.checklistId, organizationIds);
+  }
+
+  async findItemTemplates(
+    filter: SafetyChecklistItemTemplateFilterDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<SafetyChecklistItemTemplateDto[]> {
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds, filter.companyId);
+    const where: Prisma.SafetyChecklistItemTemplateWhereInput = {
+      ...(organizationIds ? { organizationId: { in: organizationIds } } : {}),
+    };
+
+    const keyword = filter.search?.trim();
+    if (keyword) {
+      where.name = { contains: keyword, mode: 'insensitive' };
+    }
+
+    const rows = await this.prisma.safetyChecklistItemTemplate.findMany({
+      where,
+      include: SAFETY_CHECKLIST_ITEM_TEMPLATE_INCLUDE,
+      orderBy: [
+        { name: 'asc' },
+        { updatedAt: 'desc' },
+      ],
+    });
+
+    return rows.map((row) => this.buildItemTemplateDto(row));
+  }
+
+  async createItemTemplate(
+    dto: CreateSafetyChecklistItemTemplateDto,
+    scopeOrganizationIds: string[] | undefined,
+    fallbackOrganizationId: string | undefined,
+    actorId: string | undefined,
+  ): Promise<SafetyChecklistItemTemplateDto> {
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds);
+    const organizationId = this.resolveOwnerOrganizationId(dto.organizationId, fallbackOrganizationId);
+    this.assertOrganizationInScope(organizationId, organizationIds);
+    await this.assertCompanyOrganizationExists(organizationId);
+
+    const name = dto.name.trim();
+    if (!name) {
+      throw new BadRequestException('템플릿명을 입력해 주세요.');
+    }
+
+    await this.assertItemTemplateNameAvailable(organizationId, name);
+    const normalizedSections = this.normalizeSections(dto.sections);
+
+    const created = await this.prisma.safetyChecklistItemTemplate.create({
+      data: {
+        organizationId,
+        name,
+        createdById: actorId,
+        updatedById: actorId,
+        sections: {
+          create: this.buildItemTemplateSectionCreateData(normalizedSections),
+        },
+      },
+      include: SAFETY_CHECKLIST_ITEM_TEMPLATE_INCLUDE,
+    });
+
+    return this.buildItemTemplateDto(created);
+  }
+
+  async updateItemTemplate(
+    id: string,
+    dto: UpdateSafetyChecklistItemTemplateDto,
+    scopeOrganizationIds: string[] | undefined,
+    actorId: string | undefined,
+  ): Promise<SafetyChecklistItemTemplateDto> {
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds);
+    const existing = await this.prisma.safetyChecklistItemTemplate.findFirst({
+      where: {
+        id,
+        ...(organizationIds ? { organizationId: { in: organizationIds } } : {}),
+      },
+      select: { id: true, organizationId: true, name: true },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('점검 항목 템플릿을 찾을 수 없습니다.');
+    }
+
+    const name = dto.name !== undefined ? dto.name.trim() : existing.name;
+    if (!name) {
+      throw new BadRequestException('템플릿명을 입력해 주세요.');
+    }
+
+    if (name !== existing.name) {
+      await this.assertItemTemplateNameAvailable(existing.organizationId, name, existing.id);
+    }
+
+    const normalizedSections = dto.sections ? this.normalizeSections(dto.sections) : undefined;
+
+    const updated = await this.prisma.safetyChecklistItemTemplate.update({
+      where: { id: existing.id },
+      data: {
+        name,
+        updatedById: actorId,
+        ...(normalizedSections
+          ? {
+              sections: {
+                deleteMany: {},
+                create: this.buildItemTemplateSectionCreateData(normalizedSections),
+              },
+            }
+          : {}),
+      },
+      include: SAFETY_CHECKLIST_ITEM_TEMPLATE_INCLUDE,
+    });
+
+    return this.buildItemTemplateDto(updated);
+  }
+
+  async removeItemTemplate(
+    id: string,
+    scopeOrganizationIds: string[] | undefined,
+    _actorId: string | undefined,
+  ): Promise<void> {
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds);
+    const existing = await this.prisma.safetyChecklistItemTemplate.findFirst({
+      where: {
+        id,
+        ...(organizationIds ? { organizationId: { in: organizationIds } } : {}),
+      },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('점검 항목 템플릿을 찾을 수 없습니다.');
+    }
+
+    await this.prisma.safetyChecklistItemTemplate.delete({ where: { id: existing.id } });
   }
 
   async update(
@@ -2353,6 +2503,69 @@ export class SafetyChecklistsService {
         })),
       },
     }));
+  }
+
+  private buildItemTemplateSectionCreateData(
+    sections: CreateSafetyChecklistDto['sections'],
+  ): Prisma.SafetyChecklistItemTemplateSectionCreateWithoutTemplateInput[] {
+    return sections.map((section) => ({
+      title: section.title,
+      description: section.description ?? null,
+      sortOrder: section.sortOrder ?? 0,
+      items: {
+        create: section.items.map((item) => ({
+          category: item.category ?? null,
+          question: item.question,
+          helpText: item.helpText ?? null,
+          required: item.required ?? true,
+          sortOrder: item.sortOrder ?? 0,
+        })),
+      },
+    }));
+  }
+
+  private buildItemTemplateDto(template: SafetyChecklistItemTemplateWithSections): SafetyChecklistItemTemplateDto {
+    return {
+      id: template.id,
+      organizationId: template.organizationId,
+      organizationName: template.organization?.name,
+      name: template.name,
+      sections: template.sections.map((section) => ({
+        id: section.id,
+        title: section.title,
+        description: section.description,
+        sortOrder: section.sortOrder,
+        items: section.items.map((item) => ({
+          id: item.id,
+          category: item.category,
+          question: item.question,
+          helpText: item.helpText,
+          required: item.required,
+          sortOrder: item.sortOrder,
+        })),
+      })),
+      createdAt: template.createdAt,
+      updatedAt: template.updatedAt,
+    };
+  }
+
+  private async assertItemTemplateNameAvailable(
+    organizationId: string,
+    name: string,
+    excludedTemplateId?: string,
+  ): Promise<void> {
+    const existing = await this.prisma.safetyChecklistItemTemplate.findFirst({
+      where: {
+        organizationId,
+        name,
+        ...(excludedTemplateId ? { id: { not: excludedTemplateId } } : {}),
+      },
+      select: { id: true },
+    });
+
+    if (existing) {
+      throw new ConflictException('같은 이름의 점검 항목 템플릿이 이미 있습니다.');
+    }
   }
 
   private buildSourceFields(version: {

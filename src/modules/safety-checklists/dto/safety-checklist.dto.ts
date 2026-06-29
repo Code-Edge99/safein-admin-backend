@@ -280,6 +280,56 @@ export class UpdateSafetyChecklistDto {
   sections?: SafetyChecklistSectionInputDto[];
 }
 
+export class SafetyChecklistItemTemplateFilterDto {
+  @ApiPropertyOptional({ description: '템플릿을 조회할 회사 조직 ID' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsOptional()
+  @IsString()
+  companyId?: string;
+
+  @ApiPropertyOptional({ description: '템플릿명 검색어' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsOptional()
+  @IsString()
+  search?: string;
+}
+
+export class CreateSafetyChecklistItemTemplateDto {
+  @ApiPropertyOptional({ description: '템플릿을 저장할 회사 조직 ID' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsOptional()
+  @IsString()
+  organizationId?: string;
+
+  @ApiProperty({ description: '템플릿명', example: '고소작업 기본 점검 항목' })
+  @IsString()
+  @MaxLength(100)
+  name!: string;
+
+  @ApiProperty({ description: '템플릿에 저장할 점검 섹션과 항목 목록', type: [SafetyChecklistSectionInputDto] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => SafetyChecklistSectionInputDto)
+  sections!: SafetyChecklistSectionInputDto[];
+}
+
+export class UpdateSafetyChecklistItemTemplateDto {
+  @ApiPropertyOptional({ description: '템플릿명', example: '고소작업 기본 점검 항목' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  name?: string;
+
+  @ApiPropertyOptional({ description: '템플릿에 저장할 점검 섹션과 항목 목록', type: [SafetyChecklistSectionInputDto] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => SafetyChecklistSectionInputDto)
+  sections?: SafetyChecklistSectionInputDto[];
+}
+
 export class CreateSafetyChecklistDeploymentDto {
   @ApiProperty({ example: '2026-06-24' })
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
@@ -644,6 +694,33 @@ export class SafetyChecklistDetailDto extends SafetyChecklistListItemDto {
 
   @ApiProperty({ description: '최신 배포에 포함된 고유 작업자 ID 목록', type: [String] })
   latestDeploymentTargetEmployeeIds!: string[];
+}
+
+export class SafetyChecklistItemTemplateItemDto {
+  id!: string;
+  category!: string | null;
+  question!: string;
+  helpText!: string | null;
+  required!: boolean;
+  sortOrder!: number;
+}
+
+export class SafetyChecklistItemTemplateSectionDto {
+  id!: string;
+  title!: string;
+  description!: string | null;
+  sortOrder!: number;
+  items!: SafetyChecklistItemTemplateItemDto[];
+}
+
+export class SafetyChecklistItemTemplateDto {
+  id!: string;
+  organizationId!: string;
+  organizationName?: string;
+  name!: string;
+  sections!: SafetyChecklistItemTemplateSectionDto[];
+  createdAt!: Date;
+  updatedAt!: Date;
 }
 
 export class SafetyInspectionAttachmentDto {

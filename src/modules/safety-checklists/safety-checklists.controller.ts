@@ -8,6 +8,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OrganizationScopeGuard } from '../auth/guards/organization-scope.guard';
 import {
   CreateSafetyChecklistDeploymentDto,
+  CreateSafetyChecklistItemTemplateDto,
   CreateSafetyChecklistDto,
   ReviewSafetyInspectionSubmissionDto,
   SafetyInspectionAssignmentDateQueryDto,
@@ -19,6 +20,8 @@ import {
   SafetyChecklistDateRangeDto,
   SafetyChecklistDetailDto,
   SafetyChecklistFilterDto,
+  SafetyChecklistItemTemplateDto,
+  SafetyChecklistItemTemplateFilterDto,
   SafetyChecklistListResponseDto,
   SafetyChecklistPatternsDto,
   SafetyChecklistPatternsFilterDto,
@@ -28,6 +31,7 @@ import {
   SafetyInspectionSubmissionFilterDto,
   SafetyInspectionSubmissionListResponseDto,
   SendSafetyChecklistPushMessageDto,
+  UpdateSafetyChecklistItemTemplateDto,
   UpdateSafetyChecklistDto,
 } from './dto';
 import { SafetyChecklistsService } from './safety-checklists.service';
@@ -200,6 +204,64 @@ export class SafetyChecklistsController {
       req.user?.organizationId,
       req.user?.id,
     );
+  }
+
+  @Get('item-templates')
+  @ApiOperation({ summary: '안전점검 항목 템플릿 목록 조회' })
+  @ApiResponse({ status: 200, type: [SafetyChecklistItemTemplateDto] })
+  findItemTemplates(
+    @Req() req: AuthenticatedAdminRequest,
+    @Query() filter: SafetyChecklistItemTemplateFilterDto,
+  ): Promise<SafetyChecklistItemTemplateDto[]> {
+    return this.safetyChecklistsService.findItemTemplates(filter, req.organizationScopeIds ?? undefined);
+  }
+
+  @Post('item-templates')
+  @PermissionCodes('SAFETY_CHECKLIST_WRITE')
+  @ApiOperation({ summary: '안전점검 항목 템플릿 생성' })
+  @ApiResponse({ status: 201, type: SafetyChecklistItemTemplateDto })
+  createItemTemplate(
+    @Req() req: AuthenticatedAdminRequest,
+    @Body() dto: CreateSafetyChecklistItemTemplateDto,
+  ): Promise<SafetyChecklistItemTemplateDto> {
+    return this.safetyChecklistsService.createItemTemplate(
+      dto,
+      req.organizationScopeIds ?? undefined,
+      req.user?.organizationId,
+      req.user?.id,
+    );
+  }
+
+  @Patch('item-templates/:templateId')
+  @PermissionCodes('SAFETY_CHECKLIST_WRITE')
+  @ApiOperation({ summary: '안전점검 항목 템플릿 수정' })
+  @ApiResponse({ status: 200, type: SafetyChecklistItemTemplateDto })
+  updateItemTemplate(
+    @Req() req: AuthenticatedAdminRequest,
+    @Param('templateId') templateId: string,
+    @Body() dto: UpdateSafetyChecklistItemTemplateDto,
+  ): Promise<SafetyChecklistItemTemplateDto> {
+    return this.safetyChecklistsService.updateItemTemplate(
+      templateId,
+      dto,
+      req.organizationScopeIds ?? undefined,
+      req.user?.id,
+    );
+  }
+
+  @Delete('item-templates/:templateId')
+  @PermissionCodes('SAFETY_CHECKLIST_WRITE')
+  @ApiOperation({ summary: '안전점검 항목 템플릿 삭제' })
+  async removeItemTemplate(
+    @Req() req: AuthenticatedAdminRequest,
+    @Param('templateId') templateId: string,
+  ): Promise<{ success: boolean }> {
+    await this.safetyChecklistsService.removeItemTemplate(
+      templateId,
+      req.organizationScopeIds ?? undefined,
+      req.user?.id,
+    );
+    return { success: true };
   }
 
   @Get(':id')
