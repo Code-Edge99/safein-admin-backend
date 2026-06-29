@@ -35,6 +35,7 @@ import {
   UpdateIncidentReportSeverityDto,
   UpdateIncidentReportStatusDto,
 } from './dto';
+import { normalizeUploadOriginalName } from './incident-reports.storage';
 
 const INCIDENT_REPORT_UPLOAD_ROOT_CANDIDATES = [
   path.resolve(process.cwd(), 'uploads', 'incident-reports'),
@@ -165,9 +166,11 @@ export class IncidentReportsService {
     size: number;
     createdAt: Date;
   }): IncidentReportAttachmentDto {
+    const originalName = normalizeUploadOriginalName(attachment.originalName);
+
     return {
       id: attachment.id,
-      originalName: attachment.originalName,
+      originalName,
       mimeType: attachment.mimeType,
       size: attachment.size,
       downloadUrl: `/api/incident-reports/${encodeURIComponent(reportId)}/attachments/${encodeURIComponent(attachment.id)}/download`,
@@ -809,7 +812,7 @@ export class IncidentReportsService {
 
     return {
       absolutePath,
-      originalName: attachment.originalName,
+      originalName: normalizeUploadOriginalName(attachment.originalName),
       mimeType: attachment.mimeType,
     };
   }
