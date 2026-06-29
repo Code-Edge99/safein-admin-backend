@@ -26,6 +26,8 @@ type QueueEntityTranslationsParams = {
   sourceUpdatedAt: Date;
   fields: TranslationFieldInput[];
   skipLanguages?: AppLanguage[];
+  sourceLanguage?: AppLanguage;
+  targetLanguages?: AppLanguage[];
 };
 
 type TranslateFieldsOptions = {
@@ -354,13 +356,20 @@ export class ContentTranslationService implements OnModuleInit, OnModuleDestroy 
     ]);
   }
 
-  queueTranslationsFromKorean(params: QueueEntityTranslationsParams): void {
+  queueEntityTranslations(params: QueueEntityTranslationsParams): void {
     const fields = this.normalizeFields(params.fields);
     if (fields.length === 0) {
       return;
     }
 
-    const skipLanguages = Array.from(new Set([...(params.skipLanguages ?? []), AppLanguage.ko]));
+    const sourceLanguage = params.sourceLanguage ?? AppLanguage.ko;
+    const skipLanguages = Array.from(new Set([...(params.skipLanguages ?? []), sourceLanguage]));
+    const targetLanguages = Array.from(
+      new Set(
+        (params.targetLanguages ?? [])
+          .filter((language) => language !== sourceLanguage && !skipLanguages.includes(language)),
+      ),
+    );
     const queuedAt = new Date();
 
     void this.prisma.translationJob.upsert({
@@ -378,6 +387,8 @@ export class ContentTranslationService implements OnModuleInit, OnModuleDestroy 
         fieldKeys: fields.map((field) => field.fieldKey),
         fields: fields as unknown as Prisma.InputJsonValue,
         skipLanguages,
+        sourceLanguage,
+        targetLanguages,
         status: TranslationJobStatus.PENDING,
         attempts: 0,
         nextAttemptAt: queuedAt,
@@ -389,6 +400,8 @@ export class ContentTranslationService implements OnModuleInit, OnModuleDestroy 
         fieldKeys: fields.map((field) => field.fieldKey),
         fields: fields as unknown as Prisma.InputJsonValue,
         skipLanguages,
+        sourceLanguage,
+        targetLanguages,
         status: TranslationJobStatus.PENDING,
         attempts: 0,
         nextAttemptAt: queuedAt,
@@ -402,6 +415,14 @@ export class ContentTranslationService implements OnModuleInit, OnModuleDestroy 
       this.logger.warn(
         `번역 작업 등록 실패(entityType=${params.entityType}, entityId=${params.entityId}): ${String(error)}`,
       );
+    });
+  }
+
+  queueTranslationsFromKorean(params: QueueEntityTranslationsParams): void {
+    this.queueEntityTranslations({
+      ...params,
+      sourceLanguage: AppLanguage.ko,
+      skipLanguages: Array.from(new Set([...(params.skipLanguages ?? []), AppLanguage.ko])),
     });
   }
 
@@ -514,14 +535,20 @@ export class ContentTranslationService implements OnModuleInit, OnModuleDestroy 
     }
 
     try {
+      const sourceLanguage = job.sourceLanguage ?? AppLanguage.ko;
       const skipLanguages = new Set(job.skipLanguages ?? []);
-      skipLanguages.add(AppLanguage.ko);
+      skipLanguages.add(sourceLanguage);
 
-      const targetLanguages = ALL_APP_LANGUAGES.filter((language) => !skipLanguages.has(language));
+      const explicitTargetLanguages = Array.isArray(job.targetLanguages)
+        ? job.targetLanguages
+        : [];
+      const targetLanguages = explicitTargetLanguages.length > 0
+        ? Array.from(new Set(explicitTargetLanguages.filter((language) => language !== sourceLanguage && !skipLanguages.has(language))))
+        : ALL_APP_LANGUAGES.filter((language) => !skipLanguages.has(language));
       const translatedValuesByLanguage = await this.translateFieldsToLanguages(
         fields,
         targetLanguages,
-        AppLanguage.ko,
+        sourceLanguage,
         true,
       );
 

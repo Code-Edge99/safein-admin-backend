@@ -2420,6 +2420,7 @@ export class SafetyChecklistsService {
       sourceUpdatedAt: version.createdAt,
       fields: this.buildSourceFields(version),
       skipLanguages: [sourceLanguage],
+      targetLanguages: normalizedTargets,
     });
   }
 
