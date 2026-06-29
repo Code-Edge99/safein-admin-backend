@@ -10,9 +10,13 @@ import {
   CreateSafetyChecklistDeploymentDto,
   CreateSafetyChecklistDto,
   ReviewSafetyInspectionSubmissionDto,
+  SafetyInspectionAssignmentDateQueryDto,
+  SafetyInspectionAssignmentDatesQueryDto,
+  SafetyInspectionAssignmentDatesResponseDto,
   SafetyChecklistCandidateFilterDto,
   SafetyChecklistPushMessageResultDto,
   SafetyChecklistCandidateResponseDto,
+  SafetyChecklistDateRangeDto,
   SafetyChecklistDetailDto,
   SafetyChecklistFilterDto,
   SafetyChecklistListResponseDto,
@@ -56,6 +60,16 @@ export class SafetyChecklistsController {
     return this.safetyChecklistsService.findSubmissions(filter, req.organizationScopeIds ?? undefined);
   }
 
+  @Get('submissions/date-range')
+  @ApiOperation({ summary: '안전점검 제출 데이터 날짜 범위 조회' })
+  @ApiResponse({ status: 200, type: SafetyChecklistDateRangeDto })
+  getSubmissionDateRange(
+    @Req() req: AuthenticatedAdminRequest,
+    @Query() filter: SafetyInspectionSubmissionFilterDto,
+  ): Promise<SafetyChecklistDateRangeDto> {
+    return this.safetyChecklistsService.getSubmissionDateRange(filter, req.organizationScopeIds ?? undefined);
+  }
+
   @Get('submissions/:id')
   @ApiOperation({ summary: '안전점검 제출 상세 조회' })
   @ApiResponse({ status: 200, type: SafetyInspectionSubmissionDetailDto })
@@ -64,6 +78,36 @@ export class SafetyChecklistsController {
     @Param('id') id: string,
   ): Promise<SafetyInspectionSubmissionDetailDto> {
     return this.safetyChecklistsService.findSubmissionDetail(id, req.organizationScopeIds ?? undefined);
+  }
+
+  @Get('assignments/by-date')
+  @ApiOperation({ summary: '안전점검 작업자/날짜별 제출 상세 조회' })
+  @ApiResponse({ status: 200, type: SafetyInspectionSubmissionDetailDto })
+  findAssignmentDetailByDate(
+    @Req() req: AuthenticatedAdminRequest,
+    @Query() query: SafetyInspectionAssignmentDateQueryDto,
+  ): Promise<SafetyInspectionSubmissionDetailDto> {
+    return this.safetyChecklistsService.findAssignmentDetailByDate(query, req.organizationScopeIds ?? undefined);
+  }
+
+  @Get('assignments/dates')
+  @ApiOperation({ summary: '안전점검 작업자별 배정 날짜 목록 조회' })
+  @ApiResponse({ status: 200, type: SafetyInspectionAssignmentDatesResponseDto })
+  findAssignmentDates(
+    @Req() req: AuthenticatedAdminRequest,
+    @Query() query: SafetyInspectionAssignmentDatesQueryDto,
+  ): Promise<SafetyInspectionAssignmentDatesResponseDto> {
+    return this.safetyChecklistsService.findAssignmentDates(query, req.organizationScopeIds ?? undefined);
+  }
+
+  @Get('assignments/:id/detail')
+  @ApiOperation({ summary: '안전점검 배정 상세 조회' })
+  @ApiResponse({ status: 200, type: SafetyInspectionSubmissionDetailDto })
+  findAssignmentDetail(
+    @Req() req: AuthenticatedAdminRequest,
+    @Param('id') id: string,
+  ): Promise<SafetyInspectionSubmissionDetailDto> {
+    return this.safetyChecklistsService.findAssignmentDetail(id, req.organizationScopeIds ?? undefined);
   }
 
   @Patch('submissions/:id/review')
@@ -120,6 +164,16 @@ export class SafetyChecklistsController {
     @Query() filter: SafetyChecklistPatternsFilterDto,
   ): Promise<SafetyChecklistPatternsDto> {
     return this.safetyChecklistsService.getPatterns(filter, req.organizationScopeIds ?? undefined);
+  }
+
+  @Get('date-range')
+  @ApiOperation({ summary: '안전점검 데이터 날짜 범위 조회' })
+  @ApiResponse({ status: 200, type: SafetyChecklistDateRangeDto })
+  getDateRange(
+    @Req() req: AuthenticatedAdminRequest,
+    @Query() filter: SafetyChecklistStatisticsFilterDto,
+  ): Promise<SafetyChecklistDateRangeDto> {
+    return this.safetyChecklistsService.getDateRange(filter, req.organizationScopeIds ?? undefined);
   }
 
   @Get()

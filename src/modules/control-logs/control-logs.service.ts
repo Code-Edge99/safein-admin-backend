@@ -13,6 +13,7 @@ import { resolveEmployeeDisplayName } from '../../common/utils/employee-display-
 import { toControlLogResponseDto } from './control-logs.mapper';
 import {
   CreateControlLogDto,
+  ControlLogDateRangeDto,
   ControlLogFilterDto,
   ControlLogResponseDto,
   ControlLogListResponseDto,
@@ -643,6 +644,109 @@ export class ControlLogsService {
       page,
       limit,
       totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  async getDateRange(
+    filter: ControlLogFilterDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<ControlLogDateRangeDto> {
+    const {
+      search,
+      organizationId,
+      groupId,
+      unitId,
+      employeeId,
+      deviceId,
+      policyId,
+      zoneId,
+      type,
+      action,
+    } = filter;
+    const where: any = {};
+
+    if (employeeId) {
+      const resolvedEmployeeId = await resolveEmployeePrimaryId(this.prisma, employeeId);
+      where.employeeId = resolvedEmployeeId || '__missing_employee__';
+    }
+
+    if (deviceId) {
+      where.deviceId = await this.resolveDeviceInternalId(deviceId);
+    }
+
+    if (policyId) {
+      where.policyId = policyId;
+    }
+
+    if (zoneId) {
+      where.zoneId = zoneId;
+    }
+
+    if (type) {
+      where.type = type;
+    }
+
+    if (action) {
+      where.action = action;
+    }
+
+    const normalizedOrganizationId = organizationId?.trim();
+    const normalizedGroupId = groupId?.trim();
+    const normalizedUnitId = unitId?.trim();
+
+    if (normalizedUnitId) {
+      this.ensureOrganizationInScope(normalizedUnitId, scopeOrganizationIds);
+      await assertUnitOrganization(this.prisma, normalizedUnitId);
+
+      if (normalizedGroupId) {
+        this.ensureOrganizationInScope(normalizedGroupId, scopeOrganizationIds);
+        await assertGroupOrganization(this.prisma, normalizedGroupId);
+      }
+
+      this.appendWhereCondition(where, this.buildOrganizationCondition(normalizedUnitId));
+    } else if (normalizedGroupId) {
+      this.ensureOrganizationInScope(normalizedGroupId, scopeOrganizationIds);
+      await assertGroupOrganization(this.prisma, normalizedGroupId);
+
+      const organizations = await this.getOrganizationNodes(scopeOrganizationIds);
+      const descendantUnitIds = this.resolveDescendantUnitIds(normalizedGroupId, organizations);
+      const targetOrganizationIds = Array.from(new Set([normalizedGroupId, ...descendantUnitIds]));
+
+      this.appendWhereCondition(where, this.buildOrganizationIdsCondition(targetOrganizationIds));
+    } else if (normalizedOrganizationId) {
+      this.ensureOrganizationInScope(normalizedOrganizationId, scopeOrganizationIds);
+      this.appendWhereCondition(where, this.buildOrganizationCondition(normalizedOrganizationId));
+    }
+
+    if (search) {
+      where.OR = [
+        { reason: { contains: search, mode: 'insensitive' } },
+        { appName: { contains: search, mode: 'insensitive' } },
+        { packageName: { contains: search, mode: 'insensitive' } },
+        { employee: { name: { contains: search, mode: 'insensitive' } } },
+        { zone: { name: { contains: search, mode: 'insensitive' } } },
+        { policy: { name: { contains: search, mode: 'insensitive' } } },
+      ];
+    }
+
+    this.applyScopeToWhere(where, scopeOrganizationIds);
+
+    const [first, last] = await this.prisma.$transaction([
+      this.prisma.controlLog.findFirst({
+        where,
+        select: { timestamp: true },
+        orderBy: { timestamp: 'asc' },
+      }),
+      this.prisma.controlLog.findFirst({
+        where,
+        select: { timestamp: true },
+        orderBy: { timestamp: 'desc' },
+      }),
+    ]);
+
+    return {
+      dateFrom: first ? formatKstDateKey(first.timestamp) : null,
+      dateTo: last ? formatKstDateKey(last.timestamp) : null,
     };
   }
 

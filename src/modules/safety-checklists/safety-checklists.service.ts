@@ -26,6 +26,7 @@ import {
   SafetyChecklistCandidateResponseDto,
   SafetyChecklistCandidateTeamDto,
   SafetyChecklistDeploymentDto,
+  SafetyChecklistDateRangeDto,
   SafetyChecklistDetailDto,
   SafetyChecklistFilterDto,
   SafetyChecklistItemDto,
@@ -38,7 +39,11 @@ import {
   SafetyChecklistStatisticsDto,
   SafetyChecklistStatisticsFilterDto,
   SafetyChecklistTodaySummaryDto,
+  SafetyInspectionActionStatusFilter,
   SafetyInspectionAnswerDto,
+  SafetyInspectionAssignmentDateQueryDto,
+  SafetyInspectionAssignmentDatesQueryDto,
+  SafetyInspectionAssignmentDatesResponseDto,
   SafetyInspectionSubmissionDetailDto,
   SafetyInspectionSubmissionFilterDto,
   SafetyInspectionSubmissionListItemDto,
@@ -52,6 +57,22 @@ const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 20;
 const MAX_DEPLOYMENT_DAYS = 366;
+
+const SAFETY_ASSIGNMENT_DETAIL_INCLUDE = Prisma.validator<Prisma.SafetyChecklistAssignmentInclude>()({
+  checklist: { select: { id: true, title: true } },
+  submission: {
+    include: {
+      answers: {
+        orderBy: { sortOrder: 'asc' },
+        include: { attachments: true },
+      },
+    },
+  },
+});
+
+type SafetyAssignmentDetailRow = Prisma.SafetyChecklistAssignmentGetPayload<{
+  include: typeof SAFETY_ASSIGNMENT_DETAIL_INCLUDE;
+}>;
 
 type OrganizationNode = {
   id: string;
@@ -594,6 +615,7 @@ export class SafetyChecklistsService {
           assignment: {
             select: {
               id: true,
+              employeeIdAtAssign: true,
               inspectionDate: true,
               organizationNameAtAssign: true,
               groupIdAtAssign: true,
@@ -617,6 +639,36 @@ export class SafetyChecklistsService {
       page,
       limit,
       totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  async getSubmissionDateRange(
+    filter: SafetyInspectionSubmissionFilterDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<SafetyChecklistDateRangeDto> {
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds, filter.companyId);
+    const where = this.buildSubmissionWhere({
+      ...filter,
+      dateFrom: undefined,
+      dateTo: undefined,
+    }, organizationIds);
+
+    const [first, last] = await this.prisma.$transaction([
+      this.prisma.safetyInspectionSubmission.findFirst({
+        where,
+        select: { submittedAt: true },
+        orderBy: { submittedAt: 'asc' },
+      }),
+      this.prisma.safetyInspectionSubmission.findFirst({
+        where,
+        select: { submittedAt: true },
+        orderBy: { submittedAt: 'desc' },
+      }),
+    ]);
+
+    return {
+      dateFrom: first ? this.formatKstDateOnly(first.submittedAt) : null,
+      dateTo: last ? this.formatKstDateOnly(last.submittedAt) : null,
     };
   }
 
@@ -670,6 +722,7 @@ export class SafetyChecklistsService {
         assignment: {
           select: {
             id: true,
+            employeeIdAtAssign: true,
             organizationNameAtAssign: true,
             groupIdAtAssign: true,
             groupNameAtAssign: true,
@@ -707,6 +760,74 @@ export class SafetyChecklistsService {
       reviewedAt: row.reviewedAt ?? null,
       reviewedById: row.reviewedById ?? null,
       answers: row.answers.map((answer) => this.buildAnswerDto(answer)),
+    };
+  }
+
+  async findAssignmentDetail(
+    id: string,
+    scopeOrganizationIds?: string[],
+  ): Promise<SafetyInspectionSubmissionDetailDto> {
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds);
+    const row = await this.prisma.safetyChecklistAssignment.findFirst({
+      where: {
+        id,
+        ...(organizationIds ? { checklist: { organizationId: { in: organizationIds } } } : {}),
+      },
+      include: SAFETY_ASSIGNMENT_DETAIL_INCLUDE,
+    });
+
+    if (!row) {
+      throw new NotFoundException('Inspection assignment not found.');
+    }
+
+    return this.buildAssignmentDetail(row);
+  }
+
+  async findAssignmentDetailByDate(
+    query: SafetyInspectionAssignmentDateQueryDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<SafetyInspectionSubmissionDetailDto> {
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds);
+    const row = await this.prisma.safetyChecklistAssignment.findFirst({
+      where: {
+        checklistId: query.checklistId,
+        inspectionDate: this.parseDateOnly(query.inspectionDate),
+        OR: [
+          { employeeIdAtAssign: query.employeeIdAtAssign },
+          { submission: { is: { employeeIdAtSubmit: query.employeeIdAtAssign } } },
+        ],
+        ...(organizationIds ? { checklist: { organizationId: { in: organizationIds } } } : {}),
+      },
+      include: SAFETY_ASSIGNMENT_DETAIL_INCLUDE,
+    });
+
+    if (!row) {
+      throw new NotFoundException('Inspection assignment not found for the selected date.');
+    }
+
+    return this.buildAssignmentDetail(row);
+  }
+
+  async findAssignmentDates(
+    query: SafetyInspectionAssignmentDatesQueryDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<SafetyInspectionAssignmentDatesResponseDto> {
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds);
+    const rows = await this.prisma.safetyChecklistAssignment.findMany({
+      where: {
+        checklistId: query.checklistId,
+        OR: [
+          { employeeIdAtAssign: query.employeeIdAtAssign },
+          { submission: { is: { employeeIdAtSubmit: query.employeeIdAtAssign } } },
+        ],
+        ...(organizationIds ? { checklist: { organizationId: { in: organizationIds } } } : {}),
+      },
+      select: { inspectionDate: true },
+      orderBy: { inspectionDate: 'asc' },
+    });
+
+    return {
+      dates: Array.from(new Set(rows.map((row) => this.formatDateOnly(row.inspectionDate)))),
     };
   }
 
@@ -1042,28 +1163,100 @@ export class SafetyChecklistsService {
           ...(Object.keys(assignmentSnapshotFilter).length > 0 ? { assignment: assignmentSnapshotFilter } : {}),
         },
       },
-      select: { question: true, sectionTitle: true, answer: true },
+      select: {
+        itemId: true,
+        question: true,
+        sectionTitle: true,
+        category: true,
+        answer: true,
+        submission: {
+          select: {
+            checklistId: true,
+            submittedAt: true,
+            reviewStatus: true,
+            employeeIdAtSubmit: true,
+            employeeNameAtSubmit: true,
+            checklist: { select: { title: true } },
+          },
+        },
+      },
     });
 
-    const itemBuckets = new Map<string, { question: string; section: string | null; x: number; total: number }>();
+    const itemBuckets = new Map<string, {
+      itemId: string | null;
+      checklistId: string;
+      checklistTitle: string;
+      question: string;
+      section: string | null;
+      category: string | null;
+      x: number;
+      total: number;
+      affectedEmployeeIds: Set<string>;
+      actionRequiredCount: number;
+      actionCompletedCount: number;
+      latestOccurredAt: Date | null;
+      recentEmployeeName: string | null;
+    }>();
     for (const answer of answers) {
-      const key = answer.question;
-      const bucket = itemBuckets.get(key) ?? { question: answer.question, section: answer.sectionTitle, x: 0, total: 0 };
+      const key = [
+        answer.submission.checklistId,
+        answer.itemId ?? answer.sectionTitle ?? '',
+        answer.question,
+      ].join('::');
+      const bucket = itemBuckets.get(key) ?? {
+        itemId: answer.itemId ?? null,
+        checklistId: answer.submission.checklistId,
+        checklistTitle: answer.submission.checklist.title,
+        question: answer.question,
+        section: answer.sectionTitle,
+        category: answer.category,
+        x: 0,
+        total: 0,
+        affectedEmployeeIds: new Set<string>(),
+        actionRequiredCount: 0,
+        actionCompletedCount: 0,
+        latestOccurredAt: null,
+        recentEmployeeName: null,
+      };
       bucket.total += 1;
-      if (answer.answer === false) bucket.x += 1;
+      if (answer.answer === false) {
+        bucket.x += 1;
+        bucket.affectedEmployeeIds.add(answer.submission.employeeIdAtSubmit);
+        if (answer.submission.reviewStatus === SafetyInspectionReviewStatus.ACTION_COMPLETED) {
+          bucket.actionCompletedCount += 1;
+        } else {
+          bucket.actionRequiredCount += 1;
+        }
+        if (!bucket.latestOccurredAt || answer.submission.submittedAt > bucket.latestOccurredAt) {
+          bucket.latestOccurredAt = answer.submission.submittedAt;
+          bucket.recentEmployeeName = resolveEmployeeDisplayName(
+            answer.submission.employeeNameAtSubmit,
+            answer.submission.employeeIdAtSubmit,
+          );
+        }
+      }
       itemBuckets.set(key, bucket);
     }
 
     const repeatXItems = Array.from(itemBuckets.values())
       .filter((bucket) => bucket.x > 0)
       .map((bucket) => ({
+        itemId: bucket.itemId,
+        checklistId: bucket.checklistId,
+        checklistTitle: bucket.checklistTitle,
         question: bucket.question,
         section: bucket.section,
+        category: bucket.category,
         xCount: bucket.x,
         totalCount: bucket.total,
         xRate: this.toRate(bucket.x, bucket.total),
+        affectedEmployeeCount: bucket.affectedEmployeeIds.size,
+        actionRequiredCount: bucket.actionRequiredCount,
+        actionCompletedCount: bucket.actionCompletedCount,
+        latestOccurredAt: bucket.latestOccurredAt,
+        recentEmployeeName: bucket.recentEmployeeName,
       }))
-      .sort((a, b) => b.xCount - a.xCount || b.xRate - a.xRate)
+      .sort((a, b) => b.xCount - a.xCount || b.xRate - a.xRate || b.affectedEmployeeCount - a.affectedEmployeeCount)
       .slice(0, 10);
 
     const employeeBuckets = new Map<string, {
@@ -1117,6 +1310,36 @@ export class SafetyChecklistsService {
       .slice(0, 10);
 
     return { dateFrom, dateTo, repeatNonSubmitters, repeatXItems };
+  }
+
+  async getDateRange(
+    filter: SafetyChecklistStatisticsFilterDto,
+    scopeOrganizationIds?: string[],
+  ): Promise<SafetyChecklistDateRangeDto> {
+    const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds, filter.companyId);
+    const where: Prisma.SafetyChecklistAssignmentWhereInput = {
+      ...(organizationIds ? { checklist: { organizationId: { in: organizationIds } } } : {}),
+      ...(filter.checklistId ? { checklistId: filter.checklistId } : {}),
+      ...this.buildAssignmentSnapshotFilter(filter),
+    };
+
+    const [first, last] = await this.prisma.$transaction([
+      this.prisma.safetyChecklistAssignment.findFirst({
+        where,
+        select: { inspectionDate: true },
+        orderBy: { inspectionDate: 'asc' },
+      }),
+      this.prisma.safetyChecklistAssignment.findFirst({
+        where,
+        select: { inspectionDate: true },
+        orderBy: { inspectionDate: 'desc' },
+      }),
+    ]);
+
+    return {
+      dateFrom: first ? this.formatDateOnly(first.inspectionDate) : null,
+      dateTo: last ? this.formatDateOnly(last.inspectionDate) : null,
+    };
   }
 
   private resolveStatsRange(
@@ -1338,7 +1561,7 @@ export class SafetyChecklistsService {
   }
 
   private buildSubmissionWhere(
-    filter: SafetyInspectionSubmissionFilterDto,
+    filter: Partial<SafetyInspectionSubmissionFilterDto>,
     scopeOrganizationIds?: string[],
   ): Prisma.SafetyInspectionSubmissionWhereInput {
     const where: Prisma.SafetyInspectionSubmissionWhereInput = {
@@ -1353,6 +1576,15 @@ export class SafetyChecklistsService {
       where.AND = [
         ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
         this.buildReviewStatusWhere(filter.reviewStatus),
+      ];
+    }
+
+    if (filter.actionStatus) {
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+        filter.actionStatus === SafetyInspectionActionStatusFilter.NOT_SUBMITTED
+          ? { id: '__not_submitted__' }
+          : this.buildActionStatusSubmissionWhere(filter.actionStatus),
       ];
     }
 
@@ -1397,6 +1629,14 @@ export class SafetyChecklistsService {
       and.push({ submission: { is: this.buildReviewStatusWhere(filter.reviewStatus) } });
     }
 
+    if (filter.actionStatus) {
+      if (filter.actionStatus === SafetyInspectionActionStatusFilter.NOT_SUBMITTED) {
+        and.push({ submission: { is: null } });
+      } else {
+        and.push({ submission: { is: this.buildActionStatusSubmissionWhere(filter.actionStatus) } });
+      }
+    }
+
     const employeeName = filter.employeeName || filter.search;
     if (employeeName) {
       and.push({
@@ -1436,6 +1676,30 @@ export class SafetyChecklistsService {
       ...(filter.groupId ? { groupIdAtAssign: filter.groupId } : {}),
       ...(filter.teamId ? { teamIdAtAssign: filter.teamId } : {}),
     };
+  }
+
+  private buildActionStatusSubmissionWhere(
+    actionStatus: SafetyInspectionActionStatusFilter,
+  ): Prisma.SafetyInspectionSubmissionWhereInput {
+    if (actionStatus === SafetyInspectionActionStatusFilter.NORMAL) {
+      return { xCount: { lte: 0 } };
+    }
+
+    if (actionStatus === SafetyInspectionActionStatusFilter.ACTION_REQUIRED) {
+      return {
+        xCount: { gt: 0 },
+        reviewStatus: { not: SafetyInspectionReviewStatus.ACTION_COMPLETED },
+      };
+    }
+
+    if (actionStatus === SafetyInspectionActionStatusFilter.ACTION_COMPLETED) {
+      return {
+        xCount: { gt: 0 },
+        reviewStatus: SafetyInspectionReviewStatus.ACTION_COMPLETED,
+      };
+    }
+
+    return { id: '__not_submitted__' };
   }
 
   private buildReviewStatusWhere(
@@ -1697,12 +1961,20 @@ export class SafetyChecklistsService {
         employeeIdAtAssign: true,
         employeeNameAtAssign: true,
         organizationNameAtAssign: true,
+        groupIdAtAssign: true,
+        groupNameAtAssign: true,
+        teamIdAtAssign: true,
+        teamNameAtAssign: true,
+        inspectionDate: true,
         status: true,
         submittedAt: true,
         submission: {
           select: {
+            id: true,
+            oCount: true,
             xCount: true,
             reviewStatus: true,
+            submittedAt: true,
           },
         },
       },
@@ -1762,12 +2034,21 @@ export class SafetyChecklistsService {
       targets: assignments
         .map((assignment) => ({
           assignmentId: assignment.id,
+          submissionId: assignment.submission?.id ?? null,
           employeeId: assignment.employeeId ?? assignment.employeeIdAtAssign,
           employeeName: resolveEmployeeDisplayName(assignment.employeeNameAtAssign, assignment.employeeIdAtAssign),
           organizationName: assignment.organizationNameAtAssign ?? null,
+          groupId: assignment.groupIdAtAssign ?? null,
+          groupName: assignment.groupNameAtAssign ?? null,
+          teamId: assignment.teamIdAtAssign ?? null,
+          teamName: assignment.teamNameAtAssign ?? null,
+          inspectionDate: assignment.inspectionDate,
           status: assignment.status,
           submitted: assignment.status === SafetyChecklistAssignmentStatus.SUBMITTED || Boolean(assignment.submission),
-          submittedAt: assignment.submittedAt ?? null,
+          submittedAt: assignment.submission?.submittedAt ?? assignment.submittedAt ?? null,
+          reviewStatus: assignment.submission?.reviewStatus ?? null,
+          oCount: assignment.submission?.oCount ?? 0,
+          xCount: assignment.submission?.xCount ?? 0,
           actionNeeded: Boolean(
             assignment.submission
             && assignment.submission.xCount > 0
@@ -1796,6 +2077,7 @@ export class SafetyChecklistsService {
     submittedAt: Date;
     assignment?: {
       id: string;
+      employeeIdAtAssign: string;
       inspectionDate: Date;
       organizationNameAtAssign: string | null;
       groupIdAtAssign: string | null;
@@ -1811,6 +2093,7 @@ export class SafetyChecklistsService {
       checklistId: row.checklistId,
       checklistTitle: row.checklist.title,
       employeeId: row.employeeId ?? null,
+      employeeIdAtAssign: row.assignment?.employeeIdAtAssign ?? row.employeeIdAtSubmit,
       employeeIdAtSubmit: row.employeeIdAtSubmit,
       employeeNameAtSubmit: resolveEmployeeDisplayName(row.employeeNameAtSubmit, row.employeeIdAtSubmit),
       organizationNameAtAssign: row.assignment?.organizationNameAtAssign ?? null,
@@ -1862,6 +2145,7 @@ export class SafetyChecklistsService {
       checklistId: row.checklistId,
       checklistTitle: row.checklist.title,
       employeeId: submission?.employeeId ?? row.employeeId ?? null,
+      employeeIdAtAssign: row.employeeIdAtAssign,
       employeeIdAtSubmit: submission?.employeeIdAtSubmit ?? row.employeeIdAtAssign,
       employeeNameAtSubmit: resolveEmployeeDisplayName(
         submission?.employeeNameAtSubmit ?? row.employeeNameAtAssign,
@@ -1879,6 +2163,41 @@ export class SafetyChecklistsService {
       oCount: submission?.oCount ?? 0,
       xCount: submission?.xCount ?? 0,
       submittedAt: submission?.submittedAt ?? null,
+    };
+  }
+
+  private buildAssignmentDetail(row: SafetyAssignmentDetailRow): SafetyInspectionSubmissionDetailDto {
+    const submission = row.submission ?? null;
+    const employeeIdAtSubmit = submission?.employeeIdAtSubmit ?? row.employeeIdAtAssign;
+    const employeeNameAtSubmit = submission?.employeeNameAtSubmit ?? row.employeeNameAtAssign;
+
+    return {
+      id: submission?.id ?? row.id,
+      assignmentId: row.id,
+      checklistId: row.checklistId,
+      checklistTitle: row.checklist.title,
+      employeeId: submission?.employeeId ?? row.employeeId ?? null,
+      employeeIdAtAssign: row.employeeIdAtAssign,
+      employeeIdAtSubmit,
+      employeeNameAtSubmit: resolveEmployeeDisplayName(employeeNameAtSubmit, employeeIdAtSubmit),
+      organizationNameAtAssign: row.organizationNameAtAssign ?? null,
+      groupIdAtAssign: row.groupIdAtAssign ?? null,
+      groupNameAtAssign: row.groupNameAtAssign ?? null,
+      teamIdAtAssign: row.teamIdAtAssign ?? null,
+      teamNameAtAssign: row.teamNameAtAssign ?? null,
+      inspectionDate: row.inspectionDate,
+      assignmentStatus: row.status,
+      submitted: Boolean(submission),
+      reviewStatus: submission?.reviewStatus ?? null,
+      oCount: submission?.oCount ?? 0,
+      xCount: submission?.xCount ?? 0,
+      submittedAt: submission?.submittedAt ?? null,
+      startedAt: row.startedAt ?? null,
+      dueAt: row.dueAt ?? null,
+      reviewComment: submission?.reviewComment ?? null,
+      reviewedAt: submission?.reviewedAt ?? null,
+      reviewedById: submission?.reviewedById ?? null,
+      answers: submission?.answers.map((answer) => this.buildAnswerDto(answer)) ?? [],
     };
   }
 
@@ -2095,7 +2414,7 @@ export class SafetyChecklistsService {
     const startDateString = input.startDate ?? this.getKstTodayString();
     const startDate = this.parseDateOnly(startDateString);
     const endDate = input.endDate ? this.parseDateOnly(input.endDate) : startDate;
-    const dates = this.getDateRange(startDate, endDate);
+    const dates = this.buildDateRange(startDate, endDate);
     const startTime = input.startTime ?? '09:00';
     const endTime = input.endTime ?? '17:00';
     this.assertTimeRange(startTime, endTime);
@@ -2376,11 +2695,15 @@ export class SafetyChecklistsService {
     return date.toISOString().slice(0, 10);
   }
 
+  private formatKstDateOnly(date: Date): string {
+    return new Date(date.getTime() + KST_OFFSET_MS).toISOString().slice(0, 10);
+  }
+
   private combineKstDateTime(date: string, time: string): Date {
     return new Date(`${date}T${time}:00.000+09:00`);
   }
 
-  private getDateRange(startDate: Date, endDate: Date): Date[] {
+  private buildDateRange(startDate: Date, endDate: Date): Date[] {
     if (startDate > endDate) {
       throw new BadRequestException('endDate cannot be earlier than startDate.');
     }

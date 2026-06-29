@@ -79,6 +79,13 @@ function parseStringArray(value: unknown): string[] {
   return raw.split(',').map((entry) => entry.trim()).filter(Boolean);
 }
 
+export enum SafetyInspectionActionStatusFilter {
+  NORMAL = 'NORMAL',
+  ACTION_REQUIRED = 'ACTION_REQUIRED',
+  NOT_SUBMITTED = 'NOT_SUBMITTED',
+  ACTION_COMPLETED = 'ACTION_COMPLETED',
+}
+
 export class SafetyChecklistItemInputDto {
   @ApiPropertyOptional({ description: '점검 항목 분류', example: '추락 예방' })
   @Transform(({ value }) => normalizeOptionalString(value))
@@ -353,6 +360,12 @@ export class SafetyInspectionSubmissionFilterDto extends PaginationDto {
   @IsEnum(SafetyInspectionReviewStatus)
   reviewStatus?: SafetyInspectionReviewStatus;
 
+  @ApiPropertyOptional({ enum: SafetyInspectionActionStatusFilter })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsOptional()
+  @IsEnum(SafetyInspectionActionStatusFilter)
+  actionStatus?: SafetyInspectionActionStatusFilter;
+
   @ApiPropertyOptional({ example: '2026-06-01' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()
@@ -391,6 +404,40 @@ export class SafetyInspectionSubmissionFilterDto extends PaginationDto {
   @IsOptional()
   @IsString()
   teamId?: string;
+}
+
+export class SafetyInspectionAssignmentDateQueryDto {
+  @ApiProperty({ description: '체크리스트 ID' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsString()
+  checklistId!: string;
+
+  @ApiProperty({ description: '배정 당시 작업자 ID' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsString()
+  employeeIdAtAssign!: string;
+
+  @ApiProperty({ description: '점검일', example: '2026-06-29' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  inspectionDate!: string;
+}
+
+export class SafetyInspectionAssignmentDatesQueryDto {
+  @ApiProperty({ description: '체크리스트 ID' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsString()
+  checklistId!: string;
+
+  @ApiProperty({ description: '배정 당시 작업자 ID' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsString()
+  employeeIdAtAssign!: string;
+}
+
+export class SafetyInspectionAssignmentDatesResponseDto {
+  @ApiProperty({ type: [String], example: ['2026-06-23', '2026-06-24'] })
+  dates!: string[];
 }
 
 export class ReviewSafetyInspectionSubmissionDto {
@@ -556,12 +603,21 @@ export class SafetyChecklistAssignmentDto {
 
 export class SafetyChecklistTodayTargetDto {
   assignmentId!: string;
+  submissionId!: string | null;
   employeeId!: string | null;
   employeeName!: string;
   organizationName!: string | null;
+  groupId!: string | null;
+  groupName!: string | null;
+  teamId!: string | null;
+  teamName!: string | null;
+  inspectionDate!: Date;
   status!: SafetyChecklistAssignmentStatus;
   submitted!: boolean;
   submittedAt!: Date | null;
+  reviewStatus!: SafetyInspectionReviewStatus | null;
+  oCount!: number;
+  xCount!: number;
   actionNeeded!: boolean;
   actionCompleted!: boolean;
 }
@@ -618,6 +674,7 @@ export class SafetyInspectionSubmissionListItemDto {
   checklistId!: string;
   checklistTitle!: string;
   employeeId!: string | null;
+  employeeIdAtAssign!: string;
   employeeIdAtSubmit!: string;
   employeeNameAtSubmit!: string;
   organizationNameAtAssign!: string | null;
@@ -694,6 +751,11 @@ export class SafetyChecklistStatisticsFilterDto {
   @IsOptional()
   @IsString()
   teamId?: string;
+}
+
+export class SafetyChecklistDateRangeDto {
+  dateFrom!: string | null;
+  dateTo!: string | null;
 }
 
 export class SafetyChecklistStatisticsSummaryDto {
@@ -780,11 +842,20 @@ export class SafetyChecklistPatternsFilterDto {
 }
 
 export class SafetyChecklistRepeatXItemDto {
+  itemId!: string | null;
+  checklistId!: string;
+  checklistTitle!: string;
   question!: string;
   section!: string | null;
+  category!: string | null;
   xCount!: number;
   totalCount!: number;
   xRate!: number;
+  affectedEmployeeCount!: number;
+  actionRequiredCount!: number;
+  actionCompletedCount!: number;
+  latestOccurredAt!: Date | null;
+  recentEmployeeName!: string | null;
 }
 
 export class SafetyChecklistRepeatNonSubmitterDto {

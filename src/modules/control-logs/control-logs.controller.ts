@@ -22,6 +22,7 @@ import {
   ControlLogFilterDto,
   ControlLogResponseDto,
   ControlLogListResponseDto,
+  ControlLogDateRangeDto,
   ControlLogStatsDto,
   EmployeeLogStatsDto,
 } from './dto';
@@ -48,6 +49,16 @@ export class ControlLogsController {
   @ApiResponse({ status: 200, description: '로그 목록', type: ControlLogListResponseDto })
   async findAll(@Req() req: AuthenticatedAdminRequest, @Query() filter: ControlLogFilterDto): Promise<ControlLogListResponseDto> {
     return this.controlLogsService.findAll(filter, req.organizationScopeIds ?? undefined);
+  }
+
+  @Get('date-range')
+  @ApiOperation({ summary: '제어 로그 데이터 날짜 범위 조회' })
+  @ApiResponse({ status: 200, type: ControlLogDateRangeDto })
+  async getDateRange(
+    @Req() req: AuthenticatedAdminRequest,
+    @Query() filter: ControlLogFilterDto,
+  ): Promise<ControlLogDateRangeDto> {
+    return this.controlLogsService.getDateRange(filter, req.organizationScopeIds ?? undefined);
   }
 
   @Get('stats')

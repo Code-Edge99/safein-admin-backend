@@ -207,6 +207,14 @@ export class TbmAdminListItemDto {
   updatedAt!: Date;
 }
 
+export class TbmDateRangeDto {
+  @ApiPropertyOptional({ description: '가장 이른 교육일', nullable: true, example: '2026-06-01' })
+  dateFrom!: string | null;
+
+  @ApiPropertyOptional({ description: '가장 늦은 교육일', nullable: true, example: '2026-06-30' })
+  dateTo!: string | null;
+}
+
 export class TbmAdminDetailDto {
   @ApiProperty({ description: 'TBM ID' })
   id!: string;
