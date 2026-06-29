@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { ValidationError } from 'class-validator';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
@@ -10,6 +11,7 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
 import { RequestLoggingInterceptor } from './common/interceptors/request-logging.interceptor';
 import { readStageConfig, resolveRuntimeStage } from './common/config/stage.config';
 import { PersistentAuditLogger } from './common/utils/persistent-audit.logger';
+import { buildKoreanValidationMessages } from './common/utils/validation-error-message.util';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -75,6 +77,9 @@ async function bootstrap() {
       transformOptions: {
         enableImplicitConversion: true,
       },
+      exceptionFactory: (errors: ValidationError[] = []) => (
+        new BadRequestException(buildKoreanValidationMessages(errors))
+      ),
     }),
   );
 
