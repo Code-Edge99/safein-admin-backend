@@ -333,7 +333,7 @@ export class SafetyChecklistsService {
     const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds);
     const organizationId = this.resolveOwnerOrganizationId(dto.organizationId, fallbackOrganizationId);
     this.assertOrganizationInScope(organizationId, organizationIds);
-    await this.assertOrganizationExists(organizationId);
+    await this.assertCompanyOrganizationExists(organizationId);
 
     const normalizedSections = this.normalizeSections(dto.sections);
     const status = dto.status ?? SafetyChecklistStatus.ACTIVE;
@@ -2633,14 +2633,18 @@ export class SafetyChecklistsService {
     return organizationId;
   }
 
-  private async assertOrganizationExists(organizationId: string): Promise<void> {
+  private async assertCompanyOrganizationExists(organizationId: string): Promise<void> {
     const organization = await this.prisma.organization.findFirst({
       where: { id: organizationId, deletedAt: null, isActive: true },
-      select: { id: true },
+      select: { id: true, parentId: true, teamCode: true },
     });
 
     if (!organization) {
       throw new NotFoundException('Organization not found.');
+    }
+
+    if (resolveOrganizationClassification(organization) !== 'COMPANY') {
+      throw new BadRequestException('체크리스트를 저장할 회사를 선택해 주세요.');
     }
   }
 
