@@ -841,6 +841,8 @@ export class DashboardService {
           ...(controlLogScopeCondition ? { AND: [controlLogScopeCondition] } : {}),
         },
         select: {
+          employeeId: true,
+          zoneId: true,
           timestamp: true,
           type: true,
           action: true,
@@ -864,12 +866,28 @@ export class DashboardService {
         orderBy: { hour: 'asc' },
       });
 
+      const previousZoneStats = await this.prisma.zoneViolationStat.findMany({
+        where: {
+          date: targetDate,
+          zone: { organizationId },
+        },
+        select: {
+          zoneId: true,
+          violationCount: true,
+          uniqueEmployees: true,
+        },
+      });
+
       const hourlyMap = new Map<number, {
         totalEvents: number;
         allowedEvents: number;
         totalBlocks: number;
         behaviorBlocks: number;
         appControlBlocks: number;
+      }>();
+      const zoneViolationMap = new Map<string, {
+        violationCount: number;
+        employeeIds: Set<string>;
       }>();
 
       for (let hour = 0; hour < 24; hour += 1) {
@@ -906,6 +924,15 @@ export class DashboardService {
         }
         if (isBlocked && isAppControl) {
           appControlBlocks += 1;
+        }
+        if (isBlocked && log.zoneId) {
+          const zoneBucket = zoneViolationMap.get(log.zoneId) ?? {
+            violationCount: 0,
+            employeeIds: new Set<string>(),
+          };
+          zoneBucket.violationCount += 1;
+          zoneBucket.employeeIds.add(log.employeeId);
+          zoneViolationMap.set(log.zoneId, zoneBucket);
         }
 
         const hour = this.getKstHourFromUtc(log.timestamp);
@@ -991,6 +1018,24 @@ export class DashboardService {
           })),
         });
 
+        await tx.zoneViolationStat.deleteMany({
+          where: {
+            date: targetDate,
+            zone: { organizationId },
+          },
+        });
+
+        if (zoneViolationMap.size > 0) {
+          await tx.zoneViolationStat.createMany({
+            data: Array.from(zoneViolationMap.entries()).map(([zoneId, value]) => ({
+              zoneId,
+              date: targetDate,
+              violationCount: value.violationCount,
+              uniqueEmployees: value.employeeIds.size,
+            })),
+          });
+        }
+
         await tx.auditLog.create({
           data: {
             accountId,
@@ -1011,6 +1056,7 @@ export class DashboardService {
                   }
                 : null,
               hourlyTotalBlocks: previousHourly.reduce((sum, row) => sum + row.totalBlocks, 0),
+              zoneViolationTotal: previousZoneStats.reduce((sum, row) => sum + row.violationCount, 0),
             },
             changesAfter: {
               daily: {
@@ -1022,6 +1068,7 @@ export class DashboardService {
                 complianceRate,
               },
               hourlyTotalBlocks: Array.from(hourlyMap.values()).reduce((sum, row) => sum + row.totalBlocks, 0),
+              zoneViolationTotal: Array.from(zoneViolationMap.values()).reduce((sum, row) => sum + row.violationCount, 0),
               meta: {
                 reaggregatedAt: new Date().toISOString(),
                 timezone: 'KST',
@@ -1041,6 +1088,7 @@ export class DashboardService {
         behaviorBlocks,
         appControlBlocks,
         complianceRate,
+        zoneViolationCount: Array.from(zoneViolationMap.values()).reduce((sum, row) => sum + row.violationCount, 0),
       });
     }
 
@@ -1051,7 +1099,7 @@ export class DashboardService {
     return {
       success: true,
       sourceOfTruth: 'ControlLog',
-      derivedTargets: ['OrganizationDailyStat', 'HourlyBlockStat'],
+      derivedTargets: ['OrganizationDailyStat', 'HourlyBlockStat', 'ZoneViolationStat'],
       date: dto.date,
       results,
     };

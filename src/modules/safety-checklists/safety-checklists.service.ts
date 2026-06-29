@@ -837,12 +837,13 @@ export class SafetyChecklistsService {
     scopeOrganizationIds: string[] | undefined,
     actorId: string | undefined,
   ): Promise<SafetyInspectionSubmissionDetailDto> {
-    await this.findSubmissionDetail(id, scopeOrganizationIds);
+    const existing = await this.findSubmissionDetail(id, scopeOrganizationIds);
 
     await this.prisma.safetyInspectionSubmission.update({
       where: { id },
       data: {
-        reviewStatus: dto.reviewStatus,
+        reviewStatus: this.normalizeSubmittedReviewStatus(dto.reviewStatus, existing.xCount)
+          ?? SafetyInspectionReviewStatus.CONFIRMED,
         reviewComment: dto.reviewComment ?? null,
         reviewedAt: new Date(),
         reviewedById: actorId,
@@ -2046,7 +2047,10 @@ export class SafetyChecklistsService {
           status: assignment.status,
           submitted: assignment.status === SafetyChecklistAssignmentStatus.SUBMITTED || Boolean(assignment.submission),
           submittedAt: assignment.submission?.submittedAt ?? assignment.submittedAt ?? null,
-          reviewStatus: assignment.submission?.reviewStatus ?? null,
+          reviewStatus: this.normalizeSubmittedReviewStatus(
+            assignment.submission?.reviewStatus ?? null,
+            assignment.submission?.xCount ?? 0,
+          ),
           oCount: assignment.submission?.oCount ?? 0,
           xCount: assignment.submission?.xCount ?? 0,
           actionNeeded: Boolean(
@@ -2061,6 +2065,23 @@ export class SafetyChecklistsService {
           ),
         })),
     };
+  }
+
+  private normalizeSubmittedReviewStatus(
+    reviewStatus: SafetyInspectionReviewStatus | null | undefined,
+    xCount: number,
+  ): SafetyInspectionReviewStatus | null {
+    if (!reviewStatus) {
+      return null;
+    }
+
+    if (xCount <= 0) {
+      return SafetyInspectionReviewStatus.CONFIRMED;
+    }
+
+    return reviewStatus === SafetyInspectionReviewStatus.ACTION_COMPLETED
+      ? SafetyInspectionReviewStatus.ACTION_COMPLETED
+      : SafetyInspectionReviewStatus.ACTION_REQUIRED;
   }
 
   private buildSubmissionListItem(row: {
@@ -2104,7 +2125,7 @@ export class SafetyChecklistsService {
       inspectionDate: row.assignment?.inspectionDate ?? null,
       assignmentStatus: row.assignment?.status ?? SafetyChecklistAssignmentStatus.SUBMITTED,
       submitted: true,
-      reviewStatus: row.reviewStatus,
+      reviewStatus: this.normalizeSubmittedReviewStatus(row.reviewStatus, row.xCount),
       oCount: row.oCount,
       xCount: row.xCount,
       submittedAt: row.submittedAt,
@@ -2159,7 +2180,9 @@ export class SafetyChecklistsService {
       inspectionDate: row.inspectionDate,
       assignmentStatus: row.status,
       submitted: Boolean(submission),
-      reviewStatus: submission?.reviewStatus ?? null,
+      reviewStatus: submission
+        ? this.normalizeSubmittedReviewStatus(submission.reviewStatus, submission.xCount)
+        : null,
       oCount: submission?.oCount ?? 0,
       xCount: submission?.xCount ?? 0,
       submittedAt: submission?.submittedAt ?? null,
@@ -2188,7 +2211,9 @@ export class SafetyChecklistsService {
       inspectionDate: row.inspectionDate,
       assignmentStatus: row.status,
       submitted: Boolean(submission),
-      reviewStatus: submission?.reviewStatus ?? null,
+      reviewStatus: submission
+        ? this.normalizeSubmittedReviewStatus(submission.reviewStatus, submission.xCount)
+        : null,
       oCount: submission?.oCount ?? 0,
       xCount: submission?.xCount ?? 0,
       submittedAt: submission?.submittedAt ?? null,
