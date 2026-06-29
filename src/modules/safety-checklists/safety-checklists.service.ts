@@ -56,7 +56,9 @@ import { buildContentDisposition, isSafetyInspectionImageFile, resolveSafetyInsp
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 20;
-const MAX_DEPLOYMENT_DAYS = 366;
+const MAX_STATISTICS_RANGE_DAYS = 366;
+const ASSIGNMENT_CREATE_BATCH_SIZE = 1000;
+const DEPLOYMENT_TRANSACTION_TIMEOUT_MS = 300_000;
 
 const SAFETY_ASSIGNMENT_DETAIL_INCLUDE = Prisma.validator<Prisma.SafetyChecklistAssignmentInclude>()({
   checklist: { select: { id: true, title: true } },
@@ -388,7 +390,7 @@ export class SafetyChecklistsService {
       }
 
       return { checklistId: checklist.id, versionId: version.id, targetLanguages };
-    });
+    }, { timeout: DEPLOYMENT_TRANSACTION_TIMEOUT_MS });
 
     await this.queueSafetyChecklistVersionTranslations(createdResult.versionId, createdResult.targetLanguages);
     return this.findOne(createdResult.checklistId, organizationIds);
@@ -482,7 +484,7 @@ export class SafetyChecklistsService {
       }
 
       return { versionId, targetLanguages };
-    });
+    }, { timeout: DEPLOYMENT_TRANSACTION_TIMEOUT_MS });
 
     if (updateResult.versionId) {
       await this.queueSafetyChecklistVersionTranslations(updateResult.versionId, updateResult.targetLanguages);
@@ -588,7 +590,7 @@ export class SafetyChecklistsService {
       }
 
       return deploymentTargetLanguages;
-    });
+    }, { timeout: DEPLOYMENT_TRANSACTION_TIMEOUT_MS });
 
     await this.queueSafetyChecklistVersionTranslations(existing.currentVersionId, targetLanguages);
     return this.findOne(id, organizationIds);
@@ -1354,10 +1356,10 @@ export class SafetyChecklistsService {
     const fromStart = this.parseDateOnly(resolvedFrom);
 
     if (fromStart > toStart) {
-      throw new BadRequestException('endDate cannot be earlier than startDate.');
+      throw new BadRequestException('종료일은 시작일보다 빠를 수 없습니다.');
     }
-    if (this.addDays(fromStart, MAX_DEPLOYMENT_DAYS) < toStart) {
-      throw new BadRequestException('Date range is too long.');
+    if (this.addDays(fromStart, MAX_STATISTICS_RANGE_DAYS) < toStart) {
+      throw new BadRequestException('조회 기간이 너무 깁니다.');
     }
 
     return { dateFrom: resolvedFrom, dateTo: resolvedTo };
@@ -2439,7 +2441,7 @@ export class SafetyChecklistsService {
     const startDateString = input.startDate ?? this.getKstTodayString();
     const startDate = this.parseDateOnly(startDateString);
     const endDate = input.endDate ? this.parseDateOnly(input.endDate) : startDate;
-    const dates = this.buildDateRange(startDate, endDate);
+    this.assertDateRange(startDate, endDate);
     const startTime = input.startTime ?? '09:00';
     const endTime = input.endTime ?? '17:00';
     this.assertTimeRange(startTime, endTime);
@@ -2453,7 +2455,8 @@ export class SafetyChecklistsService {
     await this.removeOverlappingOpenAssignments(tx, {
       checklistId: input.checklistId,
       employeeIds: employees.map((employee) => employee.id),
-      inspectionDates: dates,
+      inspectionDateFrom: startDate,
+      inspectionDateTo: endDate,
     });
 
     const deployment = await tx.safetyChecklistDeployment.create({
@@ -2471,13 +2474,25 @@ export class SafetyChecklistsService {
     });
 
     const assignmentRows: Prisma.SafetyChecklistAssignmentCreateManyInput[] = [];
+    const flushAssignmentRows = async () => {
+      if (assignmentRows.length === 0) {
+        return;
+      }
+
+      await tx.safetyChecklistAssignment.createMany({
+        data: assignmentRows,
+        skipDuplicates: true,
+      });
+      assignmentRows.length = 0;
+    };
+
     for (const employee of employees) {
       const path = this.resolveOrganizationPath(employee.organizationId, organizationMap);
       const ownClassification = resolveOrganizationClassification(employee.organization);
       const group = path.group ?? (ownClassification === 'GROUP' ? employee.organization : null);
       const team = path.team ?? (ownClassification === 'UNIT' ? employee.organization : null);
 
-      for (const date of dates) {
+      for (let date = startDate; date <= endDate; date = this.addDays(date, 1)) {
         const dateString = this.formatDateOnly(date);
         assignmentRows.push({
           deploymentId: deployment.id,
@@ -2501,15 +2516,14 @@ export class SafetyChecklistsService {
           dueAt: this.combineKstDateTime(dateString, endTime),
           status: SafetyChecklistAssignmentStatus.PENDING,
         });
+
+        if (assignmentRows.length >= ASSIGNMENT_CREATE_BATCH_SIZE) {
+          await flushAssignmentRows();
+        }
       }
     }
 
-    if (assignmentRows.length > 0) {
-      await tx.safetyChecklistAssignment.createMany({
-        data: assignmentRows,
-        skipDuplicates: true,
-      });
-    }
+    await flushAssignmentRows();
 
     return Array.from(new Set(employees.map((employee) => employee.employeeAccount?.preferredLanguage ?? AppLanguage.ko)));
   }
@@ -2519,10 +2533,11 @@ export class SafetyChecklistsService {
     input: {
       checklistId: string;
       employeeIds: string[];
-      inspectionDates: Date[];
+      inspectionDateFrom: Date;
+      inspectionDateTo: Date;
     },
   ): Promise<void> {
-    if (input.employeeIds.length === 0 || input.inspectionDates.length === 0) {
+    if (input.employeeIds.length === 0) {
       return;
     }
 
@@ -2530,7 +2545,10 @@ export class SafetyChecklistsService {
       where: {
         checklistId: input.checklistId,
         employeeIdAtAssign: { in: input.employeeIds },
-        inspectionDate: { in: input.inspectionDates },
+        inspectionDate: {
+          gte: input.inspectionDateFrom,
+          lte: input.inspectionDateTo,
+        },
         status: { not: SafetyChecklistAssignmentStatus.SUBMITTED },
         submission: { is: null },
       },
@@ -2728,31 +2746,19 @@ export class SafetyChecklistsService {
     return new Date(`${date}T${time}:00.000+09:00`);
   }
 
-  private buildDateRange(startDate: Date, endDate: Date): Date[] {
+  private assertDateRange(startDate: Date, endDate: Date): void {
     if (startDate > endDate) {
-      throw new BadRequestException('endDate cannot be earlier than startDate.');
+      throw new BadRequestException('적용 종료일은 시작일보다 빠를 수 없습니다.');
     }
-
-    const dates: Date[] = [];
-    let cursor = startDate;
-    while (cursor <= endDate) {
-      dates.push(cursor);
-      if (dates.length > MAX_DEPLOYMENT_DAYS) {
-        throw new BadRequestException('Deployment range is too long.');
-      }
-      cursor = this.addDays(cursor, 1);
-    }
-
-    return dates;
   }
 
   private assertTimeRange(startTime: string, endTime: string): void {
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(endTime)) {
-      throw new BadRequestException('Time must be HH:MM.');
+      throw new BadRequestException('적용 시간은 HH:mm 형식이어야 합니다.');
     }
 
     if (startTime >= endTime) {
-      throw new BadRequestException('endTime must be later than startTime.');
+      throw new BadRequestException('적용 종료 시간은 시작 시간보다 늦어야 합니다.');
     }
   }
 }
