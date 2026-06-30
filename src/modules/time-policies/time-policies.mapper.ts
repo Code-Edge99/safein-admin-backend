@@ -6,6 +6,16 @@ function formatTime(date: Date): string {
   return `${hours}:${minutes}`;
 }
 
+function mapPolicyNames(relations: any[] | undefined): string[] {
+  if (!Array.isArray(relations)) {
+    return [];
+  }
+
+  return relations
+    .map((relation) => relation?.policy?.name)
+    .filter((name): name is string => typeof name === 'string' && name.trim().length > 0);
+}
+
 export function toTimePolicyResponseDto(policy: any, customTimeSlots?: TimeSlotDto[]): TimePolicyResponseDto {
   const timeSlots: TimeSlotDto[] = customTimeSlots || [
     {
@@ -34,6 +44,7 @@ export function toTimePolicyResponseDto(policy: any, customTimeSlots?: TimeSlotD
     organization: policy.organization,
     excludePeriods: formattedExcludePeriods,
     affectedEmployeeCount,
+    policyNames: mapPolicyNames(policy.policyTimePolicies),
     createdAt: policy.createdAt,
     updatedAt: policy.updatedAt,
   };

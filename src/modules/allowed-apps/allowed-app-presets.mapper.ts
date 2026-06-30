@@ -1,5 +1,15 @@
 import { AllowedAppPresetDetailDto, AllowedAppPresetResponseDto } from './dto';
 
+function mapPolicyNames(relations: any[] | undefined): string[] {
+  if (!Array.isArray(relations)) {
+    return [];
+  }
+
+  return relations
+    .map((relation) => relation?.policy?.name)
+    .filter((name): name is string => typeof name === 'string' && name.trim().length > 0);
+}
+
 export function toAllowedAppPresetResponseDto(
   preset: any,
   normalizePlatform: (platform?: string) => 'android' | 'ios',
@@ -12,6 +22,7 @@ export function toAllowedAppPresetResponseDto(
     platform: normalizePlatform(preset.platform),
     appCount: preset._count?.items || 0,
     policyCount: preset._count?.policyPresets || 0,
+    policyNames: mapPolicyNames(preset.policyPresets),
     createdAt: preset.createdAt,
     updatedAt: preset.updatedAt,
   };

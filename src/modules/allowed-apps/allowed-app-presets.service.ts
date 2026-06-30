@@ -167,6 +167,14 @@ export class AllowedAppPresetsService {
         _count: {
           select: { items: true, policyPresets: true },
         },
+        policyPresets: {
+          where: {
+            policy: { deletedAt: null, isDraft: false },
+          },
+          include: {
+            policy: { select: { id: true, name: true } },
+          },
+        },
       },
     });
 
@@ -222,6 +230,14 @@ export class AllowedAppPresetsService {
           _count: {
             select: { items: true, policyPresets: true },
           },
+          policyPresets: {
+            where: {
+              policy: { deletedAt: null, isDraft: false },
+            },
+            include: {
+              policy: { select: { id: true, name: true } },
+            },
+          },
         },
         orderBy: { name: 'asc' },
       }),
@@ -250,7 +266,15 @@ export class AllowedAppPresetsService {
           },
         },
         _count: {
-          select: { policyPresets: true },
+          select: { items: true, policyPresets: true },
+        },
+        policyPresets: {
+          where: {
+            policy: { deletedAt: null, isDraft: false },
+          },
+          include: {
+            policy: { select: { id: true, name: true } },
+          },
         },
       },
     });
@@ -346,7 +370,15 @@ export class AllowedAppPresetsService {
             },
           },
           _count: {
-            select: { policyPresets: true },
+            select: { items: true, policyPresets: true },
+          },
+          policyPresets: {
+            where: {
+              policy: { deletedAt: null, isDraft: false },
+            },
+            include: {
+              policy: { select: { id: true, name: true } },
+            },
           },
         },
       });
@@ -518,6 +550,14 @@ export class AllowedAppPresetsService {
         },
         _count: {
           select: { items: true, policyPresets: true },
+        },
+        policyPresets: {
+          where: {
+            policy: { deletedAt: null, isDraft: false },
+          },
+          include: {
+            policy: { select: { id: true, name: true } },
+          },
         },
       },
       orderBy: { name: 'asc' },

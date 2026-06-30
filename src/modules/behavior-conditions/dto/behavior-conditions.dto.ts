@@ -100,6 +100,9 @@ export class BehaviorConditionResponseDto {
   @ApiProperty({ description: '연결된 정책 수' })
   policyCount: number;
 
+  @ApiPropertyOptional({ description: '이 행동관리를 사용하는 통제 정책명 목록', type: [String] })
+  policyNames?: string[];
+
   @ApiProperty({ description: '생성일시' })
   createdAt: Date;
 

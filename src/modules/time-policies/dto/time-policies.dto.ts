@@ -184,6 +184,9 @@ export class TimePolicyResponseDto {
   @ApiProperty({ description: '적용 직원 수' })
   affectedEmployeeCount: number;
 
+  @ApiPropertyOptional({ description: '이 시간관리를 사용하는 통제 정책명 목록', type: [String] })
+  policyNames?: string[];
+
   @ApiProperty({ description: '생성일시' })
   createdAt: Date;
 

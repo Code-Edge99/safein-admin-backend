@@ -30,6 +30,16 @@ function parseZoneCoordinates(rawCoordinates: unknown): ZoneCoordinatePoint[] {
   }
 }
 
+function mapPolicyNames(relations: any[] | undefined): string[] {
+  if (!Array.isArray(relations)) {
+    return [];
+  }
+
+  return relations
+    .map((relation) => relation?.policy?.name)
+    .filter((name): name is string => typeof name === 'string' && name.trim().length > 0);
+}
+
 export function toZoneResponseDto(zone: any): ZoneResponseDto {
   return {
     id: zone.id,
@@ -47,6 +57,7 @@ export function toZoneResponseDto(zone: any): ZoneResponseDto {
     centerLng: zone.centerLon ?? undefined,
     groupId: zone.groupId,
     organization: zone.organization,
+    policyNames: mapPolicyNames(zone.policyZones),
     createdAt: zone.createdAt,
     updatedAt: zone.updatedAt,
   };

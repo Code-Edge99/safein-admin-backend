@@ -100,6 +100,15 @@ type TbmPushLocalizationContext = {
   messageSourceLanguage?: AppLanguage;
 };
 
+type TbmParticipantOrganizationScope = {
+  organizationIdAtAssign: string | null;
+};
+
+type TbmAuthorCompanyScope = {
+  organizationIdAtCreate: string;
+  authorOrganizationIdAtCreate: string | null;
+};
+
 @Injectable()
 export class TbmsService {
   private readonly logger = new Logger(TbmsService.name);
@@ -183,6 +192,69 @@ export class TbmsService {
     }
 
     return Array.from(visited);
+  }
+
+  private resolveTbmAuthorCompanyId(
+    row: TbmAuthorCompanyScope,
+    organizationMap: Map<string, OrganizationNode>,
+  ): string | null {
+    if (row.organizationIdAtCreate) {
+      return row.organizationIdAtCreate;
+    }
+
+    if (!row.authorOrganizationIdAtCreate) {
+      return null;
+    }
+
+    return this.resolveOrganizationPath(row.authorOrganizationIdAtCreate, organizationMap).company?.id ?? null;
+  }
+
+  private resolveTbmAuthorCompanyOrganizationIds(
+    row: TbmAuthorCompanyScope,
+    organizationMap: Map<string, OrganizationNode>,
+  ): Set<string> {
+    const companyId = this.resolveTbmAuthorCompanyId(row, organizationMap);
+    if (!companyId) {
+      return new Set();
+    }
+
+    return new Set(this.collectDescendantOrganizationIds(companyId, organizationMap));
+  }
+
+  private filterParticipantsInAuthorCompany<T extends TbmParticipantOrganizationScope>(
+    row: TbmAuthorCompanyScope,
+    participants: T[],
+    organizationMap: Map<string, OrganizationNode>,
+  ): T[] {
+    const companyOrganizationIds = this.resolveTbmAuthorCompanyOrganizationIds(row, organizationMap);
+    if (companyOrganizationIds.size === 0) {
+      return [];
+    }
+
+    return participants.filter(
+      (participant) => !!participant.organizationIdAtAssign
+        && companyOrganizationIds.has(participant.organizationIdAtAssign),
+    );
+  }
+
+  private assertEmployeeInAuthorCompany(
+    employee: { organizationId: string },
+    companyOrganizationIds: Set<string>,
+    label: string,
+  ): void {
+    if (!companyOrganizationIds.has(employee.organizationId)) {
+      throw new BadRequestException(`${label}는 작성자 회사 범위 안의 직원만 지정할 수 있습니다.`);
+    }
+  }
+
+  private assertParticipantSnapshotInAuthorCompany(
+    participant: TbmParticipantOrganizationScope,
+    companyOrganizationIds: Set<string>,
+    label: string,
+  ): void {
+    if (!participant.organizationIdAtAssign || !companyOrganizationIds.has(participant.organizationIdAtAssign)) {
+      throw new BadRequestException(`${label}는 작성자 회사 범위 안의 직원만 지정할 수 있습니다.`);
+    }
   }
 
   // ============ 날짜/콘텐츠 헬퍼 ============
@@ -578,10 +650,13 @@ export class TbmsService {
         title: true,
         sourceLanguage: true,
         scheduledDate: true,
+        organizationIdAtCreate: true,
+        authorOrganizationIdAtCreate: true,
         participants: {
           select: {
             employeeId: true,
             employeeIdAtAssign: true,
+            organizationIdAtAssign: true,
             languageAtAssigned: true,
           },
         },
@@ -592,7 +667,9 @@ export class TbmsService {
       return;
     }
 
-    const recipients = this.resolveTbmPushRecipients(tbm.participants);
+    const organizationMap = await this.getOrganizationMap();
+    const visibleParticipants = this.filterParticipantsInAuthorCompany(tbm, tbm.participants, organizationMap);
+    const recipients = this.resolveTbmPushRecipients(visibleParticipants);
 
     if (recipients.length === 0) {
       return;
@@ -833,6 +910,7 @@ export class TbmsService {
     }
     return {
       OR: [
+        { organizationIdAtCreate: { in: organizationIds } },
         { authorOrganizationIdAtCreate: { in: organizationIds } },
         { participants: { some: { organizationIdAtAssign: { in: organizationIds } } } },
       ],
@@ -840,15 +918,19 @@ export class TbmsService {
   }
 
   private async assertTbmInScope(
-    row: { authorOrganizationIdAtCreate: string | null; participants: Array<{ organizationIdAtAssign: string | null }> },
+    row: TbmAuthorCompanyScope & { participants: Array<{ organizationIdAtAssign: string | null }> },
     scopeOrganizationIds: string[] | undefined,
   ): Promise<void> {
     if (!scopeOrganizationIds) {
       return;
     }
     const scope = new Set(scopeOrganizationIds);
-    const authorInScope = !!row.authorOrganizationIdAtCreate && scope.has(row.authorOrganizationIdAtCreate);
-    const attendeeInScope = row.participants.some(
+    const organizationMap = await this.getOrganizationMap();
+    const authorCompanyId = this.resolveTbmAuthorCompanyId(row, organizationMap);
+    const authorInScope = (!!authorCompanyId && scope.has(authorCompanyId))
+      || (!!row.authorOrganizationIdAtCreate && scope.has(row.authorOrganizationIdAtCreate));
+    const visibleParticipants = this.filterParticipantsInAuthorCompany(row, row.participants, organizationMap);
+    const attendeeInScope = visibleParticipants.some(
       (p) => !!p.organizationIdAtAssign && scope.has(p.organizationIdAtAssign),
     );
     if (!authorInScope && !attendeeInScope) {
@@ -858,12 +940,75 @@ export class TbmsService {
 
   // ============ 직원 후보 조회 ============
 
+  private isTbmVisibleInOrganizationIds(
+    row: TbmAuthorCompanyScope & { participants: Array<{ organizationIdAtAssign: string | null }> },
+    organizationIds: string[] | undefined,
+    organizationMap: Map<string, OrganizationNode>,
+  ): boolean {
+    if (!organizationIds) {
+      return true;
+    }
+
+    const scope = new Set(organizationIds);
+    const authorCompanyId = this.resolveTbmAuthorCompanyId(row, organizationMap);
+    const authorInScope = (!!authorCompanyId && scope.has(authorCompanyId))
+      || (!!row.authorOrganizationIdAtCreate && scope.has(row.authorOrganizationIdAtCreate));
+    if (authorInScope) {
+      return true;
+    }
+
+    return this.filterParticipantsInAuthorCompany(row, row.participants, organizationMap).some(
+      (participant) => !!participant.organizationIdAtAssign && scope.has(participant.organizationIdAtAssign),
+    );
+  }
+
+  private matchesConfirmFilter(
+    participants: Array<{ state: TbmParticipantState }>,
+    confirmFilter: TbmAttendeeConfirmFilter | undefined,
+  ): boolean {
+    if (confirmFilter === TbmAttendeeConfirmFilter.HAS_PENDING) {
+      return participants.some((participant) => participant.state === TbmParticipantState.PENDING);
+    }
+
+    if (confirmFilter === TbmAttendeeConfirmFilter.ALL_CONFIRMED) {
+      return participants.every((participant) => participant.state !== TbmParticipantState.PENDING);
+    }
+
+    return true;
+  }
+
   async findCandidates(
     filter: TbmCandidateFilterDto,
     scopeOrganizationIds: string[] | undefined,
   ): Promise<TbmCandidateResponseDto> {
     const organizationMap = await this.getOrganizationMap();
-    const organizationIds = await this.resolveQueryOrganizationIds(scopeOrganizationIds, filter.organizationId);
+    let organizationIds = await this.resolveQueryOrganizationIds(scopeOrganizationIds, filter.organizationId);
+
+    if (filter.authorEmployeeId) {
+      const author = await this.prisma.employee.findUnique({
+        where: { id: filter.authorEmployeeId },
+        include: {
+          employeeAccount: { select: { isActive: true } },
+        },
+      });
+
+      if (!author) {
+        throw new BadRequestException('작성자 직원을 찾을 수 없습니다.');
+      }
+
+      this.assertEmployeeSelectable(author, '작성자', scopeOrganizationIds);
+
+      const authorPath = this.resolveOrganizationPath(author.organizationId, organizationMap);
+      if (!authorPath.company) {
+        throw new BadRequestException('작성자의 소속 회사 정보를 확인할 수 없습니다.');
+      }
+
+      const authorCompanyOrganizationIds = new Set(
+        this.collectDescendantOrganizationIds(authorPath.company.id, organizationMap),
+      );
+      const candidateOrganizationIds = organizationIds ?? Array.from(authorCompanyOrganizationIds);
+      organizationIds = candidateOrganizationIds.filter((id) => authorCompanyOrganizationIds.has(id));
+    }
 
     const employees = await this.prisma.employee.findMany({
       where: {
@@ -961,30 +1106,29 @@ export class TbmsService {
       });
     }
 
-    if (filter.confirmFilter === TbmAttendeeConfirmFilter.HAS_PENDING) {
-      andConditions.push({ participants: { some: { state: TbmParticipantState.PENDING } } });
-    } else if (filter.confirmFilter === TbmAttendeeConfirmFilter.ALL_CONFIRMED) {
-      andConditions.push({ participants: { none: { state: TbmParticipantState.PENDING } } });
-    }
-
     const where: Prisma.TbmSessionWhereInput = { AND: andConditions };
 
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.tbmSession.findMany({
-        where,
-        include: {
-          participants: { select: { state: true, languageAtAssigned: true } },
-          originalAudio: { select: { id: true } },
-          _count: { select: { attachments: true } },
-        },
-        orderBy: [{ scheduledDate: 'desc' }, { createdAt: 'desc' }],
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.tbmSession.count({ where }),
-    ]);
+    const rows = await this.prisma.tbmSession.findMany({
+      where,
+      include: {
+        participants: { select: { state: true, languageAtAssigned: true, organizationIdAtAssign: true } },
+        originalAudio: { select: { id: true } },
+        _count: { select: { attachments: true } },
+      },
+      orderBy: [{ scheduledDate: 'desc' }, { createdAt: 'desc' }],
+    });
+    const organizationMap = await this.getOrganizationMap();
+    const visibleRows = rows
+      .filter((row) => this.isTbmVisibleInOrganizationIds(row, queryOrganizationIds, organizationMap))
+      .map((row) => ({
+        ...row,
+        participants: this.filterParticipantsInAuthorCompany(row, row.participants, organizationMap),
+      }))
+      .filter((row) => this.matchesConfirmFilter(row.participants, filter.confirmFilter));
+    const total = visibleRows.length;
+    const pagedRows = visibleRows.slice((page - 1) * limit, page * limit);
 
-    const data: TbmAdminListItemDto[] = rows.map((row) => ({
+    const data: TbmAdminListItemDto[] = pagedRows.map((row) => ({
       id: row.id,
       title: row.title,
       location: row.location,
@@ -1032,25 +1176,29 @@ export class TbmsService {
       });
     }
 
-    if (filter.confirmFilter === TbmAttendeeConfirmFilter.HAS_PENDING) {
-      andConditions.push({ participants: { some: { state: TbmParticipantState.PENDING } } });
-    } else if (filter.confirmFilter === TbmAttendeeConfirmFilter.ALL_CONFIRMED) {
-      andConditions.push({ participants: { none: { state: TbmParticipantState.PENDING } } });
-    }
-
     const where: Prisma.TbmSessionWhereInput = { AND: andConditions };
-    const [first, last] = await this.prisma.$transaction([
-      this.prisma.tbmSession.findFirst({
-        where,
-        select: { scheduledDate: true },
-        orderBy: { scheduledDate: 'asc' },
-      }),
-      this.prisma.tbmSession.findFirst({
-        where,
-        select: { scheduledDate: true },
-        orderBy: { scheduledDate: 'desc' },
-      }),
-    ]);
+    const rows = await this.prisma.tbmSession.findMany({
+      where,
+      select: {
+        organizationIdAtCreate: true,
+        authorOrganizationIdAtCreate: true,
+        scheduledDate: true,
+        participants: {
+          select: { state: true, organizationIdAtAssign: true },
+        },
+      },
+      orderBy: { scheduledDate: 'asc' },
+    });
+    const organizationMap = await this.getOrganizationMap();
+    const visibleRows = rows
+      .filter((row) => this.isTbmVisibleInOrganizationIds(row, queryOrganizationIds, organizationMap))
+      .map((row) => ({
+        ...row,
+        participants: this.filterParticipantsInAuthorCompany(row, row.participants, organizationMap),
+      }))
+      .filter((row) => this.matchesConfirmFilter(row.participants, filter.confirmFilter));
+    const first = visibleRows[0] ?? null;
+    const last = visibleRows[visibleRows.length - 1] ?? null;
 
     return {
       dateFrom: first ? this.getKstDateString(first.scheduledDate) : null,
@@ -1095,13 +1243,15 @@ export class TbmsService {
     row: Awaited<ReturnType<TbmsService['loadDetailRow']>>,
     request?: Request,
   ): Promise<TbmAdminDetailDto> {
+    const organizationMap = await this.getOrganizationMap();
+    const visibleParticipants = this.filterParticipantsInAuthorCompany(row, row.participants, organizationMap);
     const targetLanguages = Array.from(new Set([
-      ...row.participants.map((p) => p.languageAtAssigned),
+      ...visibleParticipants.map((p) => p.languageAtAssigned),
       row.sourceLanguage,
     ]));
     const targetStatuses = await this.getTranslationStatusesForRow(row, targetLanguages);
 
-    const attendees: TbmAdminAttendeeDto[] = row.participants.map((p) => ({
+    const attendees: TbmAdminAttendeeDto[] = visibleParticipants.map((p) => ({
       id: p.id,
       employeeId: p.employeeId,
       employeeIdAtAssign: p.employeeIdAtAssign,
@@ -1155,8 +1305,8 @@ export class TbmsService {
         downloadUrl: this.buildAbsoluteUrl(request, `/tbms/${row.id}/attachments/${attachment.id}/download`),
         createdAt: attachment.createdAt,
       })),
-      attendeeSummary: this.buildAttendeeSummary(row.participants),
-      languageSummary: this.buildLanguageSummary(row.participants),
+      attendeeSummary: this.buildAttendeeSummary(visibleParticipants),
+      languageSummary: this.buildLanguageSummary(visibleParticipants),
       attendees,
       translationTargets: targetLanguages.map((language) => ({
         language,
@@ -1190,7 +1340,9 @@ export class TbmsService {
     const row = await this.loadDetailRow(tbmId);
     await this.assertTbmInScope(row, scopeOrganizationIds);
 
-    const participant = row.participants.find((item) => item.id === attendeeId);
+    const organizationMap = await this.getOrganizationMap();
+    const visibleParticipants = this.filterParticipantsInAuthorCompany(row, row.participants, organizationMap);
+    const participant = visibleParticipants.find((item) => item.id === attendeeId);
     if (!participant) {
       throw new NotFoundException('TBM 참석자를 찾을 수 없습니다.');
     }
@@ -1356,6 +1508,10 @@ export class TbmsService {
         throw new BadRequestException('작성자의 소속 회사 정보를 확인할 수 없습니다.');
       }
 
+      const authorCompanyOrganizationIds = new Set(
+        this.collectDescendantOrganizationIds(authorPath.company.id, organizationMap),
+      );
+
       const attendeeEmployeeIds = Array.from(new Set(dto.attendeeEmployeeIds.map((id) => id.trim()).filter(Boolean)));
       if (attendeeEmployeeIds.length === 0) {
         throw new BadRequestException('참석자(교육 대상)를 1명 이상 선택해야 합니다.');
@@ -1367,6 +1523,7 @@ export class TbmsService {
       }
       for (const attendee of attendees) {
         this.assertEmployeeSelectable(attendee, '참석자', scopeOrganizationIds);
+        this.assertEmployeeInAuthorCompany(attendee, authorCompanyOrganizationIds, '참석자');
       }
 
       const scheduledDate = dto.scheduledDate
@@ -1497,6 +1654,8 @@ export class TbmsService {
       const organizationMap = await this.getOrganizationMap();
 
       // 참석자 교체 처리
+      const existingCompanyOrganizationIds = this.resolveTbmAuthorCompanyOrganizationIds(existing, organizationMap);
+
       let participantOps: Prisma.TbmSessionUpdateInput['participants'] | undefined;
       let nextParticipantLanguages = existing.participants.map((p) => p.languageAtAssigned);
 
@@ -1510,6 +1669,10 @@ export class TbmsService {
           existing.participants.map((p) => [p.employeeIdAtAssign, p]),
         );
         const keepIds = nextIds.filter((id) => existingByEmployeeId.has(id));
+        const keepParticipants = keepIds.map((id) => existingByEmployeeId.get(id)!);
+        for (const participant of keepParticipants) {
+          this.assertParticipantSnapshotInAuthorCompany(participant, existingCompanyOrganizationIds, '참석자');
+        }
         const addIds = nextIds.filter((id) => !existingByEmployeeId.has(id));
         const removeParticipantIds = existing.participants
           .filter((p) => !nextIds.includes(p.employeeIdAtAssign))
@@ -1521,6 +1684,7 @@ export class TbmsService {
         }
         for (const employee of addEmployees) {
           this.assertEmployeeSelectable(employee, '참석자', scopeOrganizationIds);
+          this.assertEmployeeInAuthorCompany(employee, existingCompanyOrganizationIds, '참석자');
         }
 
         participantOps = {
