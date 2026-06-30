@@ -23,6 +23,7 @@ import { MapsModule } from './modules/maps/maps.module';
 import { NoticesModule } from './modules/notices/notices.module';
 import { TbmsModule } from './modules/tbms/tbms.module';
 import { IncidentReportsModule } from './modules/incident-reports/incident-reports.module';
+import { SafetyChecklistsModule } from './modules/safety-checklists/safety-checklists.module';
 import { ReportMetricSettingsModule } from './modules/report-metric-settings/report-metric-settings.module';
 import { RequestBoardModule } from './modules/request-board/request-board.module';
 import { CommonCodesModule } from './modules/common-codes/common-codes.module';
@@ -30,6 +31,8 @@ import { DocumentIssuesModule } from './modules/document-issues/document-issues.
 import { RequestLoggingInterceptor } from './common/interceptors/request-logging.interceptor';
 import { TranslationModule } from './common/translation/translation.module';
 import { TranslationsModule } from './modules/translations/translations.module';
+import { SystemStorageModule } from './modules/system-storage/system-storage.module';
+import { HttpFileLogger } from './common/utils/http-file.logger';
 
 @Module({
   imports: [
@@ -64,13 +67,15 @@ import { TranslationsModule } from './modules/translations/translations.module';
     NoticesModule,
     TbmsModule,
     IncidentReportsModule,
+    SafetyChecklistsModule,
     ReportMetricSettingsModule,
     RequestBoardModule,
     CommonCodesModule,
     DocumentIssuesModule,
     TranslationsModule,
+    SystemStorageModule,
   ],
   controllers: [],
-  providers: [RequestLoggingInterceptor],
+  providers: [RequestLoggingInterceptor, HttpFileLogger],
 })
 export class AppModule {}

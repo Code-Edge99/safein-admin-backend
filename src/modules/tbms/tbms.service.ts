@@ -33,6 +33,7 @@ import {
   TbmAttendeeConfirmFilter,
   TbmCandidateFilterDto,
   TbmCandidateResponseDto,
+  TbmDateRangeDto,
   TbmListFilterDto,
   TbmPushMessageResultDto,
   TbmTranslationStatus,
@@ -1004,6 +1005,57 @@ export class TbmsService {
     }));
 
     return new PaginatedResponse(data, total, page, limit);
+  }
+
+  async getDateRange(
+    filter: TbmListFilterDto,
+    scopeOrganizationIds: string[] | undefined,
+  ): Promise<TbmDateRangeDto> {
+    const queryOrganizationIds = await this.resolveQueryOrganizationIds(scopeOrganizationIds, filter.organizationId);
+    const andConditions: Prisma.TbmSessionWhereInput[] = [
+      { deletedAt: null },
+      this.buildScopeWhere(queryOrganizationIds),
+    ];
+
+    if (filter.status) {
+      andConditions.push({ status: filter.status });
+    }
+
+    const trimmedSearch = filter.search?.trim();
+    if (trimmedSearch) {
+      andConditions.push({
+        OR: [
+          { title: { contains: trimmedSearch, mode: 'insensitive' } },
+          { location: { contains: trimmedSearch, mode: 'insensitive' } },
+          { authorNameAtCreate: { contains: trimmedSearch, mode: 'insensitive' } },
+        ],
+      });
+    }
+
+    if (filter.confirmFilter === TbmAttendeeConfirmFilter.HAS_PENDING) {
+      andConditions.push({ participants: { some: { state: TbmParticipantState.PENDING } } });
+    } else if (filter.confirmFilter === TbmAttendeeConfirmFilter.ALL_CONFIRMED) {
+      andConditions.push({ participants: { none: { state: TbmParticipantState.PENDING } } });
+    }
+
+    const where: Prisma.TbmSessionWhereInput = { AND: andConditions };
+    const [first, last] = await this.prisma.$transaction([
+      this.prisma.tbmSession.findFirst({
+        where,
+        select: { scheduledDate: true },
+        orderBy: { scheduledDate: 'asc' },
+      }),
+      this.prisma.tbmSession.findFirst({
+        where,
+        select: { scheduledDate: true },
+        orderBy: { scheduledDate: 'desc' },
+      }),
+    ]);
+
+    return {
+      dateFrom: first ? this.getKstDateString(first.scheduledDate) : null,
+      dateTo: last ? this.getKstDateString(last.scheduledDate) : null,
+    };
   }
 
   // ============ 상세 ============

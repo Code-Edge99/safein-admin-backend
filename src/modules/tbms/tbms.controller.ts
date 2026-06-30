@@ -31,6 +31,7 @@ import {
   TbmAdminListItemDto,
   TbmCandidateFilterDto,
   TbmCandidateResponseDto,
+  TbmDateRangeDto,
   TbmListFilterDto,
   TbmPushMessageResultDto,
   UpdateTbmDto,
@@ -131,6 +132,16 @@ export class TbmsController {
     @Query() filter: TbmListFilterDto,
   ) {
     return this.tbmsService.findAll(filter, req.organizationScopeIds ?? undefined);
+  }
+
+  @Get('date-range')
+  @ApiOperation({ summary: 'TBM 교육일시 데이터 날짜 범위 조회' })
+  @ApiResponse({ status: 200, type: TbmDateRangeDto })
+  getDateRange(
+    @Req() req: AuthenticatedAdminRequest,
+    @Query() filter: TbmListFilterDto,
+  ): Promise<TbmDateRangeDto> {
+    return this.tbmsService.getDateRange(filter, req.organizationScopeIds ?? undefined);
   }
 
   @Post()

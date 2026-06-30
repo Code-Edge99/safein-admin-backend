@@ -43,10 +43,10 @@ const resourceLabelMap: Record<string, string> = {
   employees: '직원 관리',
   organizations: '현장 관리',
   zones: '구역 관리',
-  'time-policies': '시간 정책 관리',
+  'time-policies': '시간 관리',
   'behavior-conditions': '행동 조건 관리',
-  'control-policies': '통제 정책 관리',
-  policies: '통제 정책 관리',
+  'control-policies': '스몸비 관리',
+  policies: '스몸비 관리',
   'allowed-apps': '허용 앱 관리',
   permissions: '권한 관리',
   dashboard: '대시보드',
@@ -57,7 +57,13 @@ const resourceLabelMap: Record<string, string> = {
   'control-logs': '제어 로그',
   controlpolicypush: '통제 정책',
   devices: '디바이스 관리',
-  'system-log': '시스템 로그',
+  auth: '인증',
+  profile: '프로필',
+  tbms: 'TBM',
+  notices: '공지사항',
+  'incident-reports': '위험 신고',
+  installers: '설치파일',
+  'app-system': '앱 시스템',
 };
 
 function toNumberOrNull(value: unknown): number | null {
@@ -82,7 +88,7 @@ function resolveResourceLabel(resourceType: unknown, resourceName: unknown): str
   const rawName = resolveDisplayValue(resourceName);
   const typeKey = toStringOrEmpty(resourceType).toLowerCase();
 
-  if (rawName && typeKey !== 'system-log' && !looksLikeHttpRequestResourceName(rawName)) {
+  if (rawName && !looksLikeHttpRequestResourceName(rawName)) {
     return rawName;
   }
 
@@ -99,7 +105,7 @@ function resolveAuditCategory(resourceType: unknown): FallbackSummary['category'
   const typeKey = toStringOrEmpty(resourceType).toLowerCase();
   if (typeKey === 'login-history') return 'auth';
   if (typeKey === 'control-logs') return 'control';
-  if (typeKey === 'system-log' || typeKey === 'devices') return 'batch';
+  if (typeKey === 'devices') return 'batch';
   return 'audit';
 }
 
@@ -259,7 +265,7 @@ function enrichChangesAfter(log: any): unknown {
   const before = toObject(log.changesBefore);
   if (!base) {
     return {
-      schemaVersion: 'system-log-v1',
+      schemaVersion: 'audit-event-v1',
       eventKind: 'audit-event',
       category: resolveAuditCategory(log.resourceType),
       summary: buildFallbackSummary(log, before, null),
@@ -272,7 +278,7 @@ function enrichChangesAfter(log: any): unknown {
 
   return {
     ...base,
-    schemaVersion: toStringOrEmpty(base.schemaVersion) || 'system-log-v1',
+    schemaVersion: toStringOrEmpty(base.schemaVersion) || 'audit-event-v1',
     eventKind: toStringOrEmpty(base.eventKind) || 'audit-event',
     category: toStringOrEmpty(base.category) || resolveAuditCategory(log.resourceType),
     summary: buildFallbackSummary(log, before, base),
@@ -330,10 +336,10 @@ export function toAuditLogResponseDto(log: any, options?: { revealActorIdentity?
     resourceId: log.resourceId,
     resourceName: log.resourceName,
     organizationId: log.organizationId,
-    changesBefore: log.changesBefore,
+    changesBefore: log.changesBefore ?? null,
     changesAfter: enrichedChangesAfter,
     ipAddress: log.ipAddress,
     timestamp: log.timestamp,
-    createdAt: log.createdAt,
+    createdAt: log.createdAt ?? log.timestamp,
   };
 }

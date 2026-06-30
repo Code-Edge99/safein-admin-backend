@@ -15,8 +15,28 @@ export function getIncidentReportUploadDir(): string {
   return INCIDENT_REPORT_UPLOAD_DIR;
 }
 
-export function normalizeUploadOriginalName(fileName: string): string {
+function recoverUtf8FileName(fileName: string): string {
   const trimmed = String(fileName || '').trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  try {
+    const recovered = Buffer.from(trimmed, 'latin1').toString('utf8').trim();
+    if (!recovered || recovered.includes('\uFFFD')) {
+      return trimmed;
+    }
+
+    return Buffer.from(recovered, 'utf8').toString('latin1') === trimmed
+      ? recovered
+      : trimmed;
+  } catch {
+    return trimmed;
+  }
+}
+
+export function normalizeUploadOriginalName(fileName: string): string {
+  const trimmed = recoverUtf8FileName(fileName);
   if (!trimmed) {
     return 'image.jpg';
   }

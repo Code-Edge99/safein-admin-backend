@@ -273,6 +273,14 @@ export class ControlLogListResponseDto {
   totalPages!: number;
 }
 
+export class ControlLogDateRangeDto {
+  @ApiPropertyOptional({ description: '가장 이른 로그 발생일', nullable: true, example: '2026-06-01' })
+  dateFrom!: string | null;
+
+  @ApiPropertyOptional({ description: '가장 늦은 로그 발생일', nullable: true, example: '2026-06-30' })
+  dateTo!: string | null;
+}
+
 export class ControlLogStatsDto {
   @ApiProperty({ description: '전체 로그 수' })
   totalLogs!: number;
