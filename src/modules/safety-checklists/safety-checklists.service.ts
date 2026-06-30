@@ -227,6 +227,7 @@ export class SafetyChecklistsService {
     );
     const where = this.buildChecklistWhere(filter, organizationIds);
     const today = this.parseDateOnly(this.getKstTodayString());
+    const currentTargetWhere = await this.buildCurrentTargetAssignmentWhere(undefined, organizationIds);
 
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.safetyChecklist.findMany({
@@ -250,7 +251,10 @@ export class SafetyChecklistsService {
             take: 1,
           },
           assignments: {
-            where: { inspectionDate: today },
+            where: this.appendAssignmentWhereCondition(
+              { inspectionDate: today },
+              currentTargetWhere,
+            ),
             select: {
               status: true,
               submission: { select: { id: true } },
@@ -337,7 +341,7 @@ export class SafetyChecklistsService {
       sections: version ? this.buildSections(version) : [],
       deployments: row.deployments.map((deployment) => this.buildDeploymentDto(deployment)),
       assignments: row.assignments.map((assignment) => this.buildAssignmentDto(assignment)),
-      todaySummary: await this.buildTodaySummary(row.id),
+      todaySummary: await this.buildTodaySummary(row.id, latestDeploymentTargetEmployeeIds),
       latestDeploymentTargetEmployeeIds,
     };
   }
@@ -751,13 +755,14 @@ export class SafetyChecklistsService {
     scopeOrganizationIds?: string[],
   ): Promise<SafetyInspectionSubmissionListResponseDto> {
     const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds, filter.companyId);
+    const currentTargetWhere = await this.buildCurrentTargetAssignmentWhere(filter.checklistId, organizationIds);
     if (filter.includeUnsubmitted) {
-      return this.findAssignmentSubmissionStatuses(filter, organizationIds);
+      return this.findAssignmentSubmissionStatuses(filter, organizationIds, currentTargetWhere);
     }
 
     const page = Math.max(Number(filter.page || DEFAULT_PAGE), 1);
     const limit = Math.min(Math.max(Number(filter.limit || DEFAULT_LIMIT), 1), 100);
-    const where = this.buildSubmissionWhere(filter, organizationIds);
+    const where = this.buildSubmissionWhere(filter, organizationIds, currentTargetWhere);
 
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.safetyInspectionSubmission.findMany({
@@ -799,11 +804,12 @@ export class SafetyChecklistsService {
     scopeOrganizationIds?: string[],
   ): Promise<SafetyChecklistDateRangeDto> {
     const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds, filter.companyId);
+    const currentTargetWhere = await this.buildCurrentTargetAssignmentWhere(filter.checklistId, organizationIds);
     const where = this.buildSubmissionWhere({
       ...filter,
       dateFrom: undefined,
       dateTo: undefined,
-    }, organizationIds);
+    }, organizationIds, currentTargetWhere);
 
     const [first, last] = await this.prisma.$transaction([
       this.prisma.safetyInspectionSubmission.findFirst({
@@ -827,10 +833,11 @@ export class SafetyChecklistsService {
   private async findAssignmentSubmissionStatuses(
     filter: SafetyInspectionSubmissionFilterDto,
     scopeOrganizationIds?: string[],
+    currentTargetWhere?: Prisma.SafetyChecklistAssignmentWhereInput | null,
   ): Promise<SafetyInspectionSubmissionListResponseDto> {
     const page = Math.max(Number(filter.page || DEFAULT_PAGE), 1);
     const limit = Math.min(Math.max(Number(filter.limit || DEFAULT_LIMIT), 1), 100);
-    const where = this.buildAssignmentSubmissionWhere(filter, scopeOrganizationIds);
+    const where = this.buildAssignmentSubmissionWhere(filter, scopeOrganizationIds, currentTargetWhere);
 
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.safetyChecklistAssignment.findMany({
@@ -1099,15 +1106,16 @@ export class SafetyChecklistsService {
     const from = this.parseDateOnly(dateFrom);
     const toExclusive = this.addDays(this.parseDateOnly(dateTo), 1);
     const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds, filter.companyId);
+    const currentTargetWhere = await this.buildCurrentTargetAssignmentWhere(filter.checklistId, organizationIds);
 
     const assignments = await this.prisma.safetyChecklistAssignment.findMany({
-      where: {
+      where: this.appendAssignmentWhereCondition({
         inspectionDate: { gte: from, lt: toExclusive },
         ...(filter.checklistId ? { checklistId: filter.checklistId } : {}),
         ...(organizationIds ? { checklist: { organizationId: { in: organizationIds } } } : {}),
         ...(filter.groupId ? { groupIdAtAssign: filter.groupId } : {}),
         ...(filter.teamId ? { teamIdAtAssign: filter.teamId } : {}),
-      },
+      }, currentTargetWhere),
       select: {
         inspectionDate: true,
         status: true,
@@ -1277,11 +1285,16 @@ export class SafetyChecklistsService {
   ): Promise<SafetyChecklistPatternsDto> {
     const { dateFrom, dateTo } = this.resolveStatsRange(filter.dateFrom, filter.dateTo, 30);
     const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds, filter.companyId);
+    const currentTargetWhere = await this.buildCurrentTargetAssignmentWhere(filter.checklistId, organizationIds);
     const scopeFilter = organizationIds ? { checklist: { organizationId: { in: organizationIds } } } : {};
     const assignmentSnapshotFilter = {
       ...(filter.groupId ? { groupIdAtAssign: filter.groupId } : {}),
       ...(filter.teamId ? { teamIdAtAssign: filter.teamId } : {}),
     };
+    const answerAssignmentFilter = this.appendAssignmentWhereCondition(
+      assignmentSnapshotFilter,
+      currentTargetWhere,
+    );
 
     // 출근 여부를 알 수 없어 미제출은 통계로서 의미가 없으므로 반복 미제출 집계는 제공하지 않는다.
     // 실제 제출된 답변 기반의 반복 조치필요 응답 항목만 집계한다.
@@ -1291,12 +1304,12 @@ export class SafetyChecklistsService {
     const assignmentFrom = this.parseDateOnly(dateFrom);
     const assignmentToExclusive = this.addDays(this.parseDateOnly(dateTo), 1);
     const assignments = await this.prisma.safetyChecklistAssignment.findMany({
-      where: {
+      where: this.appendAssignmentWhereCondition({
         inspectionDate: { gte: assignmentFrom, lt: assignmentToExclusive },
         ...(filter.checklistId ? { checklistId: filter.checklistId } : {}),
         ...(organizationIds ? { checklist: { organizationId: { in: organizationIds } } } : {}),
         ...assignmentSnapshotFilter,
-      },
+      }, currentTargetWhere),
       select: {
         employeeIdAtAssign: true,
         employeeNameAtAssign: true,
@@ -1313,7 +1326,7 @@ export class SafetyChecklistsService {
           submittedAt: { gte: submittedFrom, lt: submittedToExclusive },
           ...(filter.checklistId ? { checklistId: filter.checklistId } : {}),
           ...scopeFilter,
-          ...(Object.keys(assignmentSnapshotFilter).length > 0 ? { assignment: assignmentSnapshotFilter } : {}),
+          ...(!this.isEmptyAssignmentWhere(answerAssignmentFilter) ? { assignment: answerAssignmentFilter } : {}),
         },
       },
       select: {
@@ -1470,11 +1483,12 @@ export class SafetyChecklistsService {
     scopeOrganizationIds?: string[],
   ): Promise<SafetyChecklistDateRangeDto> {
     const organizationIds = await this.resolveCompanyExpandedScopeOrganizationIds(scopeOrganizationIds, filter.companyId);
-    const where: Prisma.SafetyChecklistAssignmentWhereInput = {
+    const currentTargetWhere = await this.buildCurrentTargetAssignmentWhere(filter.checklistId, organizationIds);
+    const where = this.appendAssignmentWhereCondition({
       ...(organizationIds ? { checklist: { organizationId: { in: organizationIds } } } : {}),
       ...(filter.checklistId ? { checklistId: filter.checklistId } : {}),
       ...this.buildAssignmentSnapshotFilter(filter),
-    };
+    }, currentTargetWhere);
 
     const [first, last] = await this.prisma.$transaction([
       this.prisma.safetyChecklistAssignment.findFirst({
@@ -1716,6 +1730,7 @@ export class SafetyChecklistsService {
   private buildSubmissionWhere(
     filter: Partial<SafetyInspectionSubmissionFilterDto>,
     scopeOrganizationIds?: string[],
+    currentTargetWhere?: Prisma.SafetyChecklistAssignmentWhereInput | null,
   ): Prisma.SafetyInspectionSubmissionWhereInput {
     const where: Prisma.SafetyInspectionSubmissionWhereInput = {
       ...(scopeOrganizationIds ? { checklist: { organizationId: { in: scopeOrganizationIds } } } : {}),
@@ -1741,8 +1756,11 @@ export class SafetyChecklistsService {
       ];
     }
 
-    const assignmentWhere = this.buildAssignmentSnapshotFilter(filter);
-    if (Object.keys(assignmentWhere).length > 0) {
+    const assignmentWhere = this.appendAssignmentWhereCondition(
+      this.buildAssignmentSnapshotFilter(filter),
+      currentTargetWhere,
+    );
+    if (!this.isEmptyAssignmentWhere(assignmentWhere)) {
       where.assignment = assignmentWhere;
     }
 
@@ -1767,12 +1785,13 @@ export class SafetyChecklistsService {
   private buildAssignmentSubmissionWhere(
     filter: SafetyInspectionSubmissionFilterDto,
     scopeOrganizationIds?: string[],
+    currentTargetWhere?: Prisma.SafetyChecklistAssignmentWhereInput | null,
   ): Prisma.SafetyChecklistAssignmentWhereInput {
     const where: Prisma.SafetyChecklistAssignmentWhereInput = {
       ...(scopeOrganizationIds ? { checklist: { organizationId: { in: scopeOrganizationIds } } } : {}),
       ...this.buildAssignmentSnapshotFilter(filter),
     };
-    const and: Prisma.SafetyChecklistAssignmentWhereInput[] = [];
+    const and: Prisma.SafetyChecklistAssignmentWhereInput[] = currentTargetWhere ? [currentTargetWhere] : [];
 
     if (filter.checklistId) {
       where.checklistId = filter.checklistId;
@@ -2008,6 +2027,97 @@ export class SafetyChecklistsService {
     return rows.map((row) => row.employeeIdAtAssign);
   }
 
+  private async buildCurrentTargetAssignmentWhere(
+    checklistId?: string,
+    scopeOrganizationIds?: string[],
+  ): Promise<Prisma.SafetyChecklistAssignmentWhereInput> {
+    const deployments = await this.prisma.safetyChecklistDeployment.findMany({
+      where: {
+        ...(checklistId ? { checklistId } : {}),
+        checklist: {
+          deletedAt: null,
+          ...(scopeOrganizationIds ? { organizationId: { in: scopeOrganizationIds } } : {}),
+        },
+      },
+      select: { id: true, checklistId: true },
+      orderBy: [{ checklistId: 'asc' }, { createdAt: 'desc' }],
+    });
+
+    const latestDeploymentIdByChecklist = new Map<string, string>();
+    for (const deployment of deployments) {
+      if (!latestDeploymentIdByChecklist.has(deployment.checklistId)) {
+        latestDeploymentIdByChecklist.set(deployment.checklistId, deployment.id);
+      }
+    }
+
+    const latestDeploymentIds = Array.from(latestDeploymentIdByChecklist.values());
+    if (latestDeploymentIds.length === 0) {
+      return { id: '__no_current_safety_checklist_targets__' };
+    }
+
+    const targetRows = await this.prisma.safetyChecklistAssignment.findMany({
+      where: { deploymentId: { in: latestDeploymentIds } },
+      select: {
+        deploymentId: true,
+        employeeIdAtAssign: true,
+      },
+      distinct: ['deploymentId', 'employeeIdAtAssign'],
+    });
+
+    const targetEmployeeIdsByDeployment = new Map<string, string[]>();
+    for (const row of targetRows) {
+      const employeeIds = targetEmployeeIdsByDeployment.get(row.deploymentId) ?? [];
+      employeeIds.push(row.employeeIdAtAssign);
+      targetEmployeeIdsByDeployment.set(row.deploymentId, employeeIds);
+    }
+
+    if (checklistId) {
+      const latestDeploymentId = latestDeploymentIdByChecklist.get(checklistId);
+      return {
+        employeeIdAtAssign: {
+          in: latestDeploymentId ? targetEmployeeIdsByDeployment.get(latestDeploymentId) ?? [] : [],
+        },
+      };
+    }
+
+    const clauses = Array.from(latestDeploymentIdByChecklist.entries())
+      .map(([targetChecklistId, deploymentId]) => ({
+        checklistId: targetChecklistId,
+        employeeIdAtAssign: {
+          in: targetEmployeeIdsByDeployment.get(deploymentId) ?? [],
+        },
+      }))
+      .filter((clause) => clause.employeeIdAtAssign.in.length > 0);
+
+    return clauses.length > 0
+      ? { OR: clauses }
+      : { id: '__no_current_safety_checklist_targets__' };
+  }
+
+  private appendAssignmentWhereCondition(
+    base: Prisma.SafetyChecklistAssignmentWhereInput,
+    condition?: Prisma.SafetyChecklistAssignmentWhereInput | null,
+  ): Prisma.SafetyChecklistAssignmentWhereInput {
+    if (!condition || this.isEmptyAssignmentWhere(condition)) {
+      return base;
+    }
+
+    const existingAnd = Array.isArray(base.AND)
+      ? base.AND
+      : base.AND
+      ? [base.AND]
+      : [];
+
+    return {
+      ...base,
+      AND: [...existingAnd, condition],
+    };
+  }
+
+  private isEmptyAssignmentWhere(where: Prisma.SafetyChecklistAssignmentWhereInput): boolean {
+    return Object.keys(where).length === 0;
+  }
+
   private pickCurrentVersion(
     versions: ChecklistVersionWithSections[],
     currentVersionId: string | null,
@@ -2100,12 +2210,16 @@ export class SafetyChecklistsService {
     };
   }
 
-  private async buildTodaySummary(checklistId: string): Promise<SafetyChecklistTodaySummaryDto> {
+  private async buildTodaySummary(
+    checklistId: string,
+    currentTargetEmployeeIds?: string[],
+  ): Promise<SafetyChecklistTodaySummaryDto> {
     const today = this.getKstTodayString();
     const assignments = await this.prisma.safetyChecklistAssignment.findMany({
       where: {
         checklistId,
         inspectionDate: this.parseDateOnly(today),
+        ...(currentTargetEmployeeIds ? { employeeIdAtAssign: { in: currentTargetEmployeeIds } } : {}),
       },
       orderBy: [{ submittedAt: 'desc' }, { employeeNameAtAssign: 'asc' }],
       select: {
