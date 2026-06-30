@@ -510,6 +510,43 @@ export class ControlPoliciesService {
     const policies = await this.prisma.controlPolicy.findMany({
       include: {
         organization: { select: { id: true, name: true } },
+        zones: {
+          include: {
+            zone: { select: { id: true, name: true, type: true } },
+          },
+        },
+        timePolicies: {
+          include: {
+            timePolicy: { select: { id: true, name: true } },
+          },
+        },
+        behaviors: {
+          include: {
+            behaviorCondition: { select: { id: true, name: true } },
+          },
+        },
+        allowedApps: {
+          include: {
+            preset: {
+              select: {
+                id: true,
+                name: true,
+                items: {
+                  include: {
+                    allowedApp: {
+                      select: {
+                        id: true,
+                        name: true,
+                        packageName: true,
+                        iconUrl: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
         _count: {
           select: {
             zones: true,

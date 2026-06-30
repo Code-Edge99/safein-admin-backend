@@ -165,7 +165,7 @@ export class AllowedAppPresetsService {
           },
         },
         _count: {
-          select: { policyPresets: true },
+          select: { items: true, policyPresets: true },
         },
       },
     });

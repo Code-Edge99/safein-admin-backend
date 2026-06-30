@@ -230,6 +230,7 @@ export class TimePoliciesService {
         organization: {
           select: { id: true, name: true },
         },
+        excludePeriods: true,
       },
       orderBy: { name: 'asc' },
     });
