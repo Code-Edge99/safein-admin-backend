@@ -709,31 +709,53 @@ export class EmployeesService {
       where.AND = andConditions;
     }
 
+    const employeeListInclude = {
+      organization: true,
+      _count: {
+        select: { devices: true },
+      },
+      devices: {
+        where: {
+          status: DeviceStatus.NORMAL,
+          lastCommunication: { not: null },
+        },
+        select: {
+          lastCommunication: true,
+        },
+        orderBy: {
+          lastCommunication: 'desc',
+        },
+        take: 1,
+      },
+    } satisfies Prisma.EmployeeInclude;
+
+    const employeeOrderBy = this.getEmployeeListOrderBy(filter);
+
+    if (filter.sortBy === 'connectionStatus') {
+      const onlineThreshold = new Date(Date.now() - EmployeesService.RECENT_ACTIVE_MINUTES * 60 * 1000);
+      const sortOrder: Prisma.SortOrder = filter.sortOrder === 'asc' ? 'asc' : 'desc';
+      const allEmployees = await this.prisma.employee.findMany({
+        where,
+        include: employeeListInclude,
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const sortedEmployees = this.sortEmployeesByConnectionStatus(allEmployees, sortOrder, onlineThreshold);
+
+      const data = sortedEmployees
+        .slice(filter.skip, filter.skip + filter.take)
+        .map((employee) => this.toResponseDto(employee));
+
+      return new PaginatedResponse(data, allEmployees.length, filter.page || 1, filter.limit || 20);
+    }
+
     const [employees, total] = await Promise.all([
       this.prisma.employee.findMany({
         where,
-        include: {
-          organization: true,
-          _count: {
-            select: { devices: true },
-          },
-          devices: {
-            where: {
-              status: DeviceStatus.NORMAL,
-              lastCommunication: { not: null },
-            },
-            select: {
-              lastCommunication: true,
-            },
-            orderBy: {
-              lastCommunication: 'desc',
-            },
-            take: 1,
-          },
-        },
+        include: employeeListInclude,
         skip: filter.skip,
         take: filter.take,
-        orderBy: filter.orderBy || { createdAt: 'desc' },
+        orderBy: employeeOrderBy,
       }),
       this.prisma.employee.count({ where }),
     ]);
@@ -741,6 +763,80 @@ export class EmployeesService {
     const data = employees.map((e) => this.toResponseDto(e));
 
     return new PaginatedResponse(data, total, filter.page || 1, filter.limit || 20);
+  }
+
+  private getEmployeeListOrderBy(filter: EmployeeFilterDto): Prisma.EmployeeOrderByWithRelationInput[] {
+    const direction: Prisma.SortOrder = filter.sortOrder === 'asc' ? 'asc' : 'desc';
+
+    switch (filter.sortBy) {
+      case 'employeeId':
+        return [{ id: direction }, { createdAt: 'desc' }];
+      case 'name':
+        return [{ name: direction }, { id: 'asc' }];
+      case 'organization':
+        return [{ organization: { name: direction } }, { name: 'asc' }];
+      case 'email':
+        return [{ email: direction }, { name: 'asc' }];
+      case 'status':
+        return [{ status: direction }, { name: 'asc' }];
+      case 'deletionScheduledAt':
+        return [{ purgeAfterAt: direction }, { deletedAt: direction }, { createdAt: direction }];
+      default:
+        return [{ createdAt: 'desc' }];
+    }
+  }
+
+  private sortEmployeesByConnectionStatus<T extends { devices?: Array<{ lastCommunication?: Date | string | null }> }>(
+    employees: T[],
+    sortOrder: Prisma.SortOrder,
+    onlineThreshold: Date,
+  ): T[] {
+    return employees
+      .map((employee, index) => ({ employee, index }))
+      .sort((left, right) => {
+        const leftCommunication = this.getLatestNormalCommunication(left.employee);
+        const rightCommunication = this.getLatestNormalCommunication(right.employee);
+        const leftOnline = Boolean(leftCommunication && leftCommunication >= onlineThreshold);
+        const rightOnline = Boolean(rightCommunication && rightCommunication >= onlineThreshold);
+
+        if (leftOnline !== rightOnline) {
+          if (sortOrder === 'desc') {
+            return leftOnline ? -1 : 1;
+          }
+
+          return leftOnline ? 1 : -1;
+        }
+
+        if (!leftCommunication && !rightCommunication) {
+          return left.index - right.index;
+        }
+
+        if (!leftCommunication) {
+          return 1;
+        }
+
+        if (!rightCommunication) {
+          return -1;
+        }
+
+        const comparison = leftCommunication.getTime() - rightCommunication.getTime();
+        if (comparison === 0) {
+          return left.index - right.index;
+        }
+
+        return sortOrder === 'asc' ? comparison : -comparison;
+      })
+      .map(({ employee }) => employee);
+  }
+
+  private getLatestNormalCommunication(employee: { devices?: Array<{ lastCommunication?: Date | string | null }> }): Date | null {
+    const value = employee.devices?.[0]?.lastCommunication;
+    if (!value) {
+      return null;
+    }
+
+    const communication = value instanceof Date ? value : new Date(value);
+    return Number.isNaN(communication.getTime()) ? null : communication;
   }
 
   async findOne(employeeId: string, scopeOrganizationIds?: string[]): Promise<EmployeeDetailDto> {
