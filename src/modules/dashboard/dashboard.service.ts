@@ -1927,6 +1927,88 @@ export class DashboardService {
       ? policySelectionContext.ownerOrganizationIds
       : [organizationId];
 
+    const appliedPolicyInclude = {
+      organization: { select: { id: true, name: true } },
+      zones: {
+        include: {
+          zone: {
+            select: {
+              id: true,
+              name: true,
+              type: true,
+              shape: true,
+              radius: true,
+              description: true,
+              organizationId: true,
+              deletedAt: true,
+            },
+          },
+        },
+      },
+      timePolicies: {
+        include: {
+          timePolicy: {
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              startTime: true,
+              endTime: true,
+              days: true,
+              organizationId: true,
+              deletedAt: true,
+              excludePeriods: true,
+            },
+          },
+        },
+      },
+      behaviors: {
+        include: {
+          behaviorCondition: {
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              distanceThreshold: true,
+              stepsThreshold: true,
+              speedThreshold: true,
+              organizationId: true,
+              deletedAt: true,
+            },
+          },
+        },
+      },
+      allowedApps: {
+        include: {
+          preset: {
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              platform: true,
+              organizationId: true,
+              deletedAt: true,
+              items: {
+                include: {
+                  allowedApp: {
+                    select: {
+                      id: true,
+                      name: true,
+                      packageName: true,
+                      category: true,
+                      platform: true,
+                      iconUrl: true,
+                      isGlobal: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    } as any;
+
     const assignedPolicies = await this.prisma.controlPolicyEmployee.findMany({
       where: {
         employeeId,
@@ -1936,29 +2018,7 @@ export class DashboardService {
         },
       },
       include: {
-        policy: {
-          include: {
-            zones: {
-              include: {
-                zone: { select: { id: true, name: true, type: true, description: true, deletedAt: true } },
-              },
-            },
-            timePolicies: {
-              include: {
-                timePolicy: {
-                  select: { id: true, name: true, startTime: true, endTime: true, days: true, deletedAt: true },
-                },
-              },
-            },
-            behaviors: {
-              include: {
-                behaviorCondition: {
-                  select: { id: true, name: true, description: true, deletedAt: true },
-                },
-              },
-            },
-          },
-        },
+        policy: { include: appliedPolicyInclude },
       },
     });
 
@@ -1972,27 +2032,7 @@ export class DashboardService {
           isDraft: false,
           organizationId: { in: candidateOrganizationIds },
         },
-        include: {
-          zones: {
-            include: {
-              zone: { select: { id: true, name: true, type: true, description: true, deletedAt: true } },
-            },
-          },
-          timePolicies: {
-            include: {
-              timePolicy: {
-                select: { id: true, name: true, startTime: true, endTime: true, days: true, deletedAt: true },
-              },
-            },
-          },
-          behaviors: {
-            include: {
-              behaviorCondition: {
-                select: { id: true, name: true, description: true, deletedAt: true },
-              },
-            },
-          },
-        },
+        include: appliedPolicyInclude,
       });
 
       if (explicitlyAppliedPolicy) {
@@ -2011,27 +2051,7 @@ export class DashboardService {
             { targetUnitIds: { isEmpty: true } },
           ],
         },
-        include: {
-          zones: {
-            include: {
-              zone: { select: { id: true, name: true, type: true, description: true, deletedAt: true } },
-            },
-          },
-          timePolicies: {
-            include: {
-              timePolicy: {
-                select: { id: true, name: true, startTime: true, endTime: true, days: true, deletedAt: true },
-              },
-            },
-          },
-          behaviors: {
-            include: {
-              behaviorCondition: {
-                select: { id: true, name: true, description: true, deletedAt: true },
-              },
-            },
-          },
-        },
+        include: appliedPolicyInclude,
       });
 
       effectiveOrgPolicies = selectPreferredOwnerScopedPolicies(
@@ -2070,6 +2090,9 @@ export class DashboardService {
       isActive: !!selectedPolicy.isActive,
       priority: selectedPolicy.priority,
       source: assignedPolicyIds.has(selectedPolicy.id) ? 'EMPLOYEE' : 'ORGANIZATION',
+      organization: selectedPolicy.organization ?? null,
+      createdAt: selectedPolicy.createdAt,
+      updatedAt: selectedPolicy.updatedAt,
       timePolicies: (selectedPolicy.timePolicies || [])
         .map((item: any) => item.timePolicy)
         .filter((timePolicy: any) => timePolicy && !timePolicy.deletedAt)
@@ -2077,6 +2100,12 @@ export class DashboardService {
           ...timePolicy,
           startTime: this.formatPolicyTime(timePolicy.startTime),
           endTime: this.formatPolicyTime(timePolicy.endTime),
+          excludePeriods: (timePolicy.excludePeriods || []).map((period: any) => ({
+            id: period.id,
+            reason: period.reason,
+            start: this.formatPolicyTime(period.startTime),
+            end: this.formatPolicyTime(period.endTime),
+          })),
         })),
       zones: (selectedPolicy.zones || [])
         .map((item: any) => item.zone)
@@ -2084,6 +2113,29 @@ export class DashboardService {
       behaviorConditions: (selectedPolicy.behaviors || [])
         .map((item: any) => item.behaviorCondition)
         .filter((behaviorCondition: any) => behaviorCondition && !behaviorCondition.deletedAt),
+      allowedAppPresets: (selectedPolicy.allowedApps || [])
+        .map((item: any) => item.preset)
+        .filter((preset: any) => preset && !preset.deletedAt)
+        .map((preset: any) => ({
+          id: preset.id,
+          name: preset.name,
+          description: preset.description || '',
+          platform: preset.platform,
+          organizationId: preset.organizationId,
+          appCount: Array.isArray(preset.items) ? preset.items.length : 0,
+          apps: (preset.items || [])
+            .map((item: any) => item.allowedApp)
+            .filter((app: any) => !!app)
+            .map((app: any) => ({
+              id: app.id,
+              name: app.name,
+              packageName: app.packageName,
+              category: app.category,
+              platform: app.platform,
+              iconUrl: app.iconUrl,
+              isGlobal: app.isGlobal,
+            })),
+        })),
     };
   }
 
