@@ -191,6 +191,12 @@ export class EmployeeResponseDto {
 
   @ApiPropertyOptional({ description: '원본 직원 ID(삭제 상태 복원용)' })
   originalEmployeeId?: string;
+
+  @ApiPropertyOptional({ description: '최근 정상 통신 일시' })
+  latestCommunicationAt?: Date;
+
+  @ApiPropertyOptional({ description: '최근 15분 내 정상 통신 여부' })
+  isRecentlyActive?: boolean;
 }
 
 export class EmployeeDetailDto extends EmployeeResponseDto {
@@ -263,6 +269,11 @@ export class EmployeeFilterDto extends BaseFilterDto {
   @IsOptional()
   @IsEnum(EmployeeStatusGroupEnum)
   statusGroup?: EmployeeStatusGroupEnum;
+
+  @ApiPropertyOptional({ description: '최근 활성 필터(recent: 최근 15분 내 정상 통신)' })
+  @IsOptional()
+  @IsString()
+  online?: string;
 }
 
 export class BulkEmployeeUploadRowDto {

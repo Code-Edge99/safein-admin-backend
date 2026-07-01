@@ -7,7 +7,7 @@ import {
   ForbiddenException,
   Logger,
 } from '@nestjs/common';
-import { Prisma, EmployeeStatus, DeviceOperationStatus, DeviceOS, PushTokenStatus } from '@prisma/client';
+import { Prisma, EmployeeStatus, DeviceOperationStatus, DeviceOS, DeviceStatus, PushTokenStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
@@ -55,6 +55,7 @@ class EmployeePolicyPushSendError extends Error {
 export class EmployeesService {
   private readonly logger = new Logger(EmployeesService.name);
   private static readonly DELETED_RETENTION_DAYS = 30;
+  private static readonly RECENT_ACTIVE_MINUTES = 15;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -692,6 +693,18 @@ export class EmployeesService {
       }
     }
 
+    if (filter.online === 'recent') {
+      const onlineThreshold = new Date(Date.now() - EmployeesService.RECENT_ACTIVE_MINUTES * 60 * 1000);
+      andConditions.push({
+        devices: {
+          some: {
+            status: DeviceStatus.NORMAL,
+            lastCommunication: { gte: onlineThreshold },
+          },
+        },
+      });
+    }
+
     if (andConditions.length > 0) {
       where.AND = andConditions;
     }
@@ -703,6 +716,19 @@ export class EmployeesService {
           organization: true,
           _count: {
             select: { devices: true },
+          },
+          devices: {
+            where: {
+              status: DeviceStatus.NORMAL,
+              lastCommunication: { not: null },
+            },
+            select: {
+              lastCommunication: true,
+            },
+            orderBy: {
+              lastCommunication: 'desc',
+            },
+            take: 1,
           },
         },
         skip: filter.skip,
