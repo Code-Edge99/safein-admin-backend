@@ -82,7 +82,7 @@ const PERMISSION_CATALOG: PermissionCatalogItem[] = [
   { id: 'perm-control-policy-write', category: '스몸비 관리', name: '통제 정책 수정', code: 'CONTROL_POLICY_WRITE', description: '통제 정책을 생성/수정/삭제합니다.' },
   { id: 'perm-incident-report-read', category: '위험신고', name: '위험신고 조회', code: 'INCIDENT_REPORT_READ', description: '위험신고 목록/상세 화면을 조회합니다.' },
   { id: 'perm-incident-report-write', category: '위험신고', name: '위험신고 처리', code: 'INCIDENT_REPORT_WRITE', description: '위험신고 상태, 담당자, 코멘트, 첨부를 처리합니다.' },
-  { id: 'perm-control-log-read', category: '리포트', name: '활동 차단 로그 조회', code: 'CONTROL_LOG_READ', description: '활동 차단 로그 화면을 조회합니다.' },
+  { id: 'perm-control-log-read', category: '리포트', name: '차단 로그 조회', code: 'CONTROL_LOG_READ', description: '차단 로그 화면을 조회합니다.' },
   { id: 'perm-employee-report-read', category: '리포트', name: '직원별 리포트 조회', code: 'EMPLOYEE_REPORT_READ', description: '직원별 리포트 화면을 조회합니다.' },
   { id: 'perm-site-report-read', category: '리포트', name: '현장별 통계 조회', code: 'SITE_REPORT_READ', description: '현장별 통계 화면을 조회합니다.' },
   { id: 'perm-account-read', category: '시스템', name: '계정 관리 조회', code: 'ACCOUNT_READ', description: '계정 관리 화면을 조회합니다.' },
