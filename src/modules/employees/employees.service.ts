@@ -56,6 +56,10 @@ export class EmployeesService {
   private readonly logger = new Logger(EmployeesService.name);
   private static readonly DELETED_RETENTION_DAYS = 30;
   private static readonly RECENT_ACTIVE_MINUTES = 15;
+  private static readonly employeeNameCollator = new Intl.Collator('ko', {
+    numeric: true,
+    sensitivity: 'base',
+  });
 
   constructor(
     private readonly prisma: PrismaService,
@@ -749,6 +753,23 @@ export class EmployeesService {
       return new PaginatedResponse(data, allEmployees.length, filter.page || 1, filter.limit || 20);
     }
 
+    if (filter.sortBy === 'name') {
+      const sortOrder: Prisma.SortOrder = filter.sortOrder === 'asc' ? 'asc' : 'desc';
+      const allEmployees = await this.prisma.employee.findMany({
+        where,
+        include: employeeListInclude,
+        orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      });
+
+      const sortedEmployees = this.sortEmployeesByNaturalName(allEmployees, sortOrder);
+
+      const data = sortedEmployees
+        .slice(filter.skip, filter.skip + filter.take)
+        .map((employee) => this.toResponseDto(employee));
+
+      return new PaginatedResponse(data, allEmployees.length, filter.page || 1, filter.limit || 20);
+    }
+
     const [employees, total] = await Promise.all([
       this.prisma.employee.findMany({
         where,
@@ -825,6 +846,32 @@ export class EmployeesService {
         }
 
         return sortOrder === 'asc' ? comparison : -comparison;
+      })
+      .map(({ employee }) => employee);
+  }
+
+  private sortEmployeesByNaturalName<T extends { id?: string | null; name?: string | null }>(
+    employees: T[],
+    sortOrder: Prisma.SortOrder,
+  ): T[] {
+    return employees
+      .map((employee, index) => ({ employee, index }))
+      .sort((left, right) => {
+        const nameComparison = EmployeesService.employeeNameCollator.compare(
+          String(left.employee.name ?? ''),
+          String(right.employee.name ?? ''),
+        );
+
+        if (nameComparison !== 0) {
+          return sortOrder === 'asc' ? nameComparison : -nameComparison;
+        }
+
+        const idComparison = String(left.employee.id ?? '').localeCompare(String(right.employee.id ?? ''));
+        if (idComparison !== 0) {
+          return idComparison;
+        }
+
+        return left.index - right.index;
       })
       .map(({ employee }) => employee);
   }
