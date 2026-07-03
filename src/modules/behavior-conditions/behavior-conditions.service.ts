@@ -98,6 +98,14 @@ export class BehaviorConditionsService {
       },
       include: {
         organization: { select: { id: true, name: true } },
+        policyBehaviors: {
+          where: {
+            policy: { deletedAt: null, isDraft: false },
+          },
+          include: {
+            policy: { select: { id: true, name: true } },
+          },
+        },
         _count: { select: { policyBehaviors: true } },
       },
     });
@@ -161,6 +169,14 @@ export class BehaviorConditionsService {
         orderBy: { createdAt: 'desc' },
         include: {
           organization: { select: { id: true, name: true } },
+          policyBehaviors: {
+            where: {
+              policy: { deletedAt: null, isDraft: false },
+            },
+            include: {
+              policy: { select: { id: true, name: true } },
+            },
+          },
           _count: { select: { policyBehaviors: true } },
         },
       }),
@@ -181,6 +197,14 @@ export class BehaviorConditionsService {
       where: { id, deletedAt: null },
       include: {
         organization: { select: { id: true, name: true } },
+        policyBehaviors: {
+          where: {
+            policy: { deletedAt: null, isDraft: false },
+          },
+          include: {
+            policy: { select: { id: true, name: true } },
+          },
+        },
         _count: { select: { policyBehaviors: true } },
       },
     });
@@ -207,6 +231,14 @@ export class BehaviorConditionsService {
       },
       include: {
         organization: { select: { id: true, name: true } },
+        policyBehaviors: {
+          where: {
+            policy: { deletedAt: null, isDraft: false },
+          },
+          include: {
+            policy: { select: { id: true, name: true } },
+          },
+        },
         _count: { select: { policyBehaviors: true } },
       },
       orderBy: { name: 'asc' },
@@ -225,6 +257,14 @@ export class BehaviorConditionsService {
       where: { id, deletedAt: null },
       include: {
         organization: { select: { id: true, name: true } },
+        policyBehaviors: {
+          where: {
+            policy: { deletedAt: null, isDraft: false },
+          },
+          include: {
+            policy: { select: { id: true, name: true } },
+          },
+        },
         _count: { select: { policyBehaviors: true } },
       },
     });
@@ -283,6 +323,14 @@ export class BehaviorConditionsService {
       },
       include: {
         organization: { select: { id: true, name: true } },
+        policyBehaviors: {
+          where: {
+            policy: { deletedAt: null, isDraft: false },
+          },
+          include: {
+            policy: { select: { id: true, name: true } },
+          },
+        },
         _count: { select: { policyBehaviors: true } },
       },
     });

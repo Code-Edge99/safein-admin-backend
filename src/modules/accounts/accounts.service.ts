@@ -48,7 +48,7 @@ const ACCOUNT_ORGANIZATION_SELECT = {
 
 const ACCOUNT_DETAIL_INCLUDE = {
   organization: { select: ACCOUNT_ORGANIZATION_SELECT },
-  companyRole: { select: { id: true, name: true } },
+  companyRole: { select: { id: true, name: true, isActive: true } },
 } as const;
 
 @Injectable()
@@ -299,11 +299,15 @@ export class AccountsService {
 
     const role = await this.prisma.companyRole.findUnique({
       where: { id: requestedRoleId },
-      select: { id: true, organizationId: true },
+      select: { id: true, organizationId: true, isActive: true },
     });
 
     if (!role || role.organizationId !== companyId) {
       throw new BadRequestException('선택한 역할을 현재 그룹에 배정할 수 없습니다.');
+    }
+
+    if (!role.isActive) {
+      throw new BadRequestException('비활성 역할은 계정에 배정할 수 없습니다.');
     }
 
     return role.id;
@@ -430,9 +434,7 @@ export class AccountsService {
         where,
         skip,
         take: limit,
-        include: {
-          organization: { select: ACCOUNT_ORGANIZATION_SELECT },
-        },
+        include: ACCOUNT_DETAIL_INCLUDE,
         orderBy: { name: 'asc' },
       }),
       this.prisma.account.count({ where }),

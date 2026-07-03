@@ -177,14 +177,16 @@ export class DashboardService {
     appControlBlocks?: number;
     behaviorBlocks?: number;
     totalBlocks?: number;
+    totalEvents?: number;
     rounded?: boolean;
     settings: Pick<ReportMetricSettingsValues, 'complianceAppBlockWeight' | 'complianceBehaviorBlockWeight'>;
-  }): number {
+  }): number | null {
     const {
       allowedEvents,
       appControlBlocks = 0,
       behaviorBlocks = 0,
       totalBlocks = 0,
+      totalEvents,
       rounded = true,
       settings,
     } = params;
@@ -192,11 +194,21 @@ export class DashboardService {
     const normalizedAppBlocks = Math.max(appControlBlocks, 0);
     const normalizedBehaviorBlocks = Math.max(behaviorBlocks, 0);
     const normalizedTotalBlocks = Math.max(totalBlocks, 0);
+    const normalizedAllowed = Math.max(allowedEvents, 0);
+    // 분모 = 전체 이벤트(허용+차단). 명시값이 있으면 우선 사용한다.
+    const denominator = Math.max(totalEvents ?? (normalizedAllowed + normalizedTotalBlocks), 0);
+
+    // 이벤트가 하나도 없으면 준수율을 산출하지 않는다(해당 없음 → null). 100%로 오도하지 않는다.
+    if (denominator <= 0) {
+      return null;
+    }
+
     const remainingBlocks = Math.max(normalizedTotalBlocks - normalizedAppBlocks - normalizedBehaviorBlocks, 0);
     const weightedBlocks = (normalizedAppBlocks * settings.complianceAppBlockWeight)
       + (normalizedBehaviorBlocks * settings.complianceBehaviorBlockWeight)
       + remainingBlocks;
-    const rawRate = Math.max(0, Math.min(100, 100 - weightedBlocks));
+    // 준수율 = 100 × (1 − 가중차단 / 전체이벤트), [0,100]로 클램프.
+    const rawRate = Math.max(0, Math.min(100, 100 * (1 - (weightedBlocks / denominator))));
 
     if (!rounded) {
       return Math.round(rawRate * 10) / 10;
@@ -267,7 +279,7 @@ export class DashboardService {
   private calculateSiteRiskAssessment(params: {
     employeeCount: number;
     totalViolations: number;
-    complianceRate: number;
+    complianceRate: number | null;
     settings: Pick<ReportMetricSettingsValues,
       | 'siteRiskComplianceDangerBelow'
       | 'siteRiskComplianceWarningBelow'
@@ -282,23 +294,28 @@ export class DashboardService {
     const { employeeCount, totalViolations, complianceRate, settings } = params;
     const violationsPerEmployee = employeeCount > 0 ? totalViolations / employeeCount : totalViolations;
 
-    const complianceScore = this.calculateRiskScoreForBelowThreshold(
-      complianceRate,
-      settings.siteRiskComplianceWarningBelow,
-      settings.siteRiskComplianceDangerBelow,
-    );
+    // 준수율이 없는(이벤트 0건) 현장은 준수 성분을 위험도 계산에서 제외하고 위반 성분만 반영한다.
+    const hasCompliance = complianceRate !== null;
+    const complianceScore = hasCompliance
+      ? this.calculateRiskScoreForBelowThreshold(
+          complianceRate,
+          settings.siteRiskComplianceWarningBelow,
+          settings.siteRiskComplianceDangerBelow,
+        )
+      : 0;
     const violationsPerEmployeeScore = this.calculateRiskScoreForAboveThreshold(
       violationsPerEmployee,
       settings.siteRiskViolationsPerEmployeeWarningAbove,
       settings.siteRiskViolationsPerEmployeeDangerAbove,
     );
 
+    const complianceWeight = hasCompliance ? settings.siteRiskComplianceWeight : 0;
     const totalWeight =
-      settings.siteRiskComplianceWeight
+      complianceWeight
       + settings.siteRiskViolationsPerEmployeeWeight;
 
     const weightedSum =
-      (complianceScore * settings.siteRiskComplianceWeight)
+      (complianceScore * complianceWeight)
       + (violationsPerEmployeeScore * settings.siteRiskViolationsPerEmployeeWeight);
 
     const riskScore = this.roundTo(Math.max(0, Math.min(100, totalWeight > 0 ? (weightedSum / totalWeight) : 0)), 1);
@@ -442,7 +459,7 @@ export class DashboardService {
       totalDevices,
       activeDevices,
       activePolicies,
-      activeZones,
+      dangerZones,
       todayLogs,
       yesterdayLogs,
       onlineEmployees,
@@ -499,6 +516,7 @@ export class DashboardService {
       this.prisma.zone.count({
         where: {
           deletedAt: null,
+          type: 'danger',
           ...(targetOrganizationIds
             ? {
                 organizationId: { in: targetOrganizationIds },
@@ -577,7 +595,7 @@ export class DashboardService {
       totalDevices,
       activeDevices,
       activePolicies,
-      criticalZones: activeZones,
+      criticalZones: dangerZones,
       todayViolations: todayLogs,
       yesterdayViolations: yesterdayLogs,
       violationChangeRate,
@@ -815,7 +833,9 @@ export class DashboardService {
     dto: ReaggregateDayDto,
     accountId: string | null,
     scopeOrganizationIds?: string[],
+    options: { skipAuditLog?: boolean } = {},
   ) {
+    const { skipAuditLog = false } = options;
     const targetDate = this.parseKstDateInput(dto.date);
     const nextDate = new Date(targetDate.getTime() + 24 * 60 * 60 * 1000);
 
@@ -962,6 +982,7 @@ export class DashboardService {
         appControlBlocks,
         behaviorBlocks,
         totalBlocks,
+        totalEvents,
         rounded: false,
         settings: reportMetricSettings,
       });
@@ -1036,7 +1057,7 @@ export class DashboardService {
           });
         }
 
-        await tx.auditLog.create({
+        if (!skipAuditLog) await tx.auditLog.create({
           data: {
             accountId,
             organizationId,
@@ -1092,17 +1113,157 @@ export class DashboardService {
       });
     }
 
+    // 직원 일별 통계도 ControlLog 기준으로 재생성한다(이중 기록/불일치 방지, 단일 진실원본).
+    const employeeStats = await this.reaggregateEmployeeDailyStats(targetDate, nextDate, targetOrganizationIds);
+
     this.logger.log(
-      `통계 재집계 완료(date=${dto.date}, organizations=${results.length})`,
+      `통계 재집계 완료(date=${dto.date}, organizations=${results.length}, employees=${employeeStats.rebuiltEmployees})`,
     );
 
     return {
       success: true,
       sourceOfTruth: 'ControlLog',
-      derivedTargets: ['OrganizationDailyStat', 'HourlyBlockStat', 'ZoneViolationStat'],
+      derivedTargets: ['OrganizationDailyStat', 'HourlyBlockStat', 'ZoneViolationStat', 'EmployeeDailyStat'],
       date: dto.date,
       results,
+      employeeStats,
     };
+  }
+
+  /**
+   * 직원 일별 통계(EmployeeDailyStat)를 ControlLog 기준으로 재생성한다.
+   * 직원×일자 단위(절대값)로 upsert하며, 로그가 사라진 기존 행도 0으로 정정한다.
+   * 필드 의미는 app-backend 인제스션과 동일하게 맞춘다(topBlockedApp은 최다 차단 패키지명).
+   */
+  private async reaggregateEmployeeDailyStats(
+    targetDate: Date,
+    nextDate: Date,
+    targetOrganizationIds: string[],
+  ): Promise<{ rebuiltEmployees: number }> {
+    const scopeCondition = this.buildControlLogOrganizationIdsCondition(targetOrganizationIds);
+
+    const logs = await this.prisma.controlLog.findMany({
+      where: {
+        timestamp: { gte: targetDate, lt: nextDate },
+        employee: { deletedAt: null },
+        ...(scopeCondition ? { AND: [scopeCondition] } : {}),
+      },
+      select: {
+        employeeId: true,
+        zoneId: true,
+        type: true,
+        action: true,
+        packageName: true,
+      },
+    });
+
+    type EmployeeAggregate = {
+      totalEvents: number;
+      allowedEvents: number;
+      totalBlocks: number;
+      behaviorBlocks: number;
+      appControlBlocks: number;
+      zoneViolations: number;
+      blockedAppCounts: Map<string, number>;
+    };
+
+    const createAggregate = (): EmployeeAggregate => ({
+      totalEvents: 0,
+      allowedEvents: 0,
+      totalBlocks: 0,
+      behaviorBlocks: 0,
+      appControlBlocks: 0,
+      zoneViolations: 0,
+      blockedAppCounts: new Map<string, number>(),
+    });
+
+    const employeeMap = new Map<string, EmployeeAggregate>();
+
+    for (const log of logs) {
+      let aggregate = employeeMap.get(log.employeeId);
+      if (!aggregate) {
+        aggregate = createAggregate();
+        employeeMap.set(log.employeeId, aggregate);
+      }
+
+      const isBlocked = log.action === 'blocked';
+      const isAllowed = log.action === 'allowed';
+      const isBehavior = log.type === 'behavior';
+      const isAppControl = log.type === 'app_control';
+
+      aggregate.totalEvents += 1;
+      if (isAllowed) aggregate.allowedEvents += 1;
+      if (isBlocked) aggregate.totalBlocks += 1;
+      if (isBlocked && isBehavior) aggregate.behaviorBlocks += 1;
+      if (isBlocked && isAppControl) aggregate.appControlBlocks += 1;
+      if (isBlocked && log.zoneId) aggregate.zoneViolations += 1;
+      if (isBlocked && isAppControl && log.packageName) {
+        aggregate.blockedAppCounts.set(
+          log.packageName,
+          (aggregate.blockedAppCounts.get(log.packageName) ?? 0) + 1,
+        );
+      }
+    }
+
+    // 로그가 사라진 직원의 기존 행도 0으로 정정하기 위해, 대상 범위의 해당 일자 기존 행을 포함한다.
+    const existingRows = await this.prisma.employeeDailyStat.findMany({
+      where: { date: targetDate, organizationId: { in: targetOrganizationIds } },
+      select: { employeeId: true },
+    });
+    for (const row of existingRows) {
+      if (!employeeMap.has(row.employeeId)) {
+        employeeMap.set(row.employeeId, createAggregate());
+      }
+    }
+
+    if (employeeMap.size === 0) {
+      return { rebuiltEmployees: 0 };
+    }
+
+    const employeeIds = Array.from(employeeMap.keys());
+    const employees = await this.prisma.employee.findMany({
+      where: { id: { in: employeeIds } },
+      select: { id: true, organizationId: true },
+    });
+    const organizationByEmployee = new Map(employees.map((employee) => [employee.id, employee.organizationId]));
+
+    let rebuiltEmployees = 0;
+    for (const [employeeId, aggregate] of employeeMap) {
+      const organizationId = organizationByEmployee.get(employeeId);
+      if (!organizationId) {
+        // 직원 정보를 찾지 못하면(정상적으론 발생하지 않음) 건너뛴다.
+        continue;
+      }
+
+      let topBlockedApp: string | null = null;
+      let topCount = 0;
+      for (const [packageName, count] of aggregate.blockedAppCounts) {
+        if (count > topCount) {
+          topCount = count;
+          topBlockedApp = packageName;
+        }
+      }
+
+      const data = {
+        organizationId,
+        totalEvents: aggregate.totalEvents,
+        allowedEvents: aggregate.allowedEvents,
+        totalBlocks: aggregate.totalBlocks,
+        behaviorBlocks: aggregate.behaviorBlocks,
+        appControlBlocks: aggregate.appControlBlocks,
+        zoneViolations: aggregate.zoneViolations,
+        topBlockedApp: topBlockedApp ? topBlockedApp.slice(0, 100) : null,
+      };
+
+      await this.prisma.employeeDailyStat.upsert({
+        where: { employeeId_date: { employeeId, date: targetDate } },
+        update: data,
+        create: { employeeId, date: targetDate, ...data },
+      });
+      rebuiltEmployees += 1;
+    }
+
+    return { rebuiltEmployees };
   }
 
   async getZoneViolationData(startDate?: string, endDate?: string, scopeOrganizationIds?: string[]) {
@@ -1237,35 +1398,82 @@ export class DashboardService {
 
     this.ensureOrganizationInScope(organizationId, scopeOrganizationIds);
 
-    const where: any = { date: { gte: startDate } };
-    if (organizationId) {
-      where.organizationId = organizationId;
-    } else if (scopeOrganizationIds) {
-      where.organizationId = { in: scopeOrganizationIds };
-    }
+    // 라이브 KPI(getStats)와 동일하게 하위 조직까지 합산해 일자별 시계열을 만든다.
+    const targetOrganizationIds = organizationId
+      ? await this.collectDescendantOrganizationIds(organizationId, scopeOrganizationIds)
+      : scopeOrganizationIds;
 
-    const [stats, reportMetricSettings] = await Promise.all([
+    const [stats, reportMetricSettings, rootOrganization] = await Promise.all([
       this.prisma.organizationDailyStat.findMany({
-        where,
-        include: {
-          organization: { select: { id: true, name: true } },
+        where: {
+          date: { gte: startDate },
+          ...(targetOrganizationIds ? { organizationId: { in: targetOrganizationIds } } : {}),
         },
         orderBy: { date: 'desc' },
       }),
       this.reportMetricSettingsService.findCurrentValues(),
+      organizationId
+        ? this.prisma.organization.findUnique({
+            where: { id: organizationId },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve(null),
     ]);
 
-    // 저장된 complianceRate는 기록 시점 가중치 기준이므로, 노출 시 현재 설정으로 재계산해 다른 화면과 일치시킨다.
-    return stats.map((stat) => ({
-      ...stat,
-      complianceRate: this.calculateComplianceRate({
-        allowedEvents: (stat as any).allowedEvents ?? 0,
-        appControlBlocks: stat.appControlBlocks,
-        behaviorBlocks: stat.behaviorBlocks,
-        totalBlocks: stat.totalBlocks,
-        settings: reportMetricSettings,
-      }),
-    }));
+    // 일자별로 서브트리 합산(부모 조직은 자기 행만 있으면 하위 실적이 빠지므로 반드시 합산한다).
+    const byDate = new Map<string, {
+      date: Date;
+      totalEmployees: number;
+      activeDevices: number;
+      totalEvents: number;
+      allowedEvents: number;
+      totalBlocks: number;
+      behaviorBlocks: number;
+      appControlBlocks: number;
+    }>();
+
+    for (const stat of stats) {
+      const key = formatKstDateKey(stat.date);
+      let bucket = byDate.get(key);
+      if (!bucket) {
+        bucket = {
+          date: stat.date,
+          totalEmployees: 0,
+          activeDevices: 0,
+          totalEvents: 0,
+          allowedEvents: 0,
+          totalBlocks: 0,
+          behaviorBlocks: 0,
+          appControlBlocks: 0,
+        };
+        byDate.set(key, bucket);
+      }
+
+      bucket.totalEmployees += stat.totalEmployees;
+      bucket.activeDevices += stat.activeDevices;
+      bucket.totalEvents += (stat as any).totalEvents ?? 0;
+      bucket.allowedEvents += (stat as any).allowedEvents ?? 0;
+      bucket.totalBlocks += stat.totalBlocks;
+      bucket.behaviorBlocks += stat.behaviorBlocks;
+      bucket.appControlBlocks += stat.appControlBlocks;
+    }
+
+    // 노출 시 complianceRate는 현재 설정으로 재계산해 다른 화면과 일치시킨다.
+    return Array.from(byDate.values())
+      .sort((left, right) => right.date.getTime() - left.date.getTime())
+      .map((bucket) => ({
+        ...bucket,
+        organizationId: rootOrganization?.id ?? organizationId ?? null,
+        organizationName: rootOrganization?.name ?? null,
+        complianceRate: this.calculateComplianceRate({
+          allowedEvents: bucket.allowedEvents,
+          appControlBlocks: bucket.appControlBlocks,
+          behaviorBlocks: bucket.behaviorBlocks,
+          totalBlocks: bucket.totalBlocks,
+          totalEvents: bucket.totalEvents,
+          settings: reportMetricSettings,
+        }),
+      }));
   }
 
   async getEmployeeDailyStats(filter: {
@@ -1406,6 +1614,7 @@ export class DashboardService {
         appControlBlocks: emp.allowedAppBlocks,
         behaviorBlocks: emp.behaviorBlocks,
         totalBlocks: emp.totalBlocks,
+        totalEvents: emp.totalEvents,
         settings: reportMetricSettings,
       });
 
@@ -1430,12 +1639,16 @@ export class DashboardService {
         complianceRate,
         lastViolation: emp.dailyStats[0]?.date || null,
         zoneViolations: emp.zoneViolations,
+        totalEvents: emp.totalEvents,
       };
     });
 
     enriched.sort((left, right) => {
-      if (left.complianceRate !== right.complianceRate) {
-        return left.complianceRate - right.complianceRate;
+      // 준수율 오름차순(낮은=위험 우선). 산출 불가(null, 이벤트 0건)는 맨 뒤로.
+      const leftCompliance = left.complianceRate ?? Number.POSITIVE_INFINITY;
+      const rightCompliance = right.complianceRate ?? Number.POSITIVE_INFINITY;
+      if (leftCompliance !== rightCompliance) {
+        return leftCompliance - rightCompliance;
       }
 
       if (right.last7DaysBlocks !== left.last7DaysBlocks) {
@@ -1584,6 +1797,7 @@ export class DashboardService {
       appControlBlocks,
       behaviorBlocks,
       totalBlocks,
+      totalEvents,
       settings: reportMetricSettings,
     });
 
@@ -1927,6 +2141,88 @@ export class DashboardService {
       ? policySelectionContext.ownerOrganizationIds
       : [organizationId];
 
+    const appliedPolicyInclude = {
+      organization: { select: { id: true, name: true } },
+      zones: {
+        include: {
+          zone: {
+            select: {
+              id: true,
+              name: true,
+              type: true,
+              shape: true,
+              radius: true,
+              description: true,
+              organizationId: true,
+              deletedAt: true,
+            },
+          },
+        },
+      },
+      timePolicies: {
+        include: {
+          timePolicy: {
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              startTime: true,
+              endTime: true,
+              days: true,
+              organizationId: true,
+              deletedAt: true,
+              excludePeriods: true,
+            },
+          },
+        },
+      },
+      behaviors: {
+        include: {
+          behaviorCondition: {
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              distanceThreshold: true,
+              stepsThreshold: true,
+              speedThreshold: true,
+              organizationId: true,
+              deletedAt: true,
+            },
+          },
+        },
+      },
+      allowedApps: {
+        include: {
+          preset: {
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              platform: true,
+              organizationId: true,
+              deletedAt: true,
+              items: {
+                include: {
+                  allowedApp: {
+                    select: {
+                      id: true,
+                      name: true,
+                      packageName: true,
+                      category: true,
+                      platform: true,
+                      iconUrl: true,
+                      isGlobal: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    } as any;
+
     const assignedPolicies = await this.prisma.controlPolicyEmployee.findMany({
       where: {
         employeeId,
@@ -1936,29 +2232,7 @@ export class DashboardService {
         },
       },
       include: {
-        policy: {
-          include: {
-            zones: {
-              include: {
-                zone: { select: { id: true, name: true, type: true, description: true, deletedAt: true } },
-              },
-            },
-            timePolicies: {
-              include: {
-                timePolicy: {
-                  select: { id: true, name: true, startTime: true, endTime: true, days: true, deletedAt: true },
-                },
-              },
-            },
-            behaviors: {
-              include: {
-                behaviorCondition: {
-                  select: { id: true, name: true, description: true, deletedAt: true },
-                },
-              },
-            },
-          },
-        },
+        policy: { include: appliedPolicyInclude },
       },
     });
 
@@ -1972,27 +2246,7 @@ export class DashboardService {
           isDraft: false,
           organizationId: { in: candidateOrganizationIds },
         },
-        include: {
-          zones: {
-            include: {
-              zone: { select: { id: true, name: true, type: true, description: true, deletedAt: true } },
-            },
-          },
-          timePolicies: {
-            include: {
-              timePolicy: {
-                select: { id: true, name: true, startTime: true, endTime: true, days: true, deletedAt: true },
-              },
-            },
-          },
-          behaviors: {
-            include: {
-              behaviorCondition: {
-                select: { id: true, name: true, description: true, deletedAt: true },
-              },
-            },
-          },
-        },
+        include: appliedPolicyInclude,
       });
 
       if (explicitlyAppliedPolicy) {
@@ -2011,27 +2265,7 @@ export class DashboardService {
             { targetUnitIds: { isEmpty: true } },
           ],
         },
-        include: {
-          zones: {
-            include: {
-              zone: { select: { id: true, name: true, type: true, description: true, deletedAt: true } },
-            },
-          },
-          timePolicies: {
-            include: {
-              timePolicy: {
-                select: { id: true, name: true, startTime: true, endTime: true, days: true, deletedAt: true },
-              },
-            },
-          },
-          behaviors: {
-            include: {
-              behaviorCondition: {
-                select: { id: true, name: true, description: true, deletedAt: true },
-              },
-            },
-          },
-        },
+        include: appliedPolicyInclude,
       });
 
       effectiveOrgPolicies = selectPreferredOwnerScopedPolicies(
@@ -2070,6 +2304,9 @@ export class DashboardService {
       isActive: !!selectedPolicy.isActive,
       priority: selectedPolicy.priority,
       source: assignedPolicyIds.has(selectedPolicy.id) ? 'EMPLOYEE' : 'ORGANIZATION',
+      organization: selectedPolicy.organization ?? null,
+      createdAt: selectedPolicy.createdAt,
+      updatedAt: selectedPolicy.updatedAt,
       timePolicies: (selectedPolicy.timePolicies || [])
         .map((item: any) => item.timePolicy)
         .filter((timePolicy: any) => timePolicy && !timePolicy.deletedAt)
@@ -2077,6 +2314,12 @@ export class DashboardService {
           ...timePolicy,
           startTime: this.formatPolicyTime(timePolicy.startTime),
           endTime: this.formatPolicyTime(timePolicy.endTime),
+          excludePeriods: (timePolicy.excludePeriods || []).map((period: any) => ({
+            id: period.id,
+            reason: period.reason,
+            start: this.formatPolicyTime(period.startTime),
+            end: this.formatPolicyTime(period.endTime),
+          })),
         })),
       zones: (selectedPolicy.zones || [])
         .map((item: any) => item.zone)
@@ -2084,6 +2327,29 @@ export class DashboardService {
       behaviorConditions: (selectedPolicy.behaviors || [])
         .map((item: any) => item.behaviorCondition)
         .filter((behaviorCondition: any) => behaviorCondition && !behaviorCondition.deletedAt),
+      allowedAppPresets: (selectedPolicy.allowedApps || [])
+        .map((item: any) => item.preset)
+        .filter((preset: any) => preset && !preset.deletedAt)
+        .map((preset: any) => ({
+          id: preset.id,
+          name: preset.name,
+          description: preset.description || '',
+          platform: preset.platform,
+          organizationId: preset.organizationId,
+          appCount: Array.isArray(preset.items) ? preset.items.length : 0,
+          apps: (preset.items || [])
+            .map((item: any) => item.allowedApp)
+            .filter((app: any) => !!app)
+            .map((app: any) => ({
+              id: app.id,
+              name: app.name,
+              packageName: app.packageName,
+              category: app.category,
+              platform: app.platform,
+              iconUrl: app.iconUrl,
+              isGlobal: app.isGlobal,
+            })),
+        })),
     };
   }
 
@@ -2408,11 +2674,13 @@ export class DashboardService {
 
       const totalViolations = allowedAppBlocks + behaviorBlocks;
       const currentAllowedEvents = currentStats.reduce((sum, stat) => sum + ((stat as any).allowedEvents ?? 0), 0);
+      const currentTotalEvents = currentStats.reduce((sum, stat) => sum + ((stat as any).totalEvents ?? stat.totalBlocks), 0);
       const complianceRate = this.calculateComplianceRate({
         allowedEvents: currentAllowedEvents,
         appControlBlocks: allowedAppBlocks,
         behaviorBlocks,
         totalBlocks: totalViolations,
+        totalEvents: currentTotalEvents,
         rounded: false,
         settings: reportMetricSettings,
       });
@@ -2462,6 +2730,7 @@ export class DashboardService {
         totalViolations,
         allowedAppBlocks,
         behaviorBlocks,
+        totalEvents: currentTotalEvents,
         complianceRate,
         siteRiskLevel: siteRisk.riskLevel,
         siteRiskScore: siteRisk.riskScore,

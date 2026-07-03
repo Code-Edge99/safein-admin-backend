@@ -136,6 +136,14 @@ export class TimePoliciesService {
           select: { id: true, name: true },
         },
         excludePeriods: true,
+        policyTimePolicies: {
+          where: {
+            policy: { deletedAt: null, isDraft: false },
+          },
+          include: {
+            policy: { select: { id: true, name: true } },
+          },
+        },
       },
     });
 
@@ -181,6 +189,14 @@ export class TimePoliciesService {
             select: { id: true, name: true },
           },
           excludePeriods: true,
+          policyTimePolicies: {
+            where: {
+              policy: { deletedAt: null, isDraft: false },
+            },
+            include: {
+              policy: { select: { id: true, name: true } },
+            },
+          },
         },
       }),
       this.prisma.timePolicy.count({ where }),
@@ -203,6 +219,14 @@ export class TimePoliciesService {
           select: { id: true, name: true },
         },
         excludePeriods: true,
+        policyTimePolicies: {
+          where: {
+            policy: { deletedAt: null, isDraft: false },
+          },
+          include: {
+            policy: { select: { id: true, name: true } },
+          },
+        },
       },
     });
 
@@ -229,6 +253,15 @@ export class TimePoliciesService {
       include: {
         organization: {
           select: { id: true, name: true },
+        },
+        excludePeriods: true,
+        policyTimePolicies: {
+          where: {
+            policy: { deletedAt: null, isDraft: false },
+          },
+          include: {
+            policy: { select: { id: true, name: true } },
+          },
         },
       },
       orderBy: { name: 'asc' },
@@ -338,6 +371,14 @@ export class TimePoliciesService {
           select: { id: true, name: true },
         },
         excludePeriods: true,
+        policyTimePolicies: {
+          where: {
+            policy: { deletedAt: null, isDraft: false },
+          },
+          include: {
+            policy: { select: { id: true, name: true } },
+          },
+        },
       },
     });
 

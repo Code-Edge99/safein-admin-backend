@@ -102,6 +102,14 @@ export class ZonesService {
         organization: {
           select: { id: true, name: true },
         },
+        policyZones: {
+          where: {
+            policy: { deletedAt: null, isDraft: false },
+          },
+          include: {
+            policy: { select: { id: true, name: true } },
+          },
+        },
       },
     });
 
@@ -146,6 +154,14 @@ export class ZonesService {
           organization: {
             select: { id: true, name: true },
           },
+          policyZones: {
+            where: {
+              policy: { deletedAt: null, isDraft: false },
+            },
+            include: {
+              policy: { select: { id: true, name: true } },
+            },
+          },
         },
       }),
       this.prisma.zone.count({ where }),
@@ -166,6 +182,14 @@ export class ZonesService {
       include: {
         organization: {
           select: { id: true, name: true },
+        },
+        policyZones: {
+          where: {
+            policy: { deletedAt: null, isDraft: false },
+          },
+          include: {
+            policy: { select: { id: true, name: true } },
+          },
         },
       },
     });
@@ -193,6 +217,14 @@ export class ZonesService {
       include: {
         organization: {
           select: { id: true, name: true },
+        },
+        policyZones: {
+          where: {
+            policy: { deletedAt: null, isDraft: false },
+          },
+          include: {
+            policy: { select: { id: true, name: true } },
+          },
         },
       },
       orderBy: { name: 'asc' },

@@ -148,6 +148,7 @@ export class AccountResponseDto {
   companyRole?: {
     id: string;
     name: string;
+    isActive: boolean;
   } | null;
 
   @ApiProperty({ description: '상태', enum: AccountStatusEnum })

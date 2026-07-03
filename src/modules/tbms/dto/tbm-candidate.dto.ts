@@ -5,6 +5,12 @@ import { IsOptional, IsString } from 'class-validator';
 import { normalizeOptionalString } from './create-tbm.dto';
 
 export class TbmCandidateFilterDto {
+  @ApiPropertyOptional({ description: '작성자 직원 ID. 전달하면 해당 작성자의 회사 범위 안의 직원만 후보로 반환합니다.' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsOptional()
+  @IsString()
+  authorEmployeeId?: string;
+
   @ApiPropertyOptional({ description: '현장 ID. 지정하면 해당 현장 및 하위 현장 직원만 반환합니다. 생략하면 접근 범위 전체를 반환합니다.' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsOptional()

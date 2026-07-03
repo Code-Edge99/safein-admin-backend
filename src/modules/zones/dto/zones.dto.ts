@@ -147,6 +147,9 @@ export class ZoneResponseDto {
     name: string;
   };
 
+  @ApiPropertyOptional({ description: '이 구역을 사용하는 통제 정책명 목록', type: [String] })
+  policyNames?: string[];
+
   @ApiProperty({ description: '생성일시' })
   createdAt: Date;
 

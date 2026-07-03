@@ -16,7 +16,8 @@ export function buildSiteReportItem(params: {
   totalViolations: number;
   allowedAppBlocks: number;
   behaviorBlocks: number;
-  complianceRate: number;
+  totalEvents: number;
+  complianceRate: number | null;
   siteRiskLevel: '안정' | '주의' | '위험';
   siteRiskScore: number;
   trend: 'up' | 'down' | 'stable';
@@ -40,7 +41,8 @@ export function buildSiteReportItem(params: {
   totalViolations: number;
   allowedAppBlocks: number;
   behaviorBlocks: number;
-  complianceRate: number;
+  totalEvents: number;
+  complianceRate: number | null;
   siteRiskLevel: '안정' | '주의' | '위험';
   siteRiskScore: number;
   trend: 'up' | 'down' | 'stable';
@@ -62,6 +64,7 @@ export function buildSiteReportItem(params: {
     totalViolations,
     allowedAppBlocks,
     behaviorBlocks,
+    totalEvents,
     complianceRate,
     siteRiskLevel,
     siteRiskScore,
@@ -97,7 +100,8 @@ export function buildSiteReportItem(params: {
     totalViolations,
     allowedAppBlocks,
     behaviorBlocks,
-    complianceRate: Math.round(complianceRate * 10) / 10,
+    totalEvents,
+    complianceRate: complianceRate === null ? null : Math.round(complianceRate * 10) / 10,
     siteRiskLevel,
     siteRiskScore: Math.round(siteRiskScore * 10) / 10,
     trend,

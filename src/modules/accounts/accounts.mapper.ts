@@ -19,6 +19,7 @@ export function toAccountResponseDto(account: any): AccountResponseDto {
       ? {
         id: account.companyRole.id,
         name: account.companyRole.name,
+        isActive: account.companyRole.isActive,
       }
       : null,
     status: account.status as AccountStatusEnum,
